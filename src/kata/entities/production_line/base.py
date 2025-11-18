@@ -1,0 +1,2 @@
+class ProductionLine:
+    id: int
