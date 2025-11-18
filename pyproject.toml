@@ -1,3 +1,7 @@
+[build-system]
+requires = ["uv_build>=0.9.5,<0.10.0"]
+build-backend = "uv_build"
+
 [project]
 name = "knowledge-aware-technician-assignment"
 version = "0.1.0"
@@ -5,6 +9,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "gymnasium>=1.2.0",
-    "numba>=0.61.2",
+  "gymnasium>=1.2.0",
+  "numba>=0.61.2",
+  "numpy>=2.2.6",
+  "simpy>=4.1.1",
 ]
+
+[tool.uv.build-backend]
+module-name = "kata"
+module-root = "src"
+
+[tool.pyright]
+typeCheckingMode = "off"
+diagnosticMode = "off"
