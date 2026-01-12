@@ -1,2 +1,5 @@
-class Request:
+from abc import ABC
+
+
+class Request(ABC):
     id: int

@@ -1,4 +1,5 @@
 import simpy as sp
+import random
 
 from kata.entities.products.product import Product
 from kata.entities.technicians.technician import Technician, TechDispatcher
@@ -65,8 +66,8 @@ class Machine:
                 try:
                     self.is_processing = True
                     yield self.env.timeout(delay=remaining)
-                    remaining: int = 0
-                except sp.Interrupt as e:
+                    remaining = 0.0
+                except sp.Interrupt:
                     if not self.broken:
                         continue
                     remaining = max(
@@ -99,7 +100,7 @@ class Machine:
                 if self.is_processing
                 else self.breakdown_process.step_and_get_idle_proba()
             )
-            if p_break >= self.env.random.uniform(0, 1) and p_break > 0:
+            if p_break >= random.uniform(0, 1) and p_break > 0:
                 # Machine breaks down
                 self._trigger_breakdown()
 

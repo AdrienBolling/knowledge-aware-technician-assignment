@@ -1,20 +1,25 @@
+from abc import ABC, abstractmethod
+
 import simpy
-from kata.entities import Technician
-from kata.entities import Request
-from kata.entities import Machine
+
+from kata.entities.machines.base import Machine
+from kata.entities.requests.RepairRequest import RepairRequest
+from kata.entities.technicians.base import Technician
 
 
-class TechDispatcher:
+class TechDispatcher(ABC):
+    """Base class for technician dispatchers."""
+
     env: simpy.Environment
     technicians: list[Technician]
 
-    def request_repair(self, machine):
+    @abstractmethod
+    def request_repair(self, machine: Machine):
         """Request a technician to repair the given machine."""
         raise NotImplementedError
 
-    def start_repair(self, machine, tech_id: int, request: Request):
-        """
-        Start the repair process for the given machine by the specified technician.
+    def start_repair(self, tech_id: int, request: RepairRequest):
+        """Start the repair process for the given machine by the specified technician.
         Called by a Gym wrapper env after choosing an action.
         """
         raise NotImplementedError
