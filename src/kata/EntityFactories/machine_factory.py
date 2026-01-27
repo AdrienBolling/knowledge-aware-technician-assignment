@@ -23,6 +23,7 @@ import numpy as np
 import importlib.resources as res
 import json
 
+
 class Machine:
     def __init__(
         self,
@@ -41,28 +42,33 @@ class Machine:
         self.components = components if components is not None else []
         self.weibull_k = weibull_k  # Weibull shape parameter for failure distribution
         self.weibull_lambda = weibull_lambda
-        
+
     def get_state_numpy_array(self) -> np.ndarray:
         """
         Returns a numpy array with the initial state of the machine.
         """
-        return np.array([
-            0,  # machine status (-1: maintenance, 0: idle, 1: running)
-            self.prod_rate,  # production rate (production steps per timestep)
-            0,  # in_buffer (number of items in the input buffer)
-            0,  # out_buffer (number of items in the output buffer)
-            -1,  # current production step (when <0, the current product is finished)
-            0.0,  # current failure probability (0-1)
-        ])
-        
+        return np.array(
+            [
+                0,  # machine status (-1: maintenance, 0: idle, 1: running)
+                self.prod_rate,  # production rate (production steps per timestep)
+                0,  # in_buffer (number of items in the input buffer)
+                0,  # out_buffer (number of items in the output buffer)
+                -1,  # current production step (when <0, the current product is finished)
+                0.0,  # current failure probability (0-1)
+            ]
+        )
+
     def get_parameters_numpy_array(self) -> np.ndarray:
         """
         Returns a numpy array with the parameters of the machine.
         """
-        return np.array([
-            self.weibull_k,  # Weibull shape parameter
-            self.weibull_lambda,  # Weibull scale parameter
-        ])
+        return np.array(
+            [
+                self.weibull_k,  # Weibull shape parameter
+                self.weibull_lambda,  # Weibull scale parameter
+            ]
+        )
+
 
 class MachineFactory:
     @staticmethod
@@ -78,8 +84,9 @@ class MachineFactory:
         """
         Creates a machine with the specified parameters.
         """
-        return Machine(prod_rate, name, brand, type, components, weibull_k, weibull_lambda)
-    
+        return Machine(
+            prod_rate, name, brand, type, components, weibull_k, weibull_lambda
+        )
 
     @staticmethod
     def create_machine_from_template(
@@ -88,23 +95,31 @@ class MachineFactory:
         """
         Creates a machine from a template.
         A template is a predefined set of parameters for a machine.
-        They are stored under the template json file 
+        They are stored under the template json file
         """
-        
-        with res.files("kata.resources").joinpath("machine_templates.json").open("r") as f:
+
+        with (
+            res.files("kata.resources")
+            .joinpath("machine_templates.json")
+            .open("r") as f
+        ):
             template = json.load(f)
-            
+
         if template_name not in template:
-            raise ValueError(f"Template '{template_name}' not found in machine templates.")
-        
+            raise ValueError(
+                f"Template '{template_name}' not found in machine templates."
+            )
+
         params = template[template_name]
         try:
             machine = MachineFactory.create_machine(**params)
         except TypeError as e:
-            raise ValueError(f"Error creating machine from template '{template_name}': {e}")
-        
+            raise ValueError(
+                f"Error creating machine from template '{template_name}': {e}"
+            )
+
         return machine
-    
+
     @staticmethod
     def create_machines_from_templates(
         template_names: list,
@@ -117,3 +132,4 @@ class MachineFactory:
             machine = MachineFactory.create_machine_from_template(template_name)
             machines.append(machine)
         return machines
+
