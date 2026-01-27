@@ -1,14 +1,18 @@
+"""GymTechnician is the file for a Technician for a GymEnvironment with a lot of features."""  # noqa: N999
+
+import math
+from nt import error
 from typing import Any
 
 import numpy as np
 import simpy
 
-from kata import get_config
+from ongoing import KnowledgeGrid
+
+from kata.core.config import TechnicianConfig, get_config
 from kata.entities.machines.base import Machine
 from kata.entities.requests.RepairRequest import RepairRequest
 from kata.entities.technicians.base import Technician
-
-from ongoing import KnowledgeGrid
 
 CONFIG = get_config()
 
@@ -16,11 +20,15 @@ CONFIG = get_config()
 class GymTechnician(Technician):
     """Technician for Gym environments. Fitting for use with the GymTechDispatcher class."""
 
-    def __init__(
-        self,
-    ) -> None:
+    def __init__(self, tech_conf: TechnicianConfig) -> None:
         self.busy: bool = False
         self._interupt_on_disrupt: bool = CONFIG.sim.disruptions.interupt_on_disrupt
+
+        # Fatigue parameters
+        self.fatigue: float = 0.0
+        self.fatigue_lambda: float = fatigue_lambda
+        self.fatigue_mu: float = fatigue_mu
+        self.exhausted: bool = False
 
         # Knowledge
 
@@ -61,12 +69,55 @@ class GymTechnician(Technician):
 
     def compute_repair_time(self, base_repair_time: int, request: RepairRequest) -> int:
         """Compute the repair time for the given request. Here, we just return the base repair time."""
+        base: float = float(base_repair_time)
         if CONFIG.sim.repair.knowledge_enabled:
-            base_repair_time *= self.get_knowledge_multiplier(request)
+            base *= self.get_knowledge_multiplier(request)
         if CONFIG.sim.repair.fatigue_enabled:
-            base_repair_time *= self.get_fatigue_multiplier()
-        return int(base_repair_time)
+            base *= self.get_fatigue_multiplier()
+        return int(base)
 
-    def repair_finished(self, request: RepairRequest, when: int | float) -> None:
+    def get_knowledge_multiplier(self, request: RepairRequest) -> float:
+        """Return the knowledge factor for the given request."""
+
+    def get_fatigue_multiplier(self) -> float:
+        """Return the fatigue factor for the technician.
+
+        Maps the fatigue of the technician to a multiplier using the configured fatigue model.
+        There are two models available: 'linear' and 'exponential'.
+
+        - linear: multiplier = max(0, 1 - fatigue)
+        - exponential: multiplier = exp(-fatigue_alpha * fatigue)
+        """
+        model = CONFIG.sim.technicians.fatigue_model
+        alpha = CONFIG.sim.technicians.fatigue_alpha
+
+        if model == "linear":
+            return max(0.0, 1.0 - self.fatigue)
+        if model == "exponential":
+            return math.exp(-alpha * self.fatigue)
+        error_string = f"Unknown fatigue model: {model}"
+        raise ValueError(error_string)
+
+    def _increase_fatigue(self, work_time: int) -> None:
+        """Fatigue accumulation after a repair."""
+        if not (0.0 <= self.fatigue <= 1.0):
+            raise ValueError("Fatigue must be between 0 and 1.")
+        if work_time < 0:
+            raise ValueError("Work time must be non-negative.")
+        self.fatigue = self.fatigue + (1.0 - self.fatigue) * (
+            1.0 - math.exp(-self.fatigue_lambda * work_time)
+        )
+
+    def _recover_fatigue(self, idle_time: int) -> None:
+        """Fatigue recovery during idle time."""
+        if not (0.0 <= self.fatigue <= 1.0):
+            error_string = "Fatigue must be between 0 and 1."
+            raise ValueError(error_string)
+        if idle_time < 0:
+            error_string = "Idle time must be non-negative."
+            raise ValueError(error_string)
+        self.fatigue = self.fatigue * math.exp(-self.fatigue_mu * idle_time)
+
+    def repair_finished(self, request: RepairRequest, when: float) -> None:
         """Mark the technician as not busy."""
         self.busy = False
