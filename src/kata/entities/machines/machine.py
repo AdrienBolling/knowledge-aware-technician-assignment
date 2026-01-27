@@ -117,3 +117,12 @@ class Machine(Mach):
             self.tech_dispatcher.request_repair(self)
 
     def repair(self, request) -> None:
+        """
+        Repair the machine, making it operational again.
+        
+        Args:
+            request: The repair request that triggered this repair
+        """
+        self.broken = False
+        self.breakdown_process.repair()
+        self._log(f"Successfully repaired! Total processed: {self.total_processed}")

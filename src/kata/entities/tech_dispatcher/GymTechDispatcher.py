@@ -1,7 +1,10 @@
 import simpy
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kata.entities.machines.machine import Machine
 
 from kata import get_config
-from kata.entities.machines.machine import Machine
 from kata.entities.requests.RepairRequest import RepairRequest
 from kata.entities.technicians.GymTechnician import GymTechnician as Technician
 
@@ -35,7 +38,7 @@ class GymTechDispatcher:
             )
 
     # External API used by the machines
-    def request_repair(self, machine: Machine) -> None:
+    def request_repair(self, machine: "Machine") -> None:
         req = RepairRequest(machine=machine, created_at=int(self.env.now))
         _ = self.repair_queue.put(req)
 
@@ -45,7 +48,7 @@ class GymTechDispatcher:
         tech = self._get_tech(tech_id)
         _ = self.env.process(self._repair_job(tech, request))
 
-    def wait_until_repaired(self, machine: Machine) -> simpy.Event:
+    def wait_until_repaired(self, machine: "Machine") -> simpy.Event:
         if machine not in self._repair_events:
             self._repair_events[machine] = self.env.event()
         return self._repair_events[machine]

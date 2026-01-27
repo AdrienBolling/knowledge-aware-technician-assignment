@@ -1,13 +1,15 @@
 """GymTechnician is the file for a Technician for a GymEnvironment with a lot of features."""  # noqa: N999
 
 import math
-from nt import error
 from typing import Any
 
 import numpy as np
 import simpy
 
-from ongoing import KnowledgeGrid
+try:
+    from ongoing import KnowledgeGrid
+except ImportError:
+    KnowledgeGrid = None
 
 from kata.core.config import TechnicianConfig, get_config
 from kata.entities.machines.base import Machine
@@ -20,7 +22,13 @@ CONFIG = get_config()
 class GymTechnician(Technician):
     """Technician for Gym environments. Fitting for use with the GymTechDispatcher class."""
 
-    def __init__(self, tech_conf: TechnicianConfig) -> None:
+    def __init__(
+        self,
+        tech_conf: TechnicianConfig,
+        fatigue_lambda: float = 0.01,
+        fatigue_mu: float = 0.05,
+    ) -> None:
+        self.id = getattr(tech_conf, 'id', 0)
         self.busy: bool = False
         self._interupt_on_disrupt: bool = CONFIG.sim.disruptions.interupt_on_disrupt
 
@@ -30,7 +38,7 @@ class GymTechnician(Technician):
         self.fatigue_mu: float = fatigue_mu
         self.exhausted: bool = False
 
-        # Knowledge
+        # Knowledge - could be initialized here if needed
 
     def travel_time(self, machine: Machine) -> int:
         """Return the travel time to the given machine. Here, we just return a constant value."""
@@ -77,7 +85,18 @@ class GymTechnician(Technician):
         return int(base)
 
     def get_knowledge_multiplier(self, request: RepairRequest) -> float:
-        """Return the knowledge factor for the given request."""
+        """
+        Return the knowledge factor for the given request.
+        
+        Args:
+            request: The repair request
+            
+        Returns:
+            Knowledge multiplier (1.0 = no effect, <1.0 = faster, >1.0 = slower)
+        """
+        # Simplified: assume no knowledge effect for now
+        # Could integrate with ONGOING KnowledgeGrid here
+        return 1.0
 
     def get_fatigue_multiplier(self) -> float:
         """Return the fatigue factor for the technician.
