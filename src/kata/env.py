@@ -38,6 +38,72 @@ def create_ticket(
 
 
 class KataEnv(gym.Env):
+    """
+    KataEnv - Knowledge-Aware Technician Assignment Environment
+    
+    A Gymnasium-compatible reinforcement learning environment for simulating
+    technician assignment in manufacturing production lines with machine breakdowns.
+    
+    The environment models:
+    - Multiple production lines with machines that can fail
+    - Technicians who can be assigned to repair broken machines
+    - Tickets representing repair requests with priorities and completion times
+    - Machine degradation using Weibull failure distributions and Kijima repair models
+    
+    The agent's goal is to assign repair tickets to technicians efficiently to
+    minimize downtime and maximize production throughput.
+    
+    Observation Space:
+        A Box space containing:
+        - Current ticket features (id, priority, time_to_complete, machine_id)
+        - Technician states (assigned tickets and their attributes)
+        - Production line states (machine statuses, buffers, production)
+    
+    Action Space:
+        Discrete space representing which technician to assign the current ticket to.
+        The action is an integer in [0, n_technicians-1].
+    
+    Reward:
+        The reward considers:
+        - Penalty for pending tickets (encourages fast assignment)
+        - Penalty for machines in maintenance state (encourages uptime)
+        - Small time penalty (encourages episode efficiency)
+    
+    Episode Termination:
+        - Terminated: All machines are broken (catastrophic failure)
+        - Truncated: Max episode steps reached
+    
+    Config Dictionary:
+        technicians: List of technician configurations
+        production_lines: List of production line configurations, each containing:
+            - prod_rates: Production rates per machine
+            - prod_costs: Steps required to complete a product
+            - in_max_cap: Input buffer max capacities
+            - out_max_cap: Output buffer max capacities
+            - weibull_ks: Weibull shape parameters (failure distribution)
+            - weibull_inv_lambdas: Weibull scale parameters (1/lambda)
+            - initial_in_buff: Initial input buffer level
+        max_episode_steps: Maximum steps before truncation
+    
+    Example:
+        >>> config = {
+        ...     "technicians": [{"id": 0}, {"id": 1}, {"id": 2}],
+        ...     "production_lines": [{
+        ...         "prod_rates": np.array([10, 15, 20]),
+        ...         "prod_costs": np.array([100, 150, 200]),
+        ...         "in_max_cap": np.array([50, 50, 50]),
+        ...         "out_max_cap": np.array([50, 50, 50]),
+        ...         "weibull_ks": np.array([2.0, 2.5, 3.0]),
+        ...         "weibull_inv_lambdas": np.array([0.01, 0.01, 0.01]),
+        ...         "initial_in_buff": 10,
+        ...     }],
+        ...     "max_episode_steps": 1000,
+        ... }
+        >>> env = KataEnv(config)
+        >>> obs, info = env.reset(seed=42)
+        >>> action = env.action_space.sample()
+        >>> obs, reward, terminated, truncated, info = env.step(action)
+    """
     metadata = {"render_modes": ["numpy", "human"], "render_fps": 4}
 
     def __init__(self, config: dict):
@@ -299,13 +365,14 @@ class KataEnv(gym.Env):
                 # Check if a machine broke, if so, create a ticket
                 idxes_broken = np.where(self.status[i] == -1)[0]
                 for idx in idxes_broken:
-                    if idx not in self.assigned_tickets["machine_ids"]:
+                    machine_id = int(i * 100 + idx)  # Encode production line and machine index
+                    if machine_id not in self.assigned_tickets["machine_ids"]:
                         # Create a ticket for the broken machine
                         ticket = create_ticket(
                             ticket_id=self.ticket_counter,
                             priority=np.random.randint(1, 6),  # Random priority 1-5
                             time_to_complete=np.random.randint(5, 20),  # Random repair time
-                            machine_id=int(i * 100 + idx),  # Encode production line and machine index
+                            machine_id=machine_id,
                             component="component_" + str(np.random.randint(1, 5)),
                             type_of_failure="failure_type_" + str(np.random.randint(1, 3)),
                         )
