@@ -93,7 +93,7 @@ class Machine(Mach):
             yield self.output_buffer.put(product)
             self.total_processed += 1
             self._log(
-                f"product {product.product_id} enqueued succesfully to {buffer_name}"
+                f"product {product.product_id} enqueued successfully to {buffer_name}"
             )
 
     def _breakdown_driver(self):
