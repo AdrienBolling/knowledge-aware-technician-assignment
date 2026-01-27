@@ -1,1 +1,81 @@
-{}
+{
+  "basic_cnc_machine": {
+    "prod_rate": 50,
+    "name": "CNC Milling Machine",
+    "brand": "Haas",
+    "type": "cnc_mill",
+    "weibull_k": 2.5,
+    "weibull_lambda": 2000.0,
+    "components": [
+      {
+        "component_id": "spindle_motor",
+        "component_type": "motor",
+        "degradation_rate": 0.002,
+        "base_repair_time": 120.0
+      },
+      {
+        "component_id": "coolant_pump",
+        "component_type": "pump",
+        "degradation_rate": 0.003,
+        "base_repair_time": 60.0
+      },
+      {
+        "component_id": "tool_changer",
+        "component_type": "mechanism",
+        "degradation_rate": 0.0015,
+        "base_repair_time": 90.0
+      }
+    ]
+  },
+  "assembly_robot": {
+    "prod_rate": 80,
+    "name": "6-Axis Assembly Robot",
+    "brand": "KUKA",
+    "type": "robot",
+    "weibull_k": 3.0,
+    "weibull_lambda": 3000.0,
+    "components": [
+      {
+        "component_id": "servo_motor_1",
+        "component_type": "motor",
+        "degradation_rate": 0.0025,
+        "base_repair_time": 100.0
+      },
+      {
+        "component_id": "gripper",
+        "component_type": "end_effector",
+        "degradation_rate": 0.004,
+        "base_repair_time": 45.0
+      },
+      {
+        "component_id": "controller",
+        "component_type": "electronics",
+        "degradation_rate": 0.001,
+        "base_repair_time": 150.0
+      }
+    ]
+  },
+  "simple_conveyor": {
+    "prod_rate": 100,
+    "name": "Conveyor Belt",
+    "brand": "Generic",
+    "type": "conveyor",
+    "weibull_k": 1.5,
+    "weibull_lambda": 5000.0,
+    "components": [
+      {
+        "component_id": "belt_motor",
+        "component_type": "motor",
+        "degradation_rate": 0.0015,
+        "base_repair_time": 80.0
+      },
+      {
+        "component_id": "belt",
+        "component_type": "mechanical",
+        "degradation_rate": 0.005,
+        "base_repair_time": 30.0
+      }
+    ]
+  }
+}
+
