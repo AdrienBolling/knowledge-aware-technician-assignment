@@ -82,6 +82,10 @@ class Machine(Mach):
 
             # Try to move to the output buffer (may block if full)
             self.is_processing = False
+            
+            # Advance product to next step in route
+            product.advance()
+            
             self._log(
                 f"finished processing product {product.product_id}, enqueue to {self.output_buffer.name}"
             )
@@ -117,3 +121,12 @@ class Machine(Mach):
             self.tech_dispatcher.request_repair(self)
 
     def repair(self, request) -> None:
+        """
+        Repair the machine, making it operational again.
+        
+        Args:
+            request: The repair request that triggered this repair
+        """
+        self.broken = False
+        self.breakdown_process.repair()
+        self._log(f"Successfully repaired! Total processed: {self.total_processed}")

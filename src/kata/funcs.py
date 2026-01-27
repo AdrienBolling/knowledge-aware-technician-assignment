@@ -135,12 +135,12 @@ def step_prod_line(
             if failed:
                 status[i] = -1
 
-        return (
-            status,
-            prod_completions,
-            in_buff,
-            out_buff,
-            absolute_times,
-            s_since_repairs,
-            virtual_ages,
-        )
+    return (
+        status,
+        prod_completions,
+        in_buff,
+        out_buff,
+        absolute_times,
+        s_since_repairs,
+        virtual_ages,
+    )
