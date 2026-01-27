@@ -86,13 +86,14 @@ class Machine(Mach):
             # Advance product to next step in route
             product.advance()
             
+            buffer_name = getattr(self.output_buffer, 'name', 'output_buffer')
             self._log(
-                f"finished processing product {product.product_id}, enqueue to {self.output_buffer.name}"
+                f"finished processing product {product.product_id}, enqueue to {buffer_name}"
             )
             yield self.output_buffer.put(product)
             self.total_processed += 1
             self._log(
-                f"product {product.product_id} enqueued succesfully to {self.output_buffer}"
+                f"product {product.product_id} enqueued successfully to {buffer_name}"
             )
 
     def _breakdown_driver(self):
