@@ -38,11 +38,18 @@ class TechnicianConfig(BaseModel): ...
 class MachineConfig(BaseModel): ...
 
 
+class GlobalTechniciansConfig(BaseModel):
+    travel_time: int = 10  # travel time between machines in minutes
+    fatigue_model: str = "exponential"  # can be either exponential or linear
+    fatigue_alpha: float = 0.5  # parameter for exponential fatigue model
+
+
 class SimEnvConfig(BaseModel):
     """Configuration model for the simulation environment."""
 
     disruptions: DisruptionConfig = DisruptionConfig()
     repair: RepairConfig = RepairConfig()
+    technicians: GlobalTechniciansConfig = GlobalTechniciansConfig()
 
 
 class GymEnvConfig(BaseModel): ...

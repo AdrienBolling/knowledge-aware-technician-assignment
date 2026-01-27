@@ -2,11 +2,12 @@ import simpy as sp
 import random
 
 from kata.entities.products.product import Product
-from kata.entities.technicians.technician import Technician, TechDispatcher
+from kata.entities.technicians.technician import Technician
+from kata.entities.tech_dispatcher.GymTechDispatcher import GymTechDispatcher
 from kata.features.breakdown.base import BreakdownProcess
+from kata.entities.machines.base import Machine as Mach
 
-
-class Machine:
+class Machine(Mach):
     """
     A machine works on products abd may get broken
     When it breaks, creates a ticket for repair and requetss a Technician.
@@ -20,7 +21,7 @@ class Machine:
         mtype: str,
         input_buffer: sp.Store,
         output_buffer: sp.Store,
-        tech_dispatcher: TechDispatcher,
+        tech_dispatcher: GymTechDispatcher,
         breakdown_process: BreakdownProcess,
         process_time: int,
         dt: int,
@@ -114,3 +115,5 @@ class Machine:
             except RuntimeError:
                 pass
             self.tech_dispatcher.request_repair(self)
+
+    def repair(self, request) -> None:
