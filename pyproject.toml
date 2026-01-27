@@ -5,6 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "gymnasium>=1.2.0",
-    "numba>=0.61.2",
+  "gymnasium>=1.2.0",
+  "numba>=0.61.2",
+  "numpy>=2.2.6",
+  "ongoing",
+  "pydantic-settings>=2.12.0",
+  "pydantic>=2.12.4",
+  "simpy>=4.1.1",
 ]
+
+[tool.uv.sources]
+ongoing = { git = "https://github.com/AdrienBolling/ONGOING.git" }

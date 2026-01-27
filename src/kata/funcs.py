@@ -62,6 +62,17 @@ def step_prod_line(
     weibull_ks: np.ndarray,  # (n_machines) Weibull shape parameters, float
     weibull_inv_lambdas: np.ndarray,  # (n_machines) Weibull scale parameters, float
 ):
+    """
+    Summary :
+
+    Args:
+        param (type): description.
+
+    Returns:
+        type: description.
+
+    Raises:
+    """
     M = status.shape[0]  # number of machines
 
     # --- First phase, right-to-left buffer transfer
@@ -83,7 +94,7 @@ def step_prod_line(
         if status[i] == -1:
             # Machine is under maintenance, nothing progresses
             continue
-        
+
         elif status[i] == 0:
             # CHeck if there's a product waiting for the out_buffer
             if prod_completions[i] == 0:
@@ -110,14 +121,20 @@ def step_prod_line(
                 else:
                     prod_completions[i] = 0
                 status[i] = 0
-                
+
             # Simulate degradation
-            failed, absolute_times[i], s_since_repairs[i], virtual_ages[i] = step_degrade(
-                absolute_times[i], s_since_repairs[i], virtual_ages[i], weibull_ks[i], weibull_inv_lambdas[i]
+            failed, absolute_times[i], s_since_repairs[i], virtual_ages[i] = (
+                step_degrade(
+                    absolute_times[i],
+                    s_since_repairs[i],
+                    virtual_ages[i],
+                    weibull_ks[i],
+                    weibull_inv_lambdas[i],
+                )
             )
             if failed:
                 status[i] = -1
-                
+
         return (
             status,
             prod_completions,
@@ -125,5 +142,5 @@ def step_prod_line(
             out_buff,
             absolute_times,
             s_since_repairs,
-            virtual_ages
+            virtual_ages,
         )
