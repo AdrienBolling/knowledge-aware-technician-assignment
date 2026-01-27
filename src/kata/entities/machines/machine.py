@@ -82,6 +82,10 @@ class Machine(Mach):
 
             # Try to move to the output buffer (may block if full)
             self.is_processing = False
+            
+            # Advance product to next step in route
+            product.advance()
+            
             self._log(
                 f"finished processing product {product.product_id}, enqueue to {self.output_buffer.name}"
             )
