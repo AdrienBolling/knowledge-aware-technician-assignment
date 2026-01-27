@@ -244,6 +244,10 @@ class SyntheticTicketFactory:
         """
         Get the current number of items in the machine's input buffer.
         
+        Note: This method accesses the 'items' attribute of SimPy Store, which is
+        part of SimPy's stable API. If using a custom Buffer wrapper, it should
+        implement __len__ for compatibility.
+        
         Args:
             machine: The machine to check
             
@@ -251,7 +255,7 @@ class SyntheticTicketFactory:
             Number of items in the input buffer
         """
         if hasattr(machine, 'input_buffer'):
-            # For SimPy Store, use len() which accesses items list
+            # For SimPy Store, use items list (part of SimPy's public API)
             if hasattr(machine.input_buffer, 'items'):
                 return len(machine.input_buffer.items)
             # For Buffer wrapper, use __len__

@@ -23,9 +23,9 @@ def demo_basic_usage():
     input_buffer = sp.Store(env)
     output_buffer = sp.Store(env)
     
-    # Add some items to the buffer to simulate workload
+    # Add some items to the buffer to simulate workload (direct manipulation for testing)
     for i in range(8):
-        input_buffer.put(f"product_{i}")
+        input_buffer.items.append(f"product_{i}")
     
     class MockTechDispatcher:
         def wait_until_repaired(self, machine):
@@ -126,9 +126,9 @@ def demo_priority_rules():
         input_buffer = sp.Store(env)
         output_buffer = sp.Store(env)
         
-        # Fill buffer
+        # Fill buffer (direct manipulation for testing)
         for i in range(buffer_items):
-            input_buffer.put(f"item_{i}")
+            input_buffer.items.append(f"item_{i}")
         
         component = MachineComponent(
             component_id=f"{comp_type}_1",
@@ -189,9 +189,9 @@ def demo_batch_generation():
         input_buffer = sp.Store(env)
         output_buffer = sp.Store(env)
         
-        # Fill buffer
+        # Fill buffer (direct manipulation for testing)
         for i in range(buffer_count):
-            input_buffer.put(f"product_{i}")
+            input_buffer.items.append(f"product_{i}")
         
         breakdown = SimpleBreakdownProcess(failure_prob_working=0.1)
         machine = Machine(
@@ -281,9 +281,9 @@ def demo_integration_with_complex_machine():
     input_buffer = sp.Store(env)
     output_buffer = sp.Store(env)
     
-    # Add work items
+    # Add work items (direct manipulation for testing)
     for i in range(20):
-        input_buffer.put(f"part_{i}")
+        input_buffer.items.append(f"part_{i}")
     
     class MockTechDispatcher:
         def wait_until_repaired(self, machine):
