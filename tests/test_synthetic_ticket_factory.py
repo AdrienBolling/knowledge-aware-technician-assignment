@@ -85,9 +85,9 @@ def test_factory_from_repair_request():
     input_buffer = sp.Store(env)
     output_buffer = sp.Store(env)
     
-    # Add some items to buffer
+    # Add some items to buffer (direct manipulation for testing)
     for i in range(5):
-        input_buffer.put(f"item_{i}")
+        input_buffer.items.append(f"item_{i}")
     
     class MockTechDispatcher:
         def wait_until_repaired(self, machine):
@@ -148,9 +148,9 @@ def test_factory_from_machine():
     input_buffer = sp.Store(env)
     output_buffer = sp.Store(env)
     
-    # Add items to buffer
+    # Add items to buffer (direct manipulation for testing)
     for i in range(12):
-        input_buffer.put(f"product_{i}")
+        input_buffer.items.append(f"product_{i}")
     
     class MockTechDispatcher:
         def wait_until_repaired(self, machine):
@@ -209,9 +209,9 @@ def test_priority_calculation():
     }
     factory = SyntheticTicketFactory(priority_rules=priority_rules)
     
-    # Add many items to buffer (should increase priority)
+    # Add many items to buffer (should increase priority) - direct manipulation for testing
     for i in range(15):
-        input_buffer.put(f"item_{i}")
+        input_buffer.items.append(f"item_{i}")
     
     breakdown = SimpleBreakdownProcess(failure_prob_working=0.1)
     motor_component = MachineComponent(
