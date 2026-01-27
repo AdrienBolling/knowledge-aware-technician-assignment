@@ -3,7 +3,10 @@ Simple test script to verify the KataEnv implementation.
 """
 
 import sys
-sys.path.insert(0, '/home/runner/work/knowledge-aware-technician-assignment/knowledge-aware-technician-assignment/src')
+import os
+
+# Add src directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 import numpy as np
 from kata.env import KataEnv, create_ticket
