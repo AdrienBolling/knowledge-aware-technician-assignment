@@ -4,7 +4,7 @@ if TYPE_CHECKING:
     from kata.entities.machines.machine import Machine
     from kata.entities.components.component import MachineComponent
 
-from kata.entities import Request
+from kata.entities.requests.base import Request
 
 
 class RepairRequest(Request):
