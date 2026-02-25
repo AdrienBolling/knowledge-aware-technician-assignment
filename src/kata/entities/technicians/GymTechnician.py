@@ -6,13 +6,14 @@ from typing import Any
 
 import numpy as np
 import simpy
-
 from ongoing import KnowledgeGrid
 
 from kata.core.config import TechnicianConfig, get_config
 from kata.entities.machines.base import Machine
 from kata.entities.requests.RepairRequest import RepairRequest
 from kata.entities.technicians.base import Technician
+
+from kata.entities.encoder.base import ENCODER
 
 CONFIG = get_config()
 
@@ -26,11 +27,24 @@ class GymTechnician(Technician):
 
         # Fatigue parameters
         self.fatigue: float = 0.0
-        self.fatigue_lambda: float = fatigue_lambda
-        self.fatigue_mu: float = fatigue_mu
+        self.fatigue_lambda: float = tech_conf.fatigue_lambda
+        self.fatigue_mu: float = tech_conf.fatigue_mu
         self.exhausted: bool = False
 
-        # Knowledge
+        # Knowledge parameters
+        self.k_shape = tech_conf.knowledge_k_shape
+        self.k_propagation_sigma = tech_conf.knowledge_propagation_sigma
+        self.k_transmission_factor = tech_conf.knowledge_transmission_factor
+        self.k_learning_rate = tech_conf.knowledge_learning_rate
+        self.k_methods = ["propagation"]
+
+        self.knowledge_grid: KnowledgeGrid = KnowledgeGrid(
+            shape=self.k_shape,
+            propagation_sigma=self.k_propagation_sigma,
+            transmission_factor=self.k_transmission_factor,
+            learning_rate=self.k_learning_rate,
+            methods=self.k_methods,
+        )
 
     def travel_time(self, machine: Machine) -> int:
         """Return the travel time to the given machine. Here, we just return a constant value."""
@@ -76,8 +90,19 @@ class GymTechnician(Technician):
             base *= self.get_fatigue_multiplier()
         return int(base)
 
+    def increase_knowledge(self, request: RepairRequest) -> None:
+        """Increase the knowledge of the technician based on the given request."""
+        embedding = ENCODER.encode(request)
+        self.knowledge_grid.add_ticket_knowledge(embedding)
+
     def get_knowledge_multiplier(self, request: RepairRequest) -> float:
         """Return the knowledge factor for the given request."""
+        embedding = ENCODER.encode(request)
+        return 1 + self.knowledge_grid.get_knowledge(embedding)
+
+    def decay_knowledge(self) -> None:
+        """Decay the knowledge of the technician over time."""
+        self.knowledge_grid.decay_knowledge()
 
     def get_fatigue_multiplier(self) -> float:
         """Return the fatigue factor for the technician.
