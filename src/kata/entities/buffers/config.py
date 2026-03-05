@@ -7,7 +7,7 @@ class BufferConfig(BaseModel):
     """Configuration for a Buffer."""
 
     name: str = Field(
-        default="buffer_0",
+        default="buffer",
         description="Human-readable name for the buffer.",
     )
     capacity: float = Field(
@@ -23,8 +23,8 @@ class BufferConfig(BaseModel):
 
 default_buffer = BufferConfig()
 
-finite_buffer = BufferConfig(name="finite_buffer_0", capacity=50.0)
-large_buffer = BufferConfig(name="large_buffer_0", capacity=500.0)
+finite_buffer = BufferConfig(name="finite_buffer", capacity=50.0)
+large_buffer = BufferConfig(name="large_buffer", capacity=500.0)
 
 # Repository of named default buffer configurations
 buffer_config_registry: dict[str, BufferConfig] = {

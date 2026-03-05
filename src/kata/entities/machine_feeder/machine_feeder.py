@@ -9,11 +9,11 @@ class MachineFeeder(MachineFeederBase):
     A feeder that distributes products from a type-specific buffer
     to multiple machines of that type (load balancing).
     """
-    
+    _id_counter = 0
+
     def __init__(
         self,
         env: simpy.Environment,
-        feeder_id: int,
         name: str,
         machine_type: str,
         in_buffer: Buffer,
@@ -24,14 +24,14 @@ class MachineFeeder(MachineFeederBase):
         
         Args:
             env: SimPy environment
-            feeder_id: Unique identifier
             name: Name of the feeder
             machine_type: Type of machines this feeder serves
             in_buffer: Input buffer (type-specific queue)
             machine_input_buffers: List of input buffers for individual machines
         """
         self.env = env
-        self.id = feeder_id
+        self.id = MachineFeeder._id_counter
+        MachineFeeder._id_counter += 1
         self.name = name
         self.machine_type = machine_type
         self.in_buffer = in_buffer

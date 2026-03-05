@@ -7,7 +7,7 @@ class MachineFeederConfig(BaseModel):
     """Configuration for a MachineFeeder."""
 
     name: str = Field(
-        default="feeder_0",
+        default="feeder",
         description="Human-readable name for the feeder.",
     )
     machine_type: str = Field(

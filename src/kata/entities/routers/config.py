@@ -7,7 +7,7 @@ class RouterConfig(BaseModel):
     """Configuration for a Router."""
 
     name: str = Field(
-        default="router_0",
+        default="router",
         description="Human-readable name for the router.",
     )
 

@@ -10,11 +10,11 @@ class Router(RouterBase):
     A router that takes products from an input buffer and routes them 
     to appropriate output buffers based on their next machine type.
     """
-    
+    _id_counter = 0
+
     def __init__(
         self,
         env: simpy.Environment,
-        router_id: int,
         name: str,
         in_buffer: Buffer,
         type_to_buffer: dict[str, Buffer],
@@ -24,13 +24,13 @@ class Router(RouterBase):
         
         Args:
             env: SimPy environment
-            router_id: Unique identifier
             name: Name of the router
             in_buffer: Input buffer to receive products from
             type_to_buffer: Mapping from machine type name to output buffer
         """
         self.env = env
-        self.id = router_id
+        self.id = Router._id_counter
+        Router._id_counter += 1
         self.name = name
         self.in_buffer = in_buffer
         self.type_to_buffer = type_to_buffer
