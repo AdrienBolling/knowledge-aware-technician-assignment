@@ -168,7 +168,7 @@ from kata.entities.buffers.config import (
 class TestBufferConfig:
     def test_defaults(self):
         cfg = BufferConfig()
-        assert cfg.name == "buffer_0"
+        assert cfg.name == "buffer"
         assert cfg.capacity == float("inf")
 
     def test_finite_capacity(self):
@@ -199,7 +199,7 @@ from kata.entities.sources.config import (
 class TestSourceConfig:
     def test_defaults(self):
         cfg = SourceConfig()
-        assert cfg.name == "source_0"
+        assert cfg.name == "source"
         assert cfg.interarrival_time == 10.0
         assert cfg.route == []
         assert cfg.max_products is None
@@ -232,7 +232,7 @@ from kata.entities.sinks.config import (
 class TestSinkConfig:
     def test_defaults(self):
         cfg = SinkConfig()
-        assert cfg.name == "sink_0"
+        assert cfg.name == "sink"
 
     def test_registry(self):
         assert "default" in sink_config_registry
@@ -252,7 +252,7 @@ from kata.entities.routers.config import (
 class TestRouterConfig:
     def test_defaults(self):
         cfg = RouterConfig()
-        assert cfg.name == "router_0"
+        assert cfg.name == "router"
 
     def test_registry(self):
         assert "default" in router_config_registry
@@ -272,7 +272,7 @@ from kata.entities.machine_feeder.config import (
 class TestMachineFeederConfig:
     def test_defaults(self):
         cfg = MachineFeederConfig()
-        assert cfg.name == "feeder_0"
+        assert cfg.name == "feeder"
         assert cfg.machine_type == "generic"
 
     def test_registry(self):
@@ -295,8 +295,7 @@ from kata.entities.technicians.config import (
 class TestTechnicianConfig:
     def test_defaults(self):
         cfg = TechnicianConfig()
-        assert cfg.id == 0
-        assert cfg.name == "technician_0"
+        assert cfg.name == "technician"
         assert cfg.fatigue_lambda == 0.01
         assert cfg.fatigue_mu == 0.05
         assert cfg.knowledge_k_shape == (10, 10)
@@ -363,7 +362,7 @@ from kata.entities.production_line.config import (
 class TestProductionLineConfig:
     def test_defaults(self):
         cfg = ProductionLineConfig()
-        assert cfg.name == "production_line_0"
+        assert cfg.name == "production_line"
         assert cfg.machines == {}
         assert cfg.buffers == {}
         assert cfg.sources == {}
@@ -481,7 +480,7 @@ class TestKATAConfigJsonLoading:
                 "repair": {"knowledge_enabled": False},
             },
             "technicians": {
-                "tech_a": {"id": 7, "name": "senior_tech", "fatigue_lambda": 0.003},
+                "tech_a": {"name": "senior_tech", "fatigue_lambda": 0.003},
             },
         }
         with tempfile.NamedTemporaryFile(
@@ -500,7 +499,6 @@ class TestKATAConfigJsonLoading:
             assert cfg.sim.technicians.fatigue_model == "linear"
             assert cfg.sim.repair.knowledge_enabled is False
             assert cfg.technicians["tech_a"].name == "senior_tech"
-            assert cfg.technicians["tech_a"].id == 7
         finally:
             os.unlink(tmp_path)
             if old_env is None:

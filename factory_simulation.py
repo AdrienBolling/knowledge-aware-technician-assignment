@@ -84,10 +84,8 @@ def build_factory_simulation(seed: int = 42) -> simpy.Environment:
         GymTechnician(
             tech_conf=TechnicianConfig(),
         )
-        for i in range(3)
+        for _ in range(3)
     ]
-    for i, t in enumerate(techs):
-        t.id = i
 
     # Create tech dispatcher
     dispatcher = GymTechDispatcher(env, techs)
@@ -98,17 +96,17 @@ def build_factory_simulation(seed: int = 42) -> simpy.Environment:
 
     # Create buffers
     buffers = {}
-    buffers["src_out"] = Buffer(env, 0, "BUF_SRC", capacity=50)
-    buffers["route_out"] = Buffer(env, 1, "BUF_ROUTE", capacity=100)
-    buffers["drill_q"] = Buffer(env, 2, "BUF_DRILL_IN", capacity=30)
-    buffers["paint_q"] = Buffer(env, 3, "BUF_PAINT_IN", capacity=30)
-    buffers["m1_in"] = Buffer(env, 4, "BUF_M1_IN", capacity=5)
-    buffers["m1_out"] = Buffer(env, 5, "BUF_M1_OUT", capacity=5)
-    buffers["m2_in"] = Buffer(env, 6, "BUF_M2_IN", capacity=5)
-    buffers["m2_out"] = Buffer(env, 7, "BUF_M2_OUT", capacity=5)
-    buffers["p1_in"] = Buffer(env, 8, "BUF_P1_IN", capacity=5)
-    buffers["p1_out"] = Buffer(env, 9, "BUF_P1_OUT", capacity=5)
-    buffers["sink_in"] = Buffer(env, 10, "BUF_SINK", capacity=100)
+    buffers["src_out"] = Buffer(env, "BUF_SRC", capacity=50)
+    buffers["route_out"] = Buffer(env, "BUF_ROUTE", capacity=100)
+    buffers["drill_q"] = Buffer(env, "BUF_DRILL_IN", capacity=30)
+    buffers["paint_q"] = Buffer(env, "BUF_PAINT_IN", capacity=30)
+    buffers["m1_in"] = Buffer(env, "BUF_M1_IN", capacity=5)
+    buffers["m1_out"] = Buffer(env, "BUF_M1_OUT", capacity=5)
+    buffers["m2_in"] = Buffer(env, "BUF_M2_IN", capacity=5)
+    buffers["m2_out"] = Buffer(env, "BUF_M2_OUT", capacity=5)
+    buffers["p1_in"] = Buffer(env, "BUF_P1_IN", capacity=5)
+    buffers["p1_out"] = Buffer(env, "BUF_P1_OUT", capacity=5)
+    buffers["sink_in"] = Buffer(env, "BUF_SINK", capacity=100)
 
     # Create machines with breakdown processes
     m1 = Machine(
@@ -150,7 +148,6 @@ def build_factory_simulation(seed: int = 42) -> simpy.Environment:
     # Create source
     source = Source(
         env=env,
-        source_id=0,
         name="MainSource",
         out_buffer=buffers["route_out"],
         interarrival_time=7.0,
@@ -161,7 +158,6 @@ def build_factory_simulation(seed: int = 42) -> simpy.Environment:
     # Create router
     router = Router(
         env=env,
-        router_id=0,
         name="MainRouter",
         in_buffer=buffers["route_out"],
         type_to_buffer={
@@ -174,7 +170,6 @@ def build_factory_simulation(seed: int = 42) -> simpy.Environment:
     # Create feeders
     drill_feeder = MachineFeeder(
         env=env,
-        feeder_id=0,
         name="DrillFeeder",
         machine_type="Drill",
         in_buffer=buffers["drill_q"],
@@ -183,7 +178,6 @@ def build_factory_simulation(seed: int = 42) -> simpy.Environment:
 
     paint_feeder = MachineFeeder(
         env=env,
-        feeder_id=1,
         name="PaintFeeder",
         machine_type="Paint",
         in_buffer=buffers["paint_q"],
@@ -198,7 +192,6 @@ def build_factory_simulation(seed: int = 42) -> simpy.Environment:
     # Create sink
     sink = Sink(
         env=env,
-        sink_id=0,
         name="MainSink",
         in_buffer=buffers["sink_in"],
     )

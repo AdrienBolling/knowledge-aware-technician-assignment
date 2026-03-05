@@ -7,11 +7,11 @@ from kata.entities.products.product import Product
 
 class Sink(SinkBase):
     """A sink that consumes completed products from an input buffer."""
-    
+    _id_counter = 0
+
     def __init__(
         self,
         env: simpy.Environment,
-        sink_id: int,
         name: str,
         in_buffer: Buffer,
     ):
@@ -20,12 +20,12 @@ class Sink(SinkBase):
         
         Args:
             env: SimPy environment
-            sink_id: Unique identifier
             name: Name of the sink
             in_buffer: Input buffer to receive products from
         """
         self.env = env
-        self.id = sink_id
+        self.id = Sink._id_counter
+        Sink._id_counter += 1
         self.name = name
         self.in_buffer = in_buffer
         
