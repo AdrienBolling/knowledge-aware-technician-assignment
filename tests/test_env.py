@@ -112,7 +112,10 @@ def test_invalid_action_is_penalized_by_default():
     env.reset()
 
     _, reward, terminated, _, _ = env.step(99)
+    assert dispatcher.assignments == []
+
+    _, _, _, _, _ = env.step(1)
 
     assert reward == -3.0
     assert terminated is False
-    assert dispatcher.assignments == []
+    assert dispatcher.assignments == [(1, 3)]

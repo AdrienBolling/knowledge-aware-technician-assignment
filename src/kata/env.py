@@ -37,7 +37,6 @@ class KataEnv(gym.Env):
         self.dispatcher: Any | None = None
         self.current_request: Any | None = None
         self.episode_step = 0
-        self.last_reward = 0.0
 
         self._bootstrap_scenario()
 
@@ -56,37 +55,38 @@ class KataEnv(gym.Env):
 
         n_techs = len(self.dispatcher.techs)
         self.action_space = gym.spaces.Discrete(n_techs)
-        self.observation_space = gym.spaces.Dict(
-            {
-                "sim_time": gym.spaces.Box(
-                    low=np.array([0.0], dtype=np.float32),
-                    high=np.array([np.finfo(np.float32).max], dtype=np.float32),
-                    dtype=np.float32,
-                ),
-                "has_open_ticket": gym.spaces.MultiBinary(1),
-                "ticket_created_at": gym.spaces.Box(
-                    low=np.array([-1.0], dtype=np.float32),
-                    high=np.array([np.finfo(np.float32).max], dtype=np.float32),
-                    dtype=np.float32,
-                ),
-                "ticket_machine_id": gym.spaces.Box(
-                    low=np.array([-1.0], dtype=np.float32),
-                    high=np.array([np.finfo(np.float32).max], dtype=np.float32),
-                    dtype=np.float32,
-                ),
-                "technician_busy": gym.spaces.MultiBinary(n_techs),
-                "technician_fatigue": gym.spaces.Box(
-                    low=np.zeros(n_techs, dtype=np.float32),
-                    high=np.ones(n_techs, dtype=np.float32),
-                    dtype=np.float32,
-                ),
-                "pending_queue_size": gym.spaces.Box(
-                    low=np.array([0.0], dtype=np.float32),
-                    high=np.array([np.finfo(np.float32).max], dtype=np.float32),
-                    dtype=np.float32,
-                ),
-            }
-        )
+        observation_space: dict[str, gym.Space] = {
+            "sim_time": gym.spaces.Box(
+                low=np.array([0.0], dtype=np.float32),
+                high=np.array([np.finfo(np.float32).max], dtype=np.float32),
+                dtype=np.float32,
+            ),
+            "has_open_ticket": gym.spaces.MultiBinary(1),
+            "ticket_created_at": gym.spaces.Box(
+                low=np.array([-1.0], dtype=np.float32),
+                high=np.array([np.finfo(np.float32).max], dtype=np.float32),
+                dtype=np.float32,
+            ),
+            "ticket_machine_id": gym.spaces.Box(
+                low=np.array([-1.0], dtype=np.float32),
+                high=np.array([np.finfo(np.float32).max], dtype=np.float32),
+                dtype=np.float32,
+            ),
+            "technician_busy": gym.spaces.MultiBinary(n_techs),
+        }
+        if self.config.include_fatigue_in_observation:
+            observation_space["technician_fatigue"] = gym.spaces.Box(
+                low=np.zeros(n_techs, dtype=np.float32),
+                high=np.ones(n_techs, dtype=np.float32),
+                dtype=np.float32,
+            )
+        if self.config.include_queue_size_in_observation:
+            observation_space["pending_queue_size"] = gym.spaces.Box(
+                low=np.array([0.0], dtype=np.float32),
+                high=np.array([np.finfo(np.float32).max], dtype=np.float32),
+                dtype=np.float32,
+            )
+        self.observation_space = gym.spaces.Dict(observation_space)
 
     def _queue(self) -> Any:
         return self.dispatcher.repair_queue
@@ -143,9 +143,13 @@ class KataEnv(gym.Env):
                 return
 
             next_event_time = self.sim_env.peek()
-            if np.isinf(next_event_time):
+            try:
+                next_event_time_float = float(next_event_time)
+            except (TypeError, ValueError):
                 return
-            if float(next_event_time) > float(self.config.max_sim_time):
+            if np.isinf(next_event_time_float):
+                return
+            if next_event_time_float > float(self.config.max_sim_time):
                 return
             self.sim_env.step()
 
@@ -161,22 +165,12 @@ class KataEnv(gym.Env):
         return self.current_request is None and self._queue_size() == 0
 
     def _obs(self) -> dict[str, np.ndarray]:
-        n_techs = len(self.dispatcher.techs)
         ticket = self.current_request
         busy = np.asarray(
             [1 if getattr(tech, "busy", False) else 0 for tech in self.dispatcher.techs],
             dtype=np.int8,
         )
-        if self.config.include_fatigue_in_observation:
-            fatigue = np.asarray(
-                [float(getattr(tech, "fatigue", 0.0)) for tech in self.dispatcher.techs],
-                dtype=np.float32,
-            )
-        else:
-            fatigue = np.zeros(n_techs, dtype=np.float32)
-        queue_size = self._queue_size() if self.config.include_queue_size_in_observation else 0
-
-        return {
+        observation: dict[str, np.ndarray] = {
             "sim_time": np.asarray([self._sim_time()], dtype=np.float32),
             "has_open_ticket": np.asarray([1 if ticket is not None else 0], dtype=np.int8),
             "ticket_created_at": np.asarray([self._request_created_at(ticket)], dtype=np.float32),
@@ -184,9 +178,17 @@ class KataEnv(gym.Env):
                 [self._machine_id_from_request(ticket)], dtype=np.float32
             ),
             "technician_busy": busy,
-            "technician_fatigue": fatigue,
-            "pending_queue_size": np.asarray([float(queue_size)], dtype=np.float32),
         }
+        if self.config.include_fatigue_in_observation:
+            observation["technician_fatigue"] = np.asarray(
+                [float(getattr(tech, "fatigue", 0.0)) for tech in self.dispatcher.techs],
+                dtype=np.float32,
+            )
+        if self.config.include_queue_size_in_observation:
+            observation["pending_queue_size"] = np.asarray(
+                [float(self._queue_size())], dtype=np.float32
+            )
+        return observation
 
     def _info(self) -> dict[str, Any]:
         return {
@@ -212,7 +214,6 @@ class KataEnv(gym.Env):
             self._bootstrap_scenario()
 
         self.episode_step = 0
-        self.last_reward = 0.0
         self.current_request = None
         self._advance_until_next_ticket()
         return self._obs(), self._info()
@@ -239,7 +240,6 @@ class KataEnv(gym.Env):
         self.episode_step += 1
 
         reward = self._reward_for_assignment(request)
-        self.last_reward = reward
         self._advance_until_next_ticket()
         terminated = self._is_done()
         return self._obs(), reward, terminated, False, self._info()
