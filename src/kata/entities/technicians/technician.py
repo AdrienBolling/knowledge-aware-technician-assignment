@@ -3,10 +3,10 @@ import simpy
 
 class Technician:
     """Basic Technician implementation for SimPy simulation."""
-    
+    _id_counter = 0
+
     def __init__(
         self,
-        tech_id: int,
         name: str,
         travel_time: int = 10,
         efficiency: float = 1.0,
@@ -15,12 +15,12 @@ class Technician:
         Initialize a Technician.
         
         Args:
-            tech_id: Unique identifier for this technician
             name: Name of the technician
             travel_time: Time to travel to any machine (simplified)
             efficiency: Multiplier for repair time (< 1.0 = faster, > 1.0 = slower)
         """
-        self.id = tech_id
+        self.id = Technician._id_counter
+        Technician._id_counter += 1
         self.name = name
         self.travel_time_value = travel_time
         self.efficiency = efficiency

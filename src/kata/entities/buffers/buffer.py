@@ -6,11 +6,11 @@ from kata.entities.buffers.base import Buffer as BufferBase
 
 class Buffer(BufferBase):
     """Concrete implementation of a SimPy buffer using simpy.Store."""
-    
+    _id_counter = 0
+
     def __init__(
         self,
         env: simpy.Environment,
-        buffer_id: int,
         name: str,
         capacity: int = float('inf'),
     ):
@@ -19,12 +19,12 @@ class Buffer(BufferBase):
         
         Args:
             env: SimPy environment
-            buffer_id: Unique identifier for this buffer
             name: Name of the buffer
             capacity: Maximum capacity of the buffer (default: infinite)
         """
         self.env = env
-        self.id = buffer_id
+        self.id = Buffer._id_counter
+        Buffer._id_counter += 1
         self.name = name
         self.capacity = capacity
         self.store = simpy.Store(env, capacity=int(capacity) if capacity != float('inf') else None)

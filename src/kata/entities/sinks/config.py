@@ -7,7 +7,7 @@ class SinkConfig(BaseModel):
     """Configuration for a Sink."""
 
     name: str = Field(
-        default="sink_0",
+        default="sink",
         description="Human-readable name for the sink.",
     )
 
