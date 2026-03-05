@@ -37,6 +37,7 @@ class KataEnv(gym.Env):
         self.dispatcher: Any | None = None
         self.current_request: Any | None = None
         self.episode_step = 0
+        self._last_reward_breakdown: dict[str, float] = {}
 
         self._bootstrap_scenario()
 
@@ -55,6 +56,18 @@ class KataEnv(gym.Env):
 
         n_techs = len(self.dispatcher.techs)
         self.action_space = gym.spaces.Discrete(n_techs)
+        if self.config.observation_representation == "tokens":
+            token_spaces = tuple(
+                gym.spaces.Text(max_length=self.config.token_max_length)
+                for _ in range(self.config.token_observation_length)
+            )
+            self.observation_space = gym.spaces.Dict(
+                {
+                    "tokens": gym.spaces.Tuple(token_spaces),
+                }
+            )
+            return
+
         observation_space: dict[str, gym.Space] = {
             "sim_time": gym.spaces.Box(
                 low=np.array([0.0], dtype=np.float32),
@@ -164,7 +177,102 @@ class KataEnv(gym.Env):
             return False
         return self.current_request is None and self._queue_size() == 0
 
-    def _obs(self) -> dict[str, np.ndarray]:
+    def _machine_buffer_size(self, machine: Any, attr: str) -> int:
+        buffer = getattr(machine, attr, None)
+        if buffer is None:
+            return 0
+        if hasattr(buffer, "items"):
+            return len(buffer.items)
+        if hasattr(buffer, "__len__"):
+            return len(buffer)
+        return 0
+
+    def _factory_machines(self) -> list[Any]:
+        for source in (self.dispatcher, self.sim_env):
+            machines = getattr(source, "machines", None)
+            if machines is None:
+                continue
+            if isinstance(machines, dict):
+                return list(machines.values())
+            return list(machines)
+        if self.current_request is not None and getattr(self.current_request, "machine", None) is not None:
+            return [self.current_request.machine]
+        return []
+
+    def _technician_knowledge_value(self, tech: Any) -> float:
+        if hasattr(tech, "knowledge"):
+            return float(getattr(tech, "knowledge"))
+        knowledge_grid = getattr(tech, "knowledge_grid", None)
+        if knowledge_grid is not None:
+            values = getattr(knowledge_grid, "grid", None)
+            if values is None:
+                values = getattr(knowledge_grid, "_grid", None)
+            if values is not None:
+                return float(np.asarray(values, dtype=np.float32).mean())
+        return 0.0
+
+    def _token_obs(self) -> dict[str, tuple[str, ...]]:
+        ticket = self.current_request
+        tokens = [
+            f"OBS_MODE:{self.config.observation_mode}",
+            f"SIM_TIME:{self._sim_time():.3f}",
+            f"HAS_OPEN_TICKET:{1 if ticket is not None else 0}",
+            f"TICKET_CREATED_AT:{self._request_created_at(ticket):.3f}",
+            f"TICKET_MACHINE_ID:{self._machine_id_from_request(ticket):.0f}",
+        ]
+
+        machine = getattr(ticket, "machine", None)
+        if self.config.observation_mode in {"broken_machine", "factory_level"}:
+            tokens.extend(
+                [
+                    f"MACHINE_ID:{self._machine_id_from_request(ticket):.0f}",
+                    f"MACHINE_BROKEN:{1 if bool(getattr(machine, 'broken', False)) else 0}",
+                    f"MACHINE_PROCESSING:{1 if bool(getattr(machine, 'is_processing', False)) else 0}",
+                    f"MACHINE_TOTAL_PROCESSED:{int(getattr(machine, 'total_processed', 0))}",
+                    f"MACHINE_INPUT_BUFFER:{self._machine_buffer_size(machine, 'input_buffer')}",
+                    f"MACHINE_OUTPUT_BUFFER:{self._machine_buffer_size(machine, 'output_buffer')}",
+                ]
+            )
+
+        if self.config.observation_mode == "factory_level":
+            machines = self._factory_machines()
+            broken_count = sum(1 for m in machines if bool(getattr(m, "broken", False)))
+            processing_count = sum(1 for m in machines if bool(getattr(m, "is_processing", False)))
+            total_processed = sum(int(getattr(m, "total_processed", 0)) for m in machines)
+            tokens.extend(
+                [
+                    f"FACTORY_MACHINE_COUNT:{len(machines)}",
+                    f"FACTORY_BROKEN_COUNT:{broken_count}",
+                    f"FACTORY_PROCESSING_COUNT:{processing_count}",
+                    f"FACTORY_TOTAL_PROCESSED:{total_processed}",
+                    f"FACTORY_QUEUE_SIZE:{self._queue_size()}",
+                ]
+            )
+
+        if self.config.include_technician_fatigue_tokens:
+            tokens.extend(
+                [
+                    f"TECH_{idx}_FATIGUE:{float(getattr(tech, 'fatigue', 0.0)):.3f}"
+                    for idx, tech in enumerate(self.dispatcher.techs)
+                ]
+            )
+
+        if self.config.include_technician_knowledge_tokens:
+            tokens.extend(
+                [
+                    f"TECH_{idx}_KNOWLEDGE:{self._technician_knowledge_value(tech):.3f}"
+                    for idx, tech in enumerate(self.dispatcher.techs)
+                ]
+            )
+
+        target_length = self.config.token_observation_length
+        if len(tokens) < target_length:
+            tokens.extend([self.config.token_pad_value] * (target_length - len(tokens)))
+        else:
+            tokens = tokens[:target_length]
+        return {"tokens": tuple(tokens)}
+
+    def _structured_obs(self) -> dict[str, np.ndarray]:
         ticket = self.current_request
         busy = np.asarray(
             [1 if getattr(tech, "busy", False) else 0 for tech in self.dispatcher.techs],
@@ -190,21 +298,53 @@ class KataEnv(gym.Env):
             )
         return observation
 
+    def _obs(self) -> dict[str, Any]:
+        if self.config.observation_representation == "tokens":
+            return self._token_obs()
+        return self._structured_obs()
+
     def _info(self) -> dict[str, Any]:
         return {
             "episode_step": self.episode_step,
             "sim_time": self._sim_time(),
             "has_open_ticket": self.current_request is not None,
             "pending_queue_size": self._queue_size(),
+            "reward_breakdown": dict(self._last_reward_breakdown),
         }
 
-    def _reward_for_assignment(self, request: Any) -> float:
+    def _reward_for_assignment(self, request: Any, tech_id: int) -> float:
         created_at = float(getattr(request, "created_at", self._sim_time()))
         waiting = max(0.0, self._sim_time() - created_at)
-        return float(
-            self.config.assignment_reward
-            - self.config.ticket_wait_time_penalty * waiting
-        )
+        assignment_raw = float(self.config.assignment_reward)
+        wait_time_raw = -float(self.config.ticket_wait_time_penalty) * waiting
+        tech = self.dispatcher.techs[tech_id]
+        busy_raw = -1.0 if bool(getattr(tech, "busy", False)) else 0.0
+        queue_raw = -float(self._queue_size())
+
+        breakdown = {
+            "assignment": (
+                self.config.reward.assignment.coefficient * assignment_raw
+                if self.config.reward.assignment.enabled
+                else 0.0
+            ),
+            "wait_time": (
+                self.config.reward.wait_time.coefficient * wait_time_raw
+                if self.config.reward.wait_time.enabled
+                else 0.0
+            ),
+            "queue_size": (
+                self.config.reward.queue_size.coefficient * queue_raw
+                if self.config.reward.queue_size.enabled
+                else 0.0
+            ),
+            "busy_technician": (
+                self.config.reward.busy_technician.coefficient * busy_raw
+                if self.config.reward.busy_technician.enabled
+                else 0.0
+            ),
+        }
+        self._last_reward_breakdown = breakdown
+        return float(sum(breakdown.values()))
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
         super().reset(seed=seed)
@@ -215,6 +355,7 @@ class KataEnv(gym.Env):
 
         self.episode_step = 0
         self.current_request = None
+        self._last_reward_breakdown = {}
         self._advance_until_next_ticket()
         return self._obs(), self._info()
 
@@ -231,6 +372,7 @@ class KataEnv(gym.Env):
                 message = f"Invalid technician index: {action}"
                 raise ValueError(message)
             reward = float(self.config.invalid_action_penalty)
+            self._last_reward_breakdown = {"invalid_action": reward}
             terminated = self.config.invalid_action_mode == "terminate"
             return self._obs(), reward, terminated, False, self._info()
 
@@ -239,7 +381,7 @@ class KataEnv(gym.Env):
         self.dispatcher.start_repair(action, request)
         self.episode_step += 1
 
-        reward = self._reward_for_assignment(request)
+        reward = self._reward_for_assignment(request, action)
         self._advance_until_next_ticket()
         terminated = self._is_done()
         return self._obs(), reward, terminated, False, self._info()

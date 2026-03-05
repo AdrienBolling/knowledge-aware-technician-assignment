@@ -114,52 +114,6 @@ class SimEnvConfig(BaseModel):
     technicians: GlobalTechniciansConfig = Field(default_factory=GlobalTechniciansConfig)
 
 
-class GymEnvConfig(BaseModel):
-    """Configuration for the Gymnasium wrapper around the simulation."""
-
-    max_episode_steps: int = Field(
-        default=10_000,
-        gt=0,
-        description="Maximum number of environment steps per episode.",
-    )
-    max_sim_time: float = Field(
-        default=10_000.0,
-        gt=0.0,
-        description="Maximum simulation time in one episode.",
-    )
-    invalid_action_mode: Literal["penalize", "terminate", "raise"] = Field(
-        default="penalize",
-        description=(
-            "Behavior when an invalid technician action is provided: "
-            "'penalize' applies a penalty and continues, "
-            "'terminate' ends the episode, 'raise' raises ValueError."
-        ),
-    )
-    invalid_action_penalty: float = Field(
-        default=-1.0,
-        description="Reward added when an invalid action is taken.",
-    )
-    assignment_reward: float = Field(
-        default=0.0,
-        description="Base reward granted after assigning a technician to a ticket.",
-    )
-    ticket_wait_time_penalty: float = Field(
-        default=0.01,
-        ge=0.0,
-        description=(
-            "Penalty multiplier applied to ticket waiting time before assignment."
-        ),
-    )
-    include_fatigue_in_observation: bool = Field(
-        default=True,
-        description="Include technicians' fatigue values in observation vectors.",
-    )
-    include_queue_size_in_observation: bool = Field(
-        default=True,
-        description="Include pending-repair queue size in observations.",
-    )
-
-
 class RewardComponentConfig(BaseModel):
     """Configuration for one reward component."""
 
@@ -234,6 +188,39 @@ class GymEnvConfig(BaseModel):
     reward: GymRewardConfig = Field(
         default_factory=GymRewardConfig,
         description="Composable reward settings with configurable sub-components.",
+    )
+    observation_representation: Literal["structured", "tokens"] = Field(
+        default="structured",
+        description=(
+            "Observation payload format. 'structured' keeps numeric fields, "
+            "'tokens' returns fixed-size textual token tuples."
+        ),
+    )
+    observation_mode: Literal["ticket_only", "broken_machine", "factory_level"] = Field(
+        default="ticket_only",
+        description="Level of context to include in token observations.",
+    )
+    token_observation_length: int = Field(
+        default=64,
+        gt=0,
+        description="Fixed number of textual tokens emitted in token observations.",
+    )
+    token_max_length: int = Field(
+        default=64,
+        gt=0,
+        description="Maximum character length for each textual token.",
+    )
+    token_pad_value: str = Field(
+        default="<PAD>",
+        description="Token used to pad token observations to fixed length.",
+    )
+    include_technician_fatigue_tokens: bool = Field(
+        default=False,
+        description="Include fleet fatigue tokens when using token observations.",
+    )
+    include_technician_knowledge_tokens: bool = Field(
+        default=False,
+        description="Include fleet knowledge tokens when using token observations.",
     )
     include_fatigue_in_observation: bool = Field(
         default=True,
