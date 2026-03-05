@@ -1,100 +1,223 @@
-"""Pydantic model of the configuration file. Function get_config can be used by any module of the project to get the singleton configuration object."""
+"""
+Centralised settings for KATA.
+
+``KATAConfig`` is the single source of truth for all run-time options.
+It is a ``pydantic-settings`` model that can be populated from:
+  1. A JSON file whose path is given by the ``KATA_CONF_PATH`` environment
+     variable (defaults to ``run_configs/config.json``).
+  2. Environment variables (prefixed with ``KATA_``).
+  3. Hard-coded defaults defined below.
+
+Entity-level configuration models (``TechnicianConfig``, ``MachineConfig``,
+``ComponentConfig``, …) live alongside their respective entity files under
+``src/kata/entities/…/config.py`` and are **re-exported from this module**
+for backward compatibility.
+
+Usage
+-----
+>>> from kata.core.config import get_config
+>>> cfg = get_config()
+>>> cfg.sim.technicians.travel_time
+10
+"""
 
 import os
+from functools import lru_cache
+
+from pydantic import BaseModel, Field
 from pydantic_settings import (
     BaseSettings,
     JsonConfigSettingsSource,
-    SettingsConfigDict,
     PydanticBaseSettingsSource,
+    SettingsConfigDict,
 )
-from pydantic import BaseModel
-from typing import Annotated
-from functools import lru_cache
+
+# ---------------------------------------------------------------------------
+# Re-export entity-level configs so existing imports keep working.
+# ---------------------------------------------------------------------------
+from kata.entities.technicians.config import TechnicianConfig  # noqa: F401
+from kata.entities.components.config import ComponentConfig  # noqa: F401
+from kata.entities.machines.config import MachineConfig  # noqa: F401
+from kata.entities.buffers.config import BufferConfig  # noqa: F401
+from kata.entities.sources.config import SourceConfig  # noqa: F401
+from kata.entities.sinks.config import SinkConfig  # noqa: F401
+from kata.entities.routers.config import RouterConfig  # noqa: F401
+from kata.entities.machine_feeder.config import MachineFeederConfig  # noqa: F401
+from kata.entities.tech_dispatcher.config import TechDispatcherConfig  # noqa: F401
+from kata.entities.production_line.config import ProductionLineConfig  # noqa: F401
+from kata.EntityFactories.config import SyntheticTicketFactoryConfig  # noqa: F401
+from kata.features.breakdown.config import (  # noqa: F401
+    SimpleBreakdownConfig,
+    WeibullBreakdownConfig,
+)
+
+# ---------------------------------------------------------------------------
+# Simulation-environment sub-configs (global/cross-entity concerns)
+# ---------------------------------------------------------------------------
 
 
 class DisruptionConfig(BaseModel):
-    """Configuration model for disruptions in the simulation environment."""
+    """Configuration for stochastic technician disruptions (e.g. sick leave)."""
 
-    interupt_on_disrupt: bool = True
-    dis_dict: dict[str, dict[str, float]] = {
-        "sick_leave": {"mu": 480.0, "sig": 120.0, "prob": 1.0},
-    }
+    interrupt_on_disrupt: bool = Field(
+        default=True,
+        description="Whether an ongoing repair is pre-empted when a disruption starts.",
+    )
+    dis_dict: dict[str, dict[str, float]] = Field(
+        default={"sick_leave": {"mu": 480.0, "sig": 120.0, "prob": 1.0}},
+        description=(
+            "Mapping of disruption type -> parameters. "
+            "Each entry must have 'mu' (mean duration), 'sig' (std dev), "
+            "and 'prob' (relative probability of that disruption type)."
+        ),
+    )
 
 
 class RepairConfig(BaseModel):
-    """COnfiguration for repair processes in the simulation environment."""
+    """Global switches that control how repair time is computed."""
 
-    knowledge_enabled: bool = (
-        True  # is knowledge taken into account for repair time computation
+    knowledge_enabled: bool = Field(
+        default=True,
+        description="Apply knowledge multiplier to base repair time when True.",
     )
-    fatigue_enabled: bool = (
-        True  # is fatigue taken into account for repair time computation
+    fatigue_enabled: bool = Field(
+        default=True,
+        description="Apply fatigue multiplier to base repair time when True.",
     )
-
-
-class TechnicianConfig(BaseModel): ...
-
-
-class ComponentConfig(BaseModel):
-    """Configuration for a machine component."""
-    
-    component_type: str = "generic"  # Type of component (e.g., motor, bearing, sensor)
-    degradation_rate: float = 0.001  # Base degradation rate
-    idle_degradation_factor: float = 0.1  # Degradation factor when idle
-    base_repair_time: float = 10.0  # Base time to repair this component
-    breakdown_model: str = "simple"  # Type of breakdown model: simple or weibull
-    
-    # For simple breakdown model
-    failure_prob_working: float = 0.001
-    failure_prob_idle: float = 0.0001
-    
-    # For Weibull breakdown model
-    weibull_shape: float = 2.0
-    weibull_scale: float = 1000.0
-
-
-class MachineConfig(BaseModel):
-    """Configuration for a machine."""
-    
-    machine_type: str = "generic"
-    process_time: int = 100
-    components: dict[str, ComponentConfig] = {}  # Component ID -> ComponentConfig
 
 
 class GlobalTechniciansConfig(BaseModel):
-    travel_time: int = 10  # travel time between machines in minutes
-    fatigue_model: str = "exponential"  # can be either exponential or linear
-    fatigue_alpha: float = 0.5  # parameter for exponential fatigue model
+    """Global, cross-technician parameters used by the simulation environment."""
+
+    travel_time: int = Field(
+        default=10,
+        gt=0,
+        description="Travel time (in simulation time units) between any two machines.",
+    )
+    fatigue_model: str = Field(
+        default="exponential",
+        description="Fatigue model to use: 'exponential' or 'linear'.",
+    )
+    fatigue_alpha: float = Field(
+        default=0.5,
+        gt=0.0,
+        description="Alpha parameter for the exponential fatigue model.",
+    )
 
 
 class SimEnvConfig(BaseModel):
-    """Configuration model for the simulation environment."""
+    """Top-level configuration for the SimPy simulation environment."""
 
-    disruptions: DisruptionConfig = DisruptionConfig()
-    repair: RepairConfig = RepairConfig()
-    technicians: GlobalTechniciansConfig = GlobalTechniciansConfig()
-
-
-class GymEnvConfig(BaseModel): ...
+    disruptions: DisruptionConfig = Field(default_factory=DisruptionConfig)
+    repair: RepairConfig = Field(default_factory=RepairConfig)
+    technicians: GlobalTechniciansConfig = Field(default_factory=GlobalTechniciansConfig)
 
 
-class ProductConfig(BaseModel): ...
+class GymEnvConfig(BaseModel):
+    """Configuration for the Gymnasium wrapper around the simulation."""
+
+    max_episode_steps: int = Field(
+        default=10_000,
+        gt=0,
+        description="Maximum number of environment steps per episode.",
+    )
+
+
+class ProductConfig(BaseModel):
+    """Configuration for a product type."""
+
+    product_type: str = Field(
+        default="generic",
+        description="Unique name/type identifier for this product.",
+    )
+    route: list[str] = Field(
+        default_factory=list,
+        description="Ordered list of machine type names that define the production route.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Top-level KATAConfig (the centralised settings object)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_CONFIG_FILE = "run_configs/config.json"
 
 
 class KATAConfig(BaseSettings):
-    """Pydantic model of the configuration file. The config file must be formatted as a json file."""
+    """
+    Centralised settings for KATA.
 
-    config_file: str = os.getenv("KATA_CONF_PATH", "run_configs/config.json")
-    model_config = SettingsConfigDict(json_file=config_file, cli_parse_args=True)
+    Can be loaded from a JSON file (path set via ``KATA_CONF_PATH`` env var),
+    from ``KATA_``-prefixed environment variables, or will fall back to the
+    defaults defined here.
+    """
 
-    technicians: dict[str, TechnicianConfig] = {"technician_1": TechnicianConfig()}
-    machines: dict[str, MachineConfig] = {"machine_type_1": MachineConfig()}
-    products: dict[str, ProductConfig] = {"product_type_1": ProductConfig()}
-    sim: SimEnvConfig = SimEnvConfig()
-    gym: GymEnvConfig = GymEnvConfig()
+    model_config = SettingsConfigDict(
+        env_prefix="KATA_",
+        env_nested_delimiter="__",
+        cli_parse_args=False,
+    )
+
+    # ------------------------------------------------------------------
+    # Entity registries – keyed by a user-defined name/ID string
+    # ------------------------------------------------------------------
+    technicians: dict[str, TechnicianConfig] = Field(
+        default={"technician_0": TechnicianConfig()},
+        description="Registry of technician configurations keyed by technician name.",
+    )
+    machines: dict[str, MachineConfig] = Field(
+        default={"machine_type_0": MachineConfig()},
+        description="Registry of machine-type configurations keyed by machine type name.",
+    )
+    products: dict[str, ProductConfig] = Field(
+        default={"product_type_0": ProductConfig()},
+        description="Registry of product-type configurations keyed by product type name.",
+    )
+
+    # ------------------------------------------------------------------
+    # Sub-environment configs
+    # ------------------------------------------------------------------
+    sim: SimEnvConfig = Field(
+        default_factory=SimEnvConfig,
+        description="Simulation-environment settings.",
+    )
+    gym: GymEnvConfig = Field(
+        default_factory=GymEnvConfig,
+        description="Gymnasium-wrapper settings.",
+    )
+
+    # ------------------------------------------------------------------
+    # Factory configs
+    # ------------------------------------------------------------------
+    ticket_factory: SyntheticTicketFactoryConfig = Field(
+        default_factory=SyntheticTicketFactoryConfig,
+        description="Configuration for the SyntheticTicketFactory.",
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type["KATAConfig"],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Load from: init kwargs > env vars > JSON file (if it exists) > defaults.
+
+        The JSON file path is resolved dynamically from the ``KATA_CONF_PATH``
+        environment variable so it can be changed at runtime without re-importing
+        the module.
+        """
+        json_file = os.getenv("KATA_CONF_PATH", _DEFAULT_CONFIG_FILE)
+        return (
+            init_settings,
+            env_settings,
+            JsonConfigSettingsSource(cls, json_file=json_file),
+        )
 
 
 @lru_cache
 def get_config() -> KATAConfig:
-    """Get the singleton configuration object."""
+    """Return the singleton ``KATAConfig`` instance (cached after first call)."""
     return KATAConfig()
