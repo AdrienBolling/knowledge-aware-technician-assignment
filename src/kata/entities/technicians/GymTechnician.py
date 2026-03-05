@@ -1,7 +1,6 @@
 """GymTechnician is the file for a Technician for a GymEnvironment with a lot of features."""  # noqa: N999
 
 import math
-from nt import error
 from typing import Any
 
 import numpy as np
@@ -21,7 +20,13 @@ CONFIG = get_config()
 class GymTechnician(Technician):
     """Technician for Gym environments. Fitting for use with the GymTechDispatcher class."""
 
-    def __init__(self, tech_conf: TechnicianConfig) -> None:
+    def __init__(
+        self,
+        tech_conf: TechnicianConfig,
+        fatigue_lambda: float = 0.01,
+        fatigue_mu: float = 0.05,
+    ) -> None:
+        self.id = getattr(tech_conf, 'id', 0)
         self.busy: bool = False
         self._interupt_on_disrupt: bool = CONFIG.sim.disruptions.interupt_on_disrupt
 

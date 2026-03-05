@@ -35,7 +35,30 @@ class RepairConfig(BaseModel):
 class TechnicianConfig(BaseModel): ...
 
 
-class MachineConfig(BaseModel): ...
+class ComponentConfig(BaseModel):
+    """Configuration for a machine component."""
+    
+    component_type: str = "generic"  # Type of component (e.g., motor, bearing, sensor)
+    degradation_rate: float = 0.001  # Base degradation rate
+    idle_degradation_factor: float = 0.1  # Degradation factor when idle
+    base_repair_time: float = 10.0  # Base time to repair this component
+    breakdown_model: str = "simple"  # Type of breakdown model: simple or weibull
+    
+    # For simple breakdown model
+    failure_prob_working: float = 0.001
+    failure_prob_idle: float = 0.0001
+    
+    # For Weibull breakdown model
+    weibull_shape: float = 2.0
+    weibull_scale: float = 1000.0
+
+
+class MachineConfig(BaseModel):
+    """Configuration for a machine."""
+    
+    machine_type: str = "generic"
+    process_time: int = 100
+    components: dict[str, ComponentConfig] = {}  # Component ID -> ComponentConfig
 
 
 class GlobalTechniciansConfig(BaseModel):

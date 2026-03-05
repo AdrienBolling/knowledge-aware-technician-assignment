@@ -82,13 +82,18 @@ class Machine(Mach):
 
             # Try to move to the output buffer (may block if full)
             self.is_processing = False
+            
+            # Advance product to next step in route
+            product.advance()
+            
+            buffer_name = getattr(self.output_buffer, 'name', 'output_buffer')
             self._log(
-                f"finished processing product {product.product_id}, enqueue to {self.output_buffer.name}"
+                f"finished processing product {product.product_id}, enqueue to {buffer_name}"
             )
             yield self.output_buffer.put(product)
             self.total_processed += 1
             self._log(
-                f"product {product.product_id} enqueued succesfully to {self.output_buffer}"
+                f"product {product.product_id} enqueued successfully to {buffer_name}"
             )
 
     def _breakdown_driver(self):
@@ -117,3 +122,12 @@ class Machine(Mach):
             self.tech_dispatcher.request_repair(self)
 
     def repair(self, request) -> None:
+        """
+        Repair the machine, making it operational again.
+        
+        Args:
+            request: The repair request that triggered this repair
+        """
+        self.broken = False
+        self.breakdown_process.repair()
+        self._log(f"Successfully repaired! Total processed: {self.total_processed}")
