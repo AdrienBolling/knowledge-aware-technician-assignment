@@ -23,6 +23,7 @@ Usage
 
 import os
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import (
@@ -120,6 +121,42 @@ class GymEnvConfig(BaseModel):
         default=10_000,
         gt=0,
         description="Maximum number of environment steps per episode.",
+    )
+    max_sim_time: float = Field(
+        default=10_000.0,
+        gt=0.0,
+        description="Maximum simulation time in one episode.",
+    )
+    invalid_action_mode: Literal["penalize", "terminate", "raise"] = Field(
+        default="penalize",
+        description=(
+            "Behavior when an invalid technician action is provided: "
+            "'penalize' applies a penalty and continues, "
+            "'terminate' ends the episode, 'raise' raises ValueError."
+        ),
+    )
+    invalid_action_penalty: float = Field(
+        default=-1.0,
+        description="Reward added when an invalid action is taken.",
+    )
+    assignment_reward: float = Field(
+        default=0.0,
+        description="Base reward granted after assigning a technician to a ticket.",
+    )
+    ticket_wait_time_penalty: float = Field(
+        default=0.01,
+        ge=0.0,
+        description=(
+            "Penalty multiplier applied to ticket waiting time before assignment."
+        ),
+    )
+    include_fatigue_in_observation: bool = Field(
+        default=True,
+        description="Include technicians' fatigue values in observation vectors.",
+    )
+    include_queue_size_in_observation: bool = Field(
+        default=True,
+        description="Include pending-repair queue size in observations.",
     )
 
 
