@@ -9,7 +9,7 @@ class SourceConfig(BaseModel):
     """Configuration for a Source."""
 
     name: str = Field(
-        default="source_0",
+        default="source",
         description="Human-readable name for the source.",
     )
     interarrival_time: float = Field(
@@ -35,13 +35,13 @@ class SourceConfig(BaseModel):
 default_source = SourceConfig()
 
 high_throughput_source = SourceConfig(
-    name="high_throughput_source_0",
+    name="high_throughput_source",
     interarrival_time=2.0,
     route=["assembly", "cnc"],
 )
 
 limited_source = SourceConfig(
-    name="limited_source_0",
+    name="limited_source",
     interarrival_time=10.0,
     route=["assembly"],
     max_products=100,

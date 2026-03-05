@@ -19,14 +19,15 @@ CONFIG = get_config()
 
 class GymTechnician(Technician):
     """Technician for Gym environments. Fitting for use with the GymTechDispatcher class."""
+    _id_counter = 0
 
     def __init__(
         self,
         tech_conf: TechnicianConfig,
-        fatigue_lambda: float = 0.01,
-        fatigue_mu: float = 0.05,
     ) -> None:
-        self.id = getattr(tech_conf, 'id', 0)
+        self.id = GymTechnician._id_counter
+        GymTechnician._id_counter += 1
+        self.name = tech_conf.name
         self.busy: bool = False
         self._interrupt_on_disrupt: bool = CONFIG.sim.disruptions.interrupt_on_disrupt
 

@@ -8,11 +8,11 @@ from kata.entities.products.product import Product
 
 class Source(SourceBase):
     """A source that generates products and puts them into an output buffer."""
-    
+    _id_counter = 0
+
     def __init__(
         self,
         env: simpy.Environment,
-        source_id: int,
         name: str,
         out_buffer: Buffer,
         interarrival_time: float = 10.0,
@@ -24,7 +24,6 @@ class Source(SourceBase):
         
         Args:
             env: SimPy environment
-            source_id: Unique identifier
             name: Name of the source
             out_buffer: Output buffer to send products to
             interarrival_time: Time between product arrivals
@@ -32,7 +31,8 @@ class Source(SourceBase):
             max_products: Maximum number of products to generate (None = infinite)
         """
         self.env = env
-        self.id = source_id
+        self.id = Source._id_counter
+        Source._id_counter += 1
         self.name = name
         self.out_buffer = out_buffer
         self.interarrival_time = interarrival_time

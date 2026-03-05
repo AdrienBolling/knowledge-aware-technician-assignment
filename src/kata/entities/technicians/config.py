@@ -10,13 +10,8 @@ class TechnicianConfig(BaseModel):
     Fields cover identity, fatigue dynamics, and knowledge-grid parameters.
     """
 
-    id: int = Field(
-        default=0,
-        ge=0,
-        description="Unique integer identifier for the technician.",
-    )
     name: str = Field(
-        default="technician_0",
+        default="technician",
         description="Human-readable name of the technician.",
     )
 
@@ -73,8 +68,7 @@ class TechnicianConfig(BaseModel):
 default_technician = TechnicianConfig()
 
 expert_technician = TechnicianConfig(
-    id=0,
-    name="expert_technician_0",
+    name="expert_technician",
     fatigue_lambda=0.005,
     fatigue_mu=0.08,
     knowledge_k_shape=(10, 10),
@@ -84,8 +78,7 @@ expert_technician = TechnicianConfig(
 )
 
 junior_technician = TechnicianConfig(
-    id=1,
-    name="junior_technician_1",
+    name="junior_technician",
     fatigue_lambda=0.02,
     fatigue_mu=0.03,
     knowledge_k_shape=(10, 10),

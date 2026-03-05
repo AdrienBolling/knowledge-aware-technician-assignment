@@ -12,7 +12,7 @@ class ProductionLineConfig(BaseModel):
     """Configuration for a ProductionLine."""
 
     name: str = Field(
-        default="production_line_0",
+        default="production_line",
         description="Human-readable name for the production line.",
     )
     machines: dict[str, MachineConfig] = Field(
@@ -38,7 +38,7 @@ class ProductionLineConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 default_production_line = ProductionLineConfig(
-    name="default_line_0",
+    name="default_line",
     machines={"machine_0": MachineConfig()},
     buffers={
         "input_buffer_0": BufferConfig(name="input_buffer_0"),
