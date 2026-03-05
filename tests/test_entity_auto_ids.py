@@ -1,4 +1,5 @@
 import simpy
+import pytest
 
 from kata.entities.buffers.buffer import Buffer
 from kata.entities.machine_feeder.machine_feeder import MachineFeeder
@@ -8,8 +9,18 @@ from kata.entities.sources.source import Source
 from kata.entities.technicians.technician import Technician
 
 
+@pytest.fixture(autouse=True)
+def _reset_entity_id_counters():
+    classes = [Buffer, Source, Sink, Router, MachineFeeder, Technician]
+    saved = {cls: cls._id_counter for cls in classes}
+    for cls in classes:
+        cls._id_counter = 0
+    yield
+    for cls in classes:
+        cls._id_counter = saved[cls]
+
+
 def test_buffer_ids_are_auto_incremented():
-    Buffer._id_counter = 0
     env = simpy.Environment()
 
     b1 = Buffer(env, "b1", capacity=1)
@@ -20,12 +31,6 @@ def test_buffer_ids_are_auto_incremented():
 
 
 def test_entity_ids_are_auto_incremented_per_class():
-    Source._id_counter = 0
-    Sink._id_counter = 0
-    Router._id_counter = 0
-    MachineFeeder._id_counter = 0
-    Technician._id_counter = 0
-
     env = simpy.Environment()
     buffer_a = Buffer(env, "a", capacity=1)
     buffer_b = Buffer(env, "b", capacity=1)

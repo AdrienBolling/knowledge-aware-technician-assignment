@@ -24,10 +24,7 @@ class GymTechnician(Technician):
     def __init__(
         self,
         tech_conf: TechnicianConfig,
-        fatigue_lambda: float = 0.01,
-        fatigue_mu: float = 0.05,
     ) -> None:
-        _ = fatigue_lambda, fatigue_mu  # kept for API compatibility
         self.id = GymTechnician._id_counter
         GymTechnician._id_counter += 1
         self.name = tech_conf.name
