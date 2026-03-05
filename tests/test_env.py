@@ -186,6 +186,31 @@ def test_token_observation_factory_level_with_technician_tokens():
     assert tokens[-1] == "<PAD>"
 
 
+def test_token_observation_broken_machine_contains_machine_tokens_only():
+    sim_env = _FakeSimEnv()
+    dispatcher = _FakeDispatcher(tech_count=1)
+    machine = _FakeMachine(machine_id=6)
+    machine.input_buffer.items.append(object())
+    dispatcher.repair_queue.items.append(_FakeRequest(machine_id=6, created_at=0.0))
+    dispatcher.repair_queue.items[-1].machine = machine
+    env = KataEnv(
+        sim_env=sim_env,
+        dispatcher=dispatcher,
+        config=GymEnvConfig(
+            observation_representation="tokens",
+            observation_mode="broken_machine",
+            token_observation_length=20,
+        ),
+    )
+
+    obs, _ = env.reset()
+    tokens = obs["tokens"]
+
+    assert any(token.startswith("MACHINE_INPUT_BUFFER:1") for token in tokens)
+    assert any(token.startswith("MACHINE_BROKEN:1") for token in tokens)
+    assert all(token.startswith("FACTORY_") is False for token in tokens)
+
+
 def test_reward_is_composed_from_enabled_sub_rewards():
     sim_env = _FakeSimEnv()
     sim_env.now = 10.0
@@ -212,3 +237,28 @@ def test_reward_is_composed_from_enabled_sub_rewards():
     assert reward == 6.0
     assert info["reward_breakdown"]["assignment"] == 6.0
     assert info["reward_breakdown"]["wait_time"] == 0.0
+
+
+def test_reward_busy_technician_component_applies_when_enabled():
+    sim_env = _FakeSimEnv()
+    dispatcher = _FakeDispatcher(tech_count=1)
+    dispatcher.techs[0].busy = True
+    dispatcher.repair_queue.items.append(_FakeRequest(machine_id=2, created_at=0.0))
+    env = KataEnv(
+        sim_env=sim_env,
+        dispatcher=dispatcher,
+        config=GymEnvConfig(
+            reward={
+                "assignment": {"enabled": False, "coefficient": 1.0},
+                "wait_time": {"enabled": False, "coefficient": 1.0},
+                "queue_size": {"enabled": False, "coefficient": 1.0},
+                "busy_technician": {"enabled": True, "coefficient": 2.0},
+            },
+        ),
+    )
+    env.reset()
+
+    _, reward, _, _, info = env.step(0)
+
+    assert reward == -2.0
+    assert info["reward_breakdown"]["busy_technician"] == -2.0

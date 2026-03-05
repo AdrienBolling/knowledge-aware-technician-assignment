@@ -127,6 +127,10 @@ class RewardComponentConfig(BaseModel):
     )
 
 
+def _disabled_reward_component() -> RewardComponentConfig:
+    return RewardComponentConfig(enabled=False, coefficient=1.0)
+
+
 class GymRewardConfig(BaseModel):
     """Composable reward settings for the Gym environment."""
 
@@ -139,11 +143,11 @@ class GymRewardConfig(BaseModel):
         description="Penalty/reward component based on ticket waiting time.",
     )
     queue_size: RewardComponentConfig = Field(
-        default_factory=lambda: RewardComponentConfig(enabled=False, coefficient=1.0),
+        default_factory=_disabled_reward_component,
         description="Component based on pending queue size at dispatch time.",
     )
     busy_technician: RewardComponentConfig = Field(
-        default_factory=lambda: RewardComponentConfig(enabled=False, coefficient=1.0),
+        default_factory=_disabled_reward_component,
         description="Component that penalizes assigning already-busy technicians.",
     )
 
