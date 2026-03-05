@@ -23,6 +23,7 @@ Usage
 
 import os
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import (
@@ -113,6 +114,44 @@ class SimEnvConfig(BaseModel):
     technicians: GlobalTechniciansConfig = Field(default_factory=GlobalTechniciansConfig)
 
 
+class RewardComponentConfig(BaseModel):
+    """Configuration for one reward component."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether this reward component contributes to total reward.",
+    )
+    coefficient: float = Field(
+        default=1.0,
+        description="Linear coefficient applied to this reward component.",
+    )
+
+
+def _disabled_reward_component() -> RewardComponentConfig:
+    return RewardComponentConfig(enabled=False, coefficient=1.0)
+
+
+class GymRewardConfig(BaseModel):
+    """Composable reward settings for the Gym environment."""
+
+    assignment: RewardComponentConfig = Field(
+        default_factory=RewardComponentConfig,
+        description="Constant assignment reward component.",
+    )
+    wait_time: RewardComponentConfig = Field(
+        default_factory=RewardComponentConfig,
+        description="Penalty/reward component based on ticket waiting time.",
+    )
+    queue_size: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description="Component based on pending queue size at dispatch time.",
+    )
+    busy_technician: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description="Component that penalizes assigning already-busy technicians.",
+    )
+
+
 class GymEnvConfig(BaseModel):
     """Configuration for the Gymnasium wrapper around the simulation."""
 
@@ -120,6 +159,80 @@ class GymEnvConfig(BaseModel):
         default=10_000,
         gt=0,
         description="Maximum number of environment steps per episode.",
+    )
+    max_sim_time: float = Field(
+        default=10_000.0,
+        gt=0.0,
+        description="Maximum simulation time in one episode.",
+    )
+    invalid_action_mode: Literal["penalize", "terminate", "raise"] = Field(
+        default="penalize",
+        description=(
+            "Behavior when an invalid technician action is provided: "
+            "'penalize' applies a penalty and continues, "
+            "'terminate' ends the episode, 'raise' raises ValueError."
+        ),
+    )
+    invalid_action_penalty: float = Field(
+        default=-1.0,
+        description="Reward added when an invalid action is taken.",
+    )
+    assignment_reward: float = Field(
+        default=0.0,
+        description="Raw value of the assignment reward component.",
+    )
+    ticket_wait_time_penalty: float = Field(
+        default=0.01,
+        ge=0.0,
+        description=(
+            "Raw penalty multiplier for waiting time before assignment. "
+            "The resulting raw component is `-ticket_wait_time_penalty * wait_time`."
+        ),
+    )
+    reward: GymRewardConfig = Field(
+        default_factory=GymRewardConfig,
+        description="Composable reward settings with configurable sub-components.",
+    )
+    observation_representation: Literal["structured", "tokens"] = Field(
+        default="structured",
+        description=(
+            "Observation payload format. 'structured' keeps numeric fields, "
+            "'tokens' returns fixed-size textual token tuples."
+        ),
+    )
+    observation_mode: Literal["ticket_only", "broken_machine", "factory_level"] = Field(
+        default="ticket_only",
+        description="Level of context to include in token observations.",
+    )
+    token_observation_length: int = Field(
+        default=64,
+        gt=0,
+        description="Fixed number of textual tokens emitted in token observations.",
+    )
+    token_max_length: int = Field(
+        default=64,
+        gt=0,
+        description="Maximum character length for each textual token.",
+    )
+    token_pad_value: str = Field(
+        default="<PAD>",
+        description="Token used to pad token observations to fixed length.",
+    )
+    include_technician_fatigue_tokens: bool = Field(
+        default=False,
+        description="Include fleet fatigue tokens when using token observations.",
+    )
+    include_technician_knowledge_tokens: bool = Field(
+        default=False,
+        description="Include fleet knowledge tokens when using token observations.",
+    )
+    include_fatigue_in_observation: bool = Field(
+        default=True,
+        description="Include technicians' fatigue values in observation vectors.",
+    )
+    include_queue_size_in_observation: bool = Field(
+        default=True,
+        description="Include pending-repair queue size in observations.",
     )
 
 

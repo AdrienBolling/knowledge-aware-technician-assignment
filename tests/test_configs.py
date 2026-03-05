@@ -536,6 +536,21 @@ class TestSimEnvSubConfigs:
     def test_gym_env_config(self):
         cfg = GymEnvConfig()
         assert cfg.max_episode_steps == 10_000
+        assert cfg.max_sim_time == 10_000.0
+        assert cfg.invalid_action_mode == "penalize"
+        assert cfg.ticket_wait_time_penalty >= 0.0
+        assert cfg.observation_representation == "structured"
+        assert cfg.observation_mode == "ticket_only"
+        assert cfg.token_observation_length > 0
+        assert cfg.include_fatigue_in_observation is True
+
+    def test_gym_env_invalid_wait_penalty(self):
+        with pytest.raises(ValidationError):
+            GymEnvConfig(ticket_wait_time_penalty=-0.1)
+
+    def test_gym_env_invalid_token_observation_length(self):
+        with pytest.raises(ValidationError):
+            GymEnvConfig(token_observation_length=0)
 
     def test_product_config(self):
         cfg = ProductConfig()
