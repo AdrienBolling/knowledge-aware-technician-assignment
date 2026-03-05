@@ -28,7 +28,7 @@ class GymTechnician(Technician):
     ) -> None:
         self.id = getattr(tech_conf, 'id', 0)
         self.busy: bool = False
-        self._interupt_on_disrupt: bool = CONFIG.sim.disruptions.interupt_on_disrupt
+        self._interrupt_on_disrupt: bool = CONFIG.sim.disruptions.interrupt_on_disrupt
 
         # Fatigue parameters
         self.fatigue: float = 0.0
@@ -63,7 +63,7 @@ class GymTechnician(Technician):
     ):
         """Stochastically requires the technician ressource and frees it up at the end of the disruption."""
         with tech_resource.request(
-            priority=1, preempt=self._interupt_on_disrupt
+            priority=1, preempt=self._interrupt_on_disrupt
         ) as req:
             yield req
             yield env.timeout(self._get_stochastic_disruption_duration())
