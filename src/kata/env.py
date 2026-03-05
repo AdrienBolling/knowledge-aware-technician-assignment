@@ -204,11 +204,13 @@ class KataEnv(gym.Env):
             return float(getattr(tech, "knowledge"))
         knowledge_grid = getattr(tech, "knowledge_grid", None)
         if knowledge_grid is not None:
-            values = getattr(knowledge_grid, "grid", None)
-            if values is None:
-                values = getattr(knowledge_grid, "_grid", None)
-            if values is not None:
-                return float(np.asarray(values, dtype=np.float32).mean())
+            for method_name in ("mean_knowledge", "mean", "to_array"):
+                method = getattr(knowledge_grid, method_name, None)
+                if callable(method):
+                    value = method()
+                    if np.isscalar(value):
+                        return float(value)
+                    return float(np.asarray(value, dtype=np.float32).mean())
         return 0.0
 
     def _token_obs(self) -> dict[str, tuple[str, ...]]:
