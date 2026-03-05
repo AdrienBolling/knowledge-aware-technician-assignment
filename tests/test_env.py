@@ -7,6 +7,11 @@ from kata.env import KataEnv
 class _FakeMachine:
     def __init__(self, machine_id: int):
         self.machine_id = machine_id
+        self.broken = True
+        self.is_processing = False
+        self.total_processed = 2
+        self.input_buffer = _FakeQueue()
+        self.output_buffer = _FakeQueue()
 
 
 class _FakeRequest:
@@ -20,6 +25,7 @@ class _FakeTech:
         self.id = tech_id
         self.busy = False
         self.fatigue = 0.0
+        self.knowledge = 0.0
 
 
 class _FakeQueue:
@@ -119,3 +125,90 @@ def test_invalid_action_is_penalized_by_default():
     assert reward == -3.0
     assert terminated is False
     assert dispatcher.assignments == [(1, 3)]
+
+
+def test_token_observation_ticket_only_is_fixed_shape():
+    sim_env = _FakeSimEnv()
+    dispatcher = _FakeDispatcher(tech_count=2)
+    dispatcher.repair_queue.items.append(_FakeRequest(machine_id=9, created_at=2.0))
+    env = KataEnv(
+        sim_env=sim_env,
+        dispatcher=dispatcher,
+        config=GymEnvConfig(
+            observation_representation="tokens",
+            observation_mode="ticket_only",
+            token_observation_length=8,
+        ),
+    )
+
+    obs, _ = env.reset()
+
+    assert "tokens" in obs
+    assert len(obs["tokens"]) == 8
+    assert any(token.startswith("TICKET_MACHINE_ID:9") for token in obs["tokens"])
+    assert all(token.startswith("MACHINE_") is False for token in obs["tokens"])
+
+
+def test_token_observation_factory_level_with_technician_tokens():
+    sim_env = _FakeSimEnv()
+    dispatcher = _FakeDispatcher(tech_count=2)
+    dispatcher.techs[0].fatigue = 0.3
+    dispatcher.techs[0].knowledge = 0.4
+    dispatcher.techs[1].fatigue = 0.7
+    dispatcher.techs[1].knowledge = 0.9
+    machine = _FakeMachine(machine_id=4)
+    machine.input_buffer.items.extend([object(), object()])
+    machine.output_buffer.items.append(object())
+    dispatcher.repair_queue.items.append(_FakeRequest(machine_id=4, created_at=1.0))
+    dispatcher.repair_queue.items[-1].machine = machine
+    dispatcher.machines = [machine]
+    env = KataEnv(
+        sim_env=sim_env,
+        dispatcher=dispatcher,
+        config=GymEnvConfig(
+            observation_representation="tokens",
+            observation_mode="factory_level",
+            include_technician_fatigue_tokens=True,
+            include_technician_knowledge_tokens=True,
+            token_observation_length=32,
+            token_pad_value="<PAD>",
+        ),
+    )
+
+    obs, _ = env.reset()
+    tokens = obs["tokens"]
+
+    assert len(tokens) == 32
+    assert any(token.startswith("FACTORY_MACHINE_COUNT:1") for token in tokens)
+    assert any(token.startswith("MACHINE_INPUT_BUFFER:2") for token in tokens)
+    assert any(token.startswith("TECH_0_FATIGUE:0.300") for token in tokens)
+    assert any(token.startswith("TECH_1_KNOWLEDGE:0.900") for token in tokens)
+    assert tokens[-1] == "<PAD>"
+
+
+def test_reward_is_composed_from_enabled_sub_rewards():
+    sim_env = _FakeSimEnv()
+    sim_env.now = 10.0
+    dispatcher = _FakeDispatcher(tech_count=1)
+    dispatcher.repair_queue.items.append(_FakeRequest(machine_id=1, created_at=2.0))
+    env = KataEnv(
+        sim_env=sim_env,
+        dispatcher=dispatcher,
+        config=GymEnvConfig(
+            assignment_reward=3.0,
+            ticket_wait_time_penalty=0.5,
+            reward={
+                "assignment": {"enabled": True, "coefficient": 2.0},
+                "wait_time": {"enabled": False, "coefficient": 1.0},
+                "queue_size": {"enabled": False, "coefficient": 1.0},
+                "busy_technician": {"enabled": False, "coefficient": 1.0},
+            },
+        ),
+    )
+    env.reset()
+
+    _, reward, _, _, info = env.step(0)
+
+    assert reward == 6.0
+    assert info["reward_breakdown"]["assignment"] == 6.0
+    assert info["reward_breakdown"]["wait_time"] == 0.0
