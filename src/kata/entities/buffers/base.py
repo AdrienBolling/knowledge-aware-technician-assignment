@@ -1,5 +1,6 @@
-import simpy
 from typing import Any
+
+import simpy
 
 
 class Buffer:

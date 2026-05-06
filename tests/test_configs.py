@@ -1,5 +1,4 @@
-"""
-Tests for all Pydantic config models created alongside entity classes.
+"""Tests for all Pydantic config models created alongside entity classes.
 
 These tests validate:
 - Config models instantiate with defaults
@@ -63,8 +62,12 @@ class TestBreakdownRegistry:
         assert "default_weibull" in breakdown_config_registry
 
     def test_registry_instances(self):
-        assert isinstance(breakdown_config_registry["default_simple"], SimpleBreakdownConfig)
-        assert isinstance(breakdown_config_registry["default_weibull"], WeibullBreakdownConfig)
+        assert isinstance(
+            breakdown_config_registry["default_simple"], SimpleBreakdownConfig
+        )
+        assert isinstance(
+            breakdown_config_registry["default_weibull"], WeibullBreakdownConfig
+        )
 
     def test_default_instances_exported(self):
         assert isinstance(default_simple_breakdown, SimpleBreakdownConfig)
@@ -76,10 +79,9 @@ class TestBreakdownRegistry:
 # ---------------------------------------------------------------------------
 from kata.entities.components.config import (
     ComponentConfig,
-    component_config_registry,
-    default_component,
-    motor_component,
     bearing_component,
+    component_config_registry,
+    motor_component,
 )
 
 
@@ -119,9 +121,8 @@ class TestComponentRegistry:
 # ---------------------------------------------------------------------------
 from kata.entities.machines.config import (
     MachineConfig,
-    machine_config_registry,
-    default_machine,
     assembly_machine,
+    machine_config_registry,
 )
 
 
@@ -140,7 +141,9 @@ class TestMachineConfig:
     def test_with_components(self):
         cfg = MachineConfig(
             machine_type="test",
-            components={"c1": ComponentConfig(component_id="c1", component_type="motor")},
+            components={
+                "c1": ComponentConfig(component_id="c1", component_type="motor")
+            },
         )
         assert "c1" in cfg.components
         assert cfg.components["c1"].component_type == "motor"
@@ -192,7 +195,6 @@ class TestBufferRegistry:
 from kata.entities.sources.config import (
     SourceConfig,
     source_config_registry,
-    default_source,
 )
 
 
@@ -224,8 +226,8 @@ class TestSourceRegistry:
 # ---------------------------------------------------------------------------
 from kata.entities.sinks.config import (
     SinkConfig,
-    sink_config_registry,
     default_sink,
+    sink_config_registry,
 )
 
 
@@ -244,8 +246,8 @@ class TestSinkConfig:
 # ---------------------------------------------------------------------------
 from kata.entities.routers.config import (
     RouterConfig,
-    router_config_registry,
     default_router,
+    router_config_registry,
 )
 
 
@@ -264,8 +266,8 @@ class TestRouterConfig:
 # ---------------------------------------------------------------------------
 from kata.entities.machine_feeder.config import (
     MachineFeederConfig,
-    machine_feeder_config_registry,
     default_feeder,
+    machine_feeder_config_registry,
 )
 
 
@@ -285,10 +287,9 @@ class TestMachineFeederConfig:
 # ---------------------------------------------------------------------------
 from kata.entities.technicians.config import (
     TechnicianConfig,
-    technician_config_registry,
     default_technician,
     expert_technician,
-    junior_technician,
+    technician_config_registry,
 )
 
 
@@ -299,7 +300,7 @@ class TestTechnicianConfig:
         assert cfg.fatigue_lambda == 0.01
         assert cfg.fatigue_mu == 0.05
         assert cfg.knowledge_k_shape == (10, 10)
-        assert 0.0 < cfg.knowledge_propagation_sigma
+        assert cfg.knowledge_propagation_sigma > 0.0
         assert 0.0 < cfg.knowledge_transmission_factor <= 1.0
         assert 0.0 < cfg.knowledge_learning_rate <= 1.0
 
@@ -330,8 +331,8 @@ class TestTechnicianRegistry:
 # ---------------------------------------------------------------------------
 from kata.entities.tech_dispatcher.config import (
     TechDispatcherConfig,
-    tech_dispatcher_config_registry,
     default_tech_dispatcher,
+    tech_dispatcher_config_registry,
 )
 
 
@@ -354,8 +355,8 @@ class TestTechDispatcherConfig:
 # ---------------------------------------------------------------------------
 from kata.entities.production_line.config import (
     ProductionLineConfig,
-    production_line_config_registry,
     default_production_line,
+    production_line_config_registry,
 )
 
 
@@ -381,9 +382,8 @@ class TestProductionLineConfig:
 # ---------------------------------------------------------------------------
 from kata.EntityFactories.config import (
     SyntheticTicketFactoryConfig,
-    synthetic_ticket_factory_config_registry,
-    default_ticket_factory,
     priority_aware_ticket_factory,
+    synthetic_ticket_factory_config_registry,
 )
 
 
@@ -412,18 +412,23 @@ class TestSyntheticTicketFactoryConfig:
 # Centralised KATAConfig (core/config.py)
 # ---------------------------------------------------------------------------
 from kata.core.config import (
-    KATAConfig,
-    get_config,
+    ComponentConfig as CoreComponentConfig,
+)
+from kata.core.config import (
     DisruptionConfig,
-    RepairConfig,
     GlobalTechniciansConfig,
-    SimEnvConfig,
     GymEnvConfig,
+    KATAConfig,
     ProductConfig,
+    RepairConfig,
+    get_config,
+)
+from kata.core.config import (
+    MachineConfig as CoreMachineConfig,
+)
+from kata.core.config import (
     # Re-exported entity configs
     TechnicianConfig as CoreTechnicianConfig,
-    ComponentConfig as CoreComponentConfig,
-    MachineConfig as CoreMachineConfig,
 )
 
 
@@ -483,9 +488,7 @@ class TestKATAConfigJsonLoading:
                 "tech_a": {"name": "senior_tech", "fatigue_lambda": 0.003},
             },
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(payload, f)
             tmp_path = f.name
 

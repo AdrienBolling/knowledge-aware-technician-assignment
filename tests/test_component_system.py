@@ -1,6 +1,7 @@
 """Manual test script for Component and ComplexMachine functionality.
 This script validates the component-based degradation system.
 """
+
 import simpy as sp
 
 from kata.entities.components.component import MachineComponent
@@ -142,7 +143,9 @@ def test_complex_machine_with_weibull():
 
     print(f"✓ ComplexMachine created with {len(machine.components)} components")
     for comp in machine.components:
-        print(f"  - {comp.get_id()} ({comp.get_type()}): repair time = {comp.get_repair_time()}")
+        print(
+            f"  - {comp.get_id()} ({comp.get_type()}): repair time = {comp.get_repair_time()}"
+        )
 
     assert len(machine.components) == 2, "Component count mismatch"
     assert machine.failed_component is None, "Machine should not be failed initially"
@@ -172,6 +175,7 @@ def test_factory_from_json_config():
     class MockTechDispatcher:
         def wait_until_repaired(self, machine):
             return env.event().succeed()
+
         def request_repair(self, machine):
             pass
 
@@ -191,17 +195,21 @@ def test_factory_from_json_config():
     print(f"  Type: {machine.mtype}")
     print(f"  Components: {len(machine.components)}")
     for comp in machine.components:
-        print(f"    - {comp.get_id()} ({comp.get_type()}): repair={comp.get_repair_time()}")
+        print(
+            f"    - {comp.get_id()} ({comp.get_type()}): repair={comp.get_repair_time()}"
+        )
 
     assert len(machine.components) == 3, "Expected 3 components from basic_cnc_machine"
-    assert machine.components[0].get_id() == "spindle_motor", "First component ID mismatch"
+    assert machine.components[0].get_id() == "spindle_motor", (
+        "First component ID mismatch"
+    )
 
 
 def run_all_tests():
     """Run all tests."""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("  Component-Based Degradation System - Test Suite")
-    print("="*60)
+    print("=" * 60)
 
     try:
         test_component_creation()
@@ -210,9 +218,9 @@ def run_all_tests():
         test_complex_machine_with_weibull()
         test_factory_from_json_config()
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("  ✓ ALL TESTS PASSED")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
         return True
     except AssertionError as e:
         print(f"\n✗ TEST FAILED: {e}")
@@ -220,6 +228,7 @@ def run_all_tests():
     except Exception as e:
         print(f"\n✗ ERROR: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 

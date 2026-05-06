@@ -1,13 +1,17 @@
-import simpy
-from typing import Optional
+import logging
 
-from kata.entities.sources.base import Source as SourceBase
+import simpy
+
 from kata.entities.buffers.base import Buffer
 from kata.entities.products.product import Product
+from kata.entities.sources.base import Source as SourceBase
+
+logger = logging.getLogger(__name__)
 
 
 class Source(SourceBase):
     """A source that generates products and puts them into an output buffer."""
+
     _id_counter = 0
 
     def __init__(
@@ -16,12 +20,11 @@ class Source(SourceBase):
         name: str,
         out_buffer: Buffer,
         interarrival_time: float = 10.0,
-        route: Optional[list[str]] = None,
-        max_products: Optional[int] = None,
+        route: list[str] | None = None,
+        max_products: int | None = None,
     ):
-        """
-        Initialize a Source.
-        
+        """Initialize a Source.
+
         Args:
             env: SimPy environment
             name: Name of the source
@@ -29,6 +32,7 @@ class Source(SourceBase):
             interarrival_time: Time between product arrivals
             route: Default route for products (list of machine type names)
             max_products: Maximum number of products to generate (None = infinite)
+
         """
         self.env = env
         self.id = Source._id_counter
@@ -38,33 +42,43 @@ class Source(SourceBase):
         self.interarrival_time = interarrival_time
         self.route = route or []
         self.max_products = max_products
-        
+
         self.products_created = 0
         self.proc = env.process(self._run())
-    
+
     def _log(self, *args) -> None:
         """Log a message with timestamp and source name."""
-        print(f"[{self.env.now:8.1f}] [SRC:{self.name}]", *args)
-    
+        logger.debug(
+            "[%8.1f] [SRC:%s] %s",
+            self.env.now,
+            self.name,
+            " ".join(str(a) for a in args),
+        )
+
     def _run(self):
         """Generator process that creates products at regular intervals."""
         while True:
             # Check if we've reached the maximum
-            if self.max_products is not None and self.products_created >= self.max_products:
+            if (
+                self.max_products is not None
+                and self.products_created >= self.max_products
+            ):
                 self._log(f"Reached max products ({self.max_products}), stopping")
                 break
-            
+
             # Wait for next product arrival
             yield self.env.timeout(self.interarrival_time)
-            
+
             # Create product
             product = Product(
                 product_id=self.products_created,
                 route=self.route.copy(),
             )
             self.products_created += 1
-            
+
             # Put into output buffer
-            self._log(f"Creating product {product.product_id} with route {product.route}")
+            self._log(
+                f"Creating product {product.product_id} with route {product.route}"
+            )
             yield self.out_buffer.put(product)
             self._log(f"Product {product.product_id} sent to {self.out_buffer.name}")

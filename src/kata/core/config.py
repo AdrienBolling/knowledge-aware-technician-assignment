@@ -1,5 +1,4 @@
-"""
-Centralised settings for KATA.
+"""Centralised settings for KATA.
 
 ``KATAConfig`` is the single source of truth for all run-time options.
 It is a ``pydantic-settings`` model that can be populated from:
@@ -33,20 +32,21 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+from kata.entities.buffers.config import BufferConfig  # noqa: F401
+from kata.entities.components.config import ComponentConfig  # noqa: F401
+from kata.entities.machine_feeder.config import MachineFeederConfig  # noqa: F401
+from kata.entities.machines.config import MachineConfig
+from kata.entities.production_line.config import ProductionLineConfig  # noqa: F401
+from kata.entities.routers.config import RouterConfig  # noqa: F401
+from kata.entities.sinks.config import SinkConfig  # noqa: F401
+from kata.entities.sources.config import SourceConfig  # noqa: F401
+from kata.entities.tech_dispatcher.config import TechDispatcherConfig  # noqa: F401
+
 # ---------------------------------------------------------------------------
 # Re-export entity-level configs so existing imports keep working.
 # ---------------------------------------------------------------------------
-from kata.entities.technicians.config import TechnicianConfig  # noqa: F401
-from kata.entities.components.config import ComponentConfig  # noqa: F401
-from kata.entities.machines.config import MachineConfig  # noqa: F401
-from kata.entities.buffers.config import BufferConfig  # noqa: F401
-from kata.entities.sources.config import SourceConfig  # noqa: F401
-from kata.entities.sinks.config import SinkConfig  # noqa: F401
-from kata.entities.routers.config import RouterConfig  # noqa: F401
-from kata.entities.machine_feeder.config import MachineFeederConfig  # noqa: F401
-from kata.entities.tech_dispatcher.config import TechDispatcherConfig  # noqa: F401
-from kata.entities.production_line.config import ProductionLineConfig  # noqa: F401
-from kata.EntityFactories.config import SyntheticTicketFactoryConfig  # noqa: F401
+from kata.entities.technicians.config import TechnicianConfig
+from kata.EntityFactories.config import SyntheticTicketFactoryConfig
 from kata.features.breakdown.config import (  # noqa: F401
     SimpleBreakdownConfig,
     WeibullBreakdownConfig,
@@ -111,7 +111,9 @@ class SimEnvConfig(BaseModel):
 
     disruptions: DisruptionConfig = Field(default_factory=DisruptionConfig)
     repair: RepairConfig = Field(default_factory=RepairConfig)
-    technicians: GlobalTechniciansConfig = Field(default_factory=GlobalTechniciansConfig)
+    technicians: GlobalTechniciansConfig = Field(
+        default_factory=GlobalTechniciansConfig
+    )
 
 
 class RewardComponentConfig(BaseModel):
@@ -132,7 +134,11 @@ def _disabled_reward_component() -> RewardComponentConfig:
 
 
 class GymRewardConfig(BaseModel):
-    """Composable reward settings for the Gym environment."""
+    """Composable reward settings for the Gym environment.
+
+    Each component produces a raw scalar at assignment time.  The final
+    reward is ``sum(coefficient * raw  for each enabled component)``.
+    """
 
     assignment: RewardComponentConfig = Field(
         default_factory=RewardComponentConfig,
@@ -149,6 +155,87 @@ class GymRewardConfig(BaseModel):
     busy_technician: RewardComponentConfig = Field(
         default_factory=_disabled_reward_component,
         description="Component that penalizes assigning already-busy technicians.",
+    )
+    # -- new reward components ------------------------------------------------
+    fatigue_cost: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Penalizes high-fatigue assignments.  Raw value is the "
+            "negative fatigue level of the assigned technician in [0, 1]."
+        ),
+    )
+    knowledge_match: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Rewards assigning a technician whose knowledge matches the "
+            "repair request.  Raw value is the knowledge multiplier "
+            "reduction (higher knowledge -> lower multiplier -> higher "
+            "reward), normalized to [0, 1]."
+        ),
+    )
+    workload_balance: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Penalizes unbalanced workload across the fleet.  Raw value "
+            "is the negative standard deviation of technician fatigue "
+            "levels after the assignment."
+        ),
+    )
+    estimated_repair_time: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Penalizes long expected repair times.  Raw value is the "
+            "negative log of the estimated repair time (accounting for "
+            "knowledge and fatigue), normalized by the base repair time."
+        ),
+    )
+    machine_criticality: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Rewards urgently fixing critical machines.  Raw value is "
+            "a bonus proportional to the machine's productivity (total "
+            "processed) and its input buffer backlog."
+        ),
+    )
+    # -- manufacturing-KPI reward components ---------------------------------
+    fleet_availability: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Rewards high fleet availability.  Raw value is the fraction "
+            "of machines currently operational (not broken), in [0, 1]."
+        ),
+    )
+    throughput_delta: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Rewards production throughput.  Raw value is the change in "
+            "finished products since the previous assignment step, "
+            "clipped to [0, 1] for stability."
+        ),
+    )
+    repair_backlog_age: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Penalizes an aging repair backlog.  Raw value is the "
+            "negative mean waiting time of ALL queued requests "
+            "(not just the current ticket), saturated via tanh."
+        ),
+    )
+    technician_utilization: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Rewards productive use of the technician workforce.  "
+            "Raw value peaks at an optimal utilization ratio and "
+            "penalizes both under- and over-utilization, in [-1, 1]."
+        ),
+    )
+    downtime_cost: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Penalizes accumulated machine downtime.  Raw value is "
+            "the negative fraction of total machine-time lost to "
+            "breakdowns since episode start, in [-1, 0]."
+        ),
     )
 
 
@@ -193,11 +280,12 @@ class GymEnvConfig(BaseModel):
         default_factory=GymRewardConfig,
         description="Composable reward settings with configurable sub-components.",
     )
-    observation_representation: Literal["structured", "tokens"] = Field(
+    observation_representation: Literal["structured", "tokens", "token_ids"] = Field(
         default="structured",
         description=(
             "Observation payload format. 'structured' keeps numeric fields, "
-            "'tokens' returns fixed-size textual token tuples."
+            "'tokens' returns fixed-size textual token tuples, "
+            "'token_ids' returns integer ID sequences for Transformer input."
         ),
     )
     observation_mode: Literal["ticket_only", "broken_machine", "factory_level"] = Field(
@@ -226,6 +314,34 @@ class GymEnvConfig(BaseModel):
         default=False,
         description="Include fleet knowledge tokens when using token observations.",
     )
+    # -- MCA / tokenizer warmup settings -----------------------------------
+    use_mca_encoder: bool = Field(
+        default=False,
+        description=(
+            "When True, run an MCA warmup phase on first reset to fit an "
+            "encoder and pre-populate the tokenizer vocabulary."
+        ),
+    )
+    warmup_steps: int = Field(
+        default=200,
+        gt=0,
+        description="Number of heuristic steps during MCA warmup.",
+    )
+    mca_grid_shape: tuple[int, ...] = Field(
+        default=(10, 10),
+        description="Grid shape for the MCA encoder's output coordinates.",
+    )
+    mca_n_components: int = Field(
+        default=2,
+        gt=0,
+        description="Number of MCA components to keep.",
+    )
+    tokenizer_seq_length: int = Field(
+        default=64,
+        gt=0,
+        description="Fixed output length of the StateTokenizer.",
+    )
+
     include_fatigue_in_observation: bool = Field(
         default=True,
         description="Include technicians' fatigue values in observation vectors.",
@@ -257,8 +373,7 @@ _DEFAULT_CONFIG_FILE = "run_configs/config.json"
 
 
 class KATAConfig(BaseSettings):
-    """
-    Centralised settings for KATA.
+    """Centralised settings for KATA.
 
     Can be loaded from a JSON file (path set via ``KATA_CONF_PATH`` env var),
     from ``KATA_``-prefixed environment variables, or will fall back to the

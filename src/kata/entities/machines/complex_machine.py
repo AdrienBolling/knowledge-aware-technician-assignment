@@ -1,5 +1,5 @@
-"""ComplexMachine implementation with component-based degradation system.
-"""
+"""ComplexMachine implementation with component-based degradation system."""
+
 import random
 
 import simpy as sp
@@ -12,7 +12,7 @@ from kata.features.breakdown.simple_breakdown import SimpleBreakdownProcess
 
 class ComplexMachine(Machine):
     """A machine composed of multiple components, each with individual degradation.
-    
+
     When any component fails, the entire machine breaks down. The repair process
     is specific to the failed component.
     """
@@ -30,7 +30,7 @@ class ComplexMachine(Machine):
         dt: int,
     ) -> None:
         """Initialize a ComplexMachine with multiple components.
-        
+
         Args:
             env: SimPy environment
             machine_id: Unique machine identifier
@@ -64,7 +64,7 @@ class ComplexMachine(Machine):
 
     def _breakdown_driver(self):
         """Override parent's breakdown driver to check each component.
-        
+
         On each time step, check all components for failure. If any component fails,
         trigger a breakdown and record which component caused the failure.
         """
@@ -79,13 +79,15 @@ class ComplexMachine(Machine):
                 if p_break >= random.uniform(0, 1) and p_break > 0:
                     # This component has failed
                     self.failed_component = component
-                    self._log(f"Component '{component.get_id()}' ({component.get_type()}) FAILED!")
+                    self._log(
+                        f"Component '{component.get_id()}' ({component.get_type()}) FAILED!"
+                    )
                     self._trigger_breakdown()
                     break  # Only one component fails at a time
 
     def repair(self, request) -> None:
         """Repair the machine by fixing the failed component.
-        
+
         Args:
             request: The repair request that triggered this repair
 
@@ -102,7 +104,7 @@ class ComplexMachine(Machine):
 
     def get_failed_component(self) -> MachineComponent | None:
         """Get the component that caused the current breakdown.
-        
+
         Returns:
             The failed component, or None if no failure
 

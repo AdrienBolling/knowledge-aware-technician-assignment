@@ -1,12 +1,17 @@
+import logging
+
 import simpy
 
-from kata.entities.sinks.base import Sink as SinkBase
 from kata.entities.buffers.base import Buffer
 from kata.entities.products.product import Product
+from kata.entities.sinks.base import Sink as SinkBase
+
+logger = logging.getLogger(__name__)
 
 
 class Sink(SinkBase):
     """A sink that consumes completed products from an input buffer."""
+
     _id_counter = 0
 
     def __init__(
@@ -15,31 +20,38 @@ class Sink(SinkBase):
         name: str,
         in_buffer: Buffer,
     ):
-        """
-        Initialize a Sink.
-        
+        """Initialize a Sink.
+
         Args:
             env: SimPy environment
             name: Name of the sink
             in_buffer: Input buffer to receive products from
+
         """
         self.env = env
         self.id = Sink._id_counter
         Sink._id_counter += 1
         self.name = name
         self.in_buffer = in_buffer
-        
+
         self.completed = 0
         self.proc = env.process(self._run())
-    
+
     def _log(self, *args) -> None:
         """Log a message with timestamp and sink name."""
-        print(f"[{self.env.now:8.1f}] [SINK:{self.name}]", *args)
-    
+        logger.debug(
+            "[%8.1f] [SINK:%s] %s",
+            self.env.now,
+            self.name,
+            " ".join(str(a) for a in args),
+        )
+
     def _run(self):
         """Generator process that consumes products."""
         while True:
             # Get product from input buffer
             product: Product = yield self.in_buffer.get()
             self.completed += 1
-            self._log(f"Received completed product {product.product_id} (total: {self.completed})")
+            self._log(
+                f"Received completed product {product.product_id} (total: {self.completed})"
+            )

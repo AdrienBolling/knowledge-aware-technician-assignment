@@ -53,14 +53,23 @@ class SimpleAgentPolicy:
             self.dispatcher.start_repair(chosen.id, request)
 
 
-def create_conveyor(env: simpy.Environment, src: Buffer, dst: Buffer, name: str = "conv", delay: float = 0.0):
+def create_conveyor(
+    env: simpy.Environment,
+    src: Buffer,
+    dst: Buffer,
+    name: str = "conv",
+    delay: float = 0.0,
+):
     """Create a conveyor process that moves products between buffers."""
+
     def conveyor_process():
         while True:
             item = yield src.get()
             if delay > 0:
                 yield env.timeout(delay)
-            print(f"[{env.now:8.1f}] [CNV:{name}] Moving product {item.product_id} -> {dst.name}")
+            print(
+                f"[{env.now:8.1f}] [CNV:{name}] Moving product {item.product_id} -> {dst.name}"
+            )
             yield dst.put(item)
 
     return env.process(conveyor_process())
@@ -197,14 +206,14 @@ def build_factory_simulation(seed: int = 42) -> simpy.Environment:
     )
 
     # Print initial state
-    print("="*80)
+    print("=" * 80)
     print("Factory Simulation Initialized")
-    print("="*80)
+    print("=" * 80)
     print("Machines: 2 Drills, 1 Paint")
     print(f"Technicians: {len(techs)}")
     print(f"Product route: {source.route}")
     print(f"Max products: {source.max_products}")
-    print("="*80)
+    print("=" * 80)
     print()
 
     return env
@@ -220,9 +229,9 @@ def run_simulation(duration: int = 300, seed: int = 42):
     env.run(until=duration)
 
     print()
-    print("="*80)
+    print("=" * 80)
     print("Simulation Complete")
-    print("="*80)
+    print("=" * 80)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,15 @@
+{
+  "agent_type": "grpo",
+  "params": {
+    "vocab_size": 128,
+    "group_size": 8,
+    "clip_eps": 0.2,
+    "entropy_coef": 0.01,
+    "d_model": 64,
+    "n_heads": 4,
+    "n_layers": 2,
+    "hidden_dim": 128,
+    "lr": 3e-4,
+    "device": "cpu"
+  }
+}

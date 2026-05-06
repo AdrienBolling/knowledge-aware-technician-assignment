@@ -1,4 +1,5 @@
 import simpy
+
 from kata.entities import Buffer
 
 

@@ -1,0 +1,27 @@
+{
+  "mode": "train",
+  "seed": 42,
+  "n_episodes": 200,
+  "log_interval": 10,
+  "eval": {
+    "enabled": true,
+    "interval": 20,
+    "n_episodes": 5,
+    "deterministic": true
+  },
+  "checkpoint": {
+    "enabled": true,
+    "interval": 50,
+    "dir": "checkpoints",
+    "save_best": true
+  },
+  "wandb": {
+    "enabled": true,
+    "project": "kata-experiments",
+    "entity": null,
+    "group": null,
+    "tags": [],
+    "name": null,
+    "log_interval": 1
+  }
+}

@@ -1,13 +1,14 @@
-"""
-Factory for creating ComplexMachine instances with components from configuration.
-"""
-from typing import List
+"""Factory for creating ComplexMachine instances with components from configuration."""
+
 import simpy as sp
 
-from kata.entities.machines.complex_machine import ComplexMachine
 from kata.entities.components.component import MachineComponent
-from kata.features.breakdown.simple_breakdown import SimpleBreakdownProcess, WeibullBreakdownProcess
+from kata.entities.machines.complex_machine import ComplexMachine
 from kata.entities.tech_dispatcher.GymTechDispatcher import GymTechDispatcher
+from kata.features.breakdown.simple_breakdown import (
+    SimpleBreakdownProcess,
+    WeibullBreakdownProcess,
+)
 
 
 def create_complex_machine_from_config(
@@ -19,9 +20,8 @@ def create_complex_machine_from_config(
     tech_dispatcher: GymTechDispatcher,
     dt: int = 1,
 ) -> ComplexMachine:
-    """
-    Create a ComplexMachine from a configuration dictionary.
-    
+    """Create a ComplexMachine from a configuration dictionary.
+
     Args:
         env: SimPy environment
         machine_id: Unique machine identifier
@@ -30,25 +30,26 @@ def create_complex_machine_from_config(
         output_buffer: Output buffer for products
         tech_dispatcher: Technician dispatcher
         dt: Time step for degradation checking
-        
+
     Returns:
         ComplexMachine instance with configured components
+
     """
     # Extract basic machine parameters
     mtype = machine_config.get("type", "generic")
     process_time = machine_config.get("process_time", 100)
-    
+
     # Build components from configuration
     components = []
     component_configs = machine_config.get("components", [])
-    
+
     for comp_config in component_configs:
         component_id = comp_config.get("component_id", "unknown")
         component_type = comp_config.get("component_type", "generic")
         base_repair_time = comp_config.get("base_repair_time", 10.0)
         degradation_rate = comp_config.get("degradation_rate", 0.001)
         idle_factor = comp_config.get("idle_degradation_factor", 0.1)
-        
+
         # Determine breakdown model
         breakdown_model = comp_config.get("breakdown_model", "simple")
         if breakdown_model == "weibull":
@@ -61,13 +62,17 @@ def create_complex_machine_from_config(
             )
         else:
             # Use simple breakdown model with degradation rate
-            failure_prob_working = comp_config.get("failure_prob_working", degradation_rate)
-            failure_prob_idle = comp_config.get("failure_prob_idle", degradation_rate * idle_factor)
+            failure_prob_working = comp_config.get(
+                "failure_prob_working", degradation_rate
+            )
+            failure_prob_idle = comp_config.get(
+                "failure_prob_idle", degradation_rate * idle_factor
+            )
             breakdown_process = SimpleBreakdownProcess(
                 failure_prob_working=failure_prob_working,
                 failure_prob_idle=failure_prob_idle,
             )
-        
+
         # Create the component
         component = MachineComponent(
             component_id=component_id,
@@ -77,7 +82,7 @@ def create_complex_machine_from_config(
             idle_degradation_factor=idle_factor,
         )
         components.append(component)
-    
+
     # Create and return the ComplexMachine
     return ComplexMachine(
         env=env,
