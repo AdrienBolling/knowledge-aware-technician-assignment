@@ -1,15 +1,17 @@
-import simpy as sp
+import logging
 import random
 
-from kata.entities.products.product import Product
-from kata.entities.technicians.technician import Technician
+import simpy as sp
+
+from kata.entities.machines.base import Machine as Mach
 from kata.entities.tech_dispatcher.GymTechDispatcher import GymTechDispatcher
 from kata.features.breakdown.base import BreakdownProcess
-from kata.entities.machines.base import Machine as Mach
+
+logger = logging.getLogger(__name__)
+
 
 class Machine(Mach):
-    """
-    A machine works on products abd may get broken
+    """A machine works on products abd may get broken
     When it breaks, creates a ticket for repair and requetss a Technician.
     Resumes normal production after it hasbeen repaired.
     """
@@ -47,7 +49,12 @@ class Machine(Mach):
         self.dt = dt
 
     def _log(self, *args) -> None:
-        print(f"[{self.env.now:05}] - [M: {self.machine_id}] ", *args)
+        logger.debug(
+            "[%05d] - [M: %s] %s",
+            self.env.now,
+            self.machine_id,
+            " ".join(str(a) for a in args),
+        )
 
     def _run(self):
         while True:
@@ -58,7 +65,11 @@ class Machine(Mach):
 
             ## Process Product
             # Pull product from input buffer
-            product = yield self.input_buffer.get()
+            try:
+                product = yield self.input_buffer.get()
+            except sp.Interrupt:
+                # Breakdown while waiting for input — loop back to repair
+                continue
             ptime = self.process_time
             start = self.env.now
             remaining = float(ptime)
@@ -82,15 +93,19 @@ class Machine(Mach):
 
             # Try to move to the output buffer (may block if full)
             self.is_processing = False
-            
+
             # Advance product to next step in route
             product.advance()
-            
-            buffer_name = getattr(self.output_buffer, 'name', 'output_buffer')
+
+            buffer_name = getattr(self.output_buffer, "name", "output_buffer")
             self._log(
                 f"finished processing product {product.product_id}, enqueue to {buffer_name}"
             )
-            yield self.output_buffer.put(product)
+            try:
+                yield self.output_buffer.put(product)
+            except sp.Interrupt:
+                # Breakdown while putting to output — product is lost, loop to repair
+                continue
             self.total_processed += 1
             self._log(
                 f"product {product.product_id} enqueued successfully to {buffer_name}"
@@ -122,11 +137,11 @@ class Machine(Mach):
             self.tech_dispatcher.request_repair(self)
 
     def repair(self, request) -> None:
-        """
-        Repair the machine, making it operational again.
-        
+        """Repair the machine, making it operational again.
+
         Args:
             request: The repair request that triggered this repair
+
         """
         self.broken = False
         self.breakdown_process.repair()

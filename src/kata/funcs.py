@@ -6,9 +6,8 @@ from numba import njit
 
 @njit(cache=True, nogil=True, fastmath=True, inline="always")
 def _dH(k, inv_lambda, age):
-    """
-    Exact integrated hazard over one unit step (dt=1):
-      ΔH = ((age+1)/eta)^k - (age/eta)^k
+    """Exact integrated hazard over one unit step (dt=1):
+    ΔH = ((age+1)/eta)^k - (age/eta)^k
     """
     return ((age + 1) * inv_lambda) ** k - (age * inv_lambda) ** k
 
@@ -62,8 +61,7 @@ def step_prod_line(
     weibull_ks: np.ndarray,  # (n_machines) Weibull shape parameters, float
     weibull_inv_lambdas: np.ndarray,  # (n_machines) Weibull scale parameters, float
 ):
-    """
-    Summary :
+    """Summary :
 
     Args:
         param (type): description.
@@ -72,6 +70,7 @@ def step_prod_line(
         type: description.
 
     Raises:
+
     """
     M = status.shape[0]  # number of machines
 
@@ -80,7 +79,7 @@ def step_prod_line(
         if out_buff[i] > 0:
             free_next = in_max_cap[i + 1] - in_buff[i + 1]
             if free_next > 0:
-                mv = out_buff[i] if out_buff[i] <= free_next else free_next
+                mv = min(out_buff[i], free_next)
                 in_buff[i + 1] += mv
                 out_buff[i] -= mv
 
@@ -95,7 +94,7 @@ def step_prod_line(
             # Machine is under maintenance, nothing progresses
             continue
 
-        elif status[i] == 0:
+        if status[i] == 0:
             # CHeck if there's a product waiting for the out_buffer
             if prod_completions[i] == 0:
                 if out_buff[i] < out_max_cap[i]:

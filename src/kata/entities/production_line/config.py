@@ -2,10 +2,10 @@
 
 from pydantic import BaseModel, Field
 
-from kata.entities.machines.config import MachineConfig
 from kata.entities.buffers.config import BufferConfig
-from kata.entities.sources.config import SourceConfig
+from kata.entities.machines.config import MachineConfig
 from kata.entities.sinks.config import SinkConfig
+from kata.entities.sources.config import SourceConfig
 
 
 class ProductionLineConfig(BaseModel):

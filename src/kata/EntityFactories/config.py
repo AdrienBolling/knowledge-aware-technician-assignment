@@ -1,7 +1,5 @@
 """Pydantic configuration models for EntityFactory classes."""
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -12,7 +10,7 @@ class SyntheticTicketFactoryConfig(BaseModel):
         default_factory=dict,
         description=(
             "Mapping of component type or failure type to a base priority value. "
-            "Example: {\"motor\": 10, \"sensor\": 5}."
+            'Example: {"motor": 10, "sensor": 5}.'
         ),
     )
     add_randomness: bool = Field(

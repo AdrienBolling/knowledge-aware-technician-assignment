@@ -1,5 +1,4 @@
-"""
-SimPy OOP production line with breakdowns + technician assignment hook for RL.
+"""SimPy OOP production line with breakdowns + technician assignment hook for RL.
 
 What you get:
 - Product flows with routing (list of machine types)
@@ -14,10 +13,13 @@ Run: python this_file.py
 """
 
 from __future__ import annotations
-import simpy
-import numpy as np
+
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, List, dict, Optional, Any
+from typing import Any, dict
+
+import numpy as np
+import simpy
 
 # ---------------------------- Utility RNG wrappers ---------------------------
 
@@ -35,16 +37,16 @@ class Dist:
         return float(self.sampler(rng))
 
     @staticmethod
-    def constant(v: float) -> "Dist":
+    def constant(v: float) -> Dist:
         return Dist(lambda rng: v, name=f"const({v})")
 
     @staticmethod
-    def exp(mean: float) -> "Dist":
+    def exp(mean: float) -> Dist:
         lam = 1.0 / mean
         return Dist(lambda rng: rng.exponential(1 / lam), name=f"exp(mean={mean})")
 
     @staticmethod
-    def normal(mean: float, sd: float, min_clip: float = 0.0) -> "Dist":
+    def normal(mean: float, sd: float, min_clip: float = 0.0) -> Dist:
         def f(rng):
             return max(min_clip, rng.normal(mean, sd))
 
@@ -57,10 +59,10 @@ class Dist:
 @dataclass
 class Product:
     pid: int
-    route: List[str]  # list of machine_type names
+    route: list[str]  # list of machine_type names
     step: int = 0
 
-    def next_machine_type(self) -> Optional[str]:
+    def next_machine_type(self) -> str | None:
         return self.route[self.step] if self.step < len(self.route) else None
 
     def advance(self):
@@ -110,9 +112,9 @@ class Technician:
 
 @dataclass
 class RepairRequest:
-    machine: "Machine"
+    machine: Machine
     created_at: float
-    chosen_tid: Optional[int] = None
+    chosen_tid: int | None = None
     meta: dict[str, Any] = field(default_factory=dict)
 
 
@@ -123,7 +125,7 @@ class AgentPolicy:
     """Plug your RL agent here. Provide state via request/meta and tech list."""
 
     def select_technician(
-        self, request: RepairRequest, technicians: List[Technician]
+        self, request: RepairRequest, technicians: list[Technician]
     ) -> int:
         raise NotImplementedError
 
@@ -133,7 +135,7 @@ class RandomAgent(AgentPolicy):
         self.rng = rng
 
     def select_technician(
-        self, request: RepairRequest, technicians: List[Technician]
+        self, request: RepairRequest, technicians: list[Technician]
     ) -> int:
         free = [t for t in technicians if not t.busy]
         if not free:
@@ -155,7 +157,7 @@ class Machine:
         mtype: MachineType,
         input_buffer: Buffer,
         output_buffer: Buffer,
-        tech_dispatcher: "TechDispatcher",
+        tech_dispatcher: TechDispatcher,
         rng: np.random.Generator,
     ):
         self.env = env
@@ -168,7 +170,7 @@ class Machine:
 
         self.broken = False
         self.total_processed = 0
-        self.last_failed_at: Optional[float] = None
+        self.last_failed_at: float | None = None
 
         self.proc = env.process(self._run())
         self.breaks = env.process(self._breakdown_driver())
@@ -232,7 +234,7 @@ class TechDispatcher:
     def __init__(
         self,
         env: simpy.Environment,
-        technicians: List[Technician],
+        technicians: list[Technician],
         agent: AgentPolicy,
         rng: np.random.Generator,
     ):
@@ -320,7 +322,7 @@ class ProductionLine:
         self.dispatcher = tech_dispatcher
         self.rng = rng
         self.buffers: dict[str, Buffer] = {}
-        self.machines: List[Machine] = []
+        self.machines: list[Machine] = []
         self.machine_types: dict[str, MachineType] = {}
 
     def add_machine_type(self, mtype: MachineType):
@@ -357,9 +359,9 @@ class Source:
         env: simpy.Environment,
         out_buf: Buffer,
         interarrival: Dist,
-        route: List[str],
+        route: list[str],
         rng: np.random.Generator,
-        max_products: Optional[int] = None,
+        max_products: int | None = None,
     ):
         self.env = env
         self.out = out_buf
@@ -441,7 +443,7 @@ class MachineFeeder:
         env: simpy.Environment,
         type_name: str,
         in_buf: Buffer,
-        machine_inputs: List[Buffer],
+        machine_inputs: list[Buffer],
     ):
         self.env = env
         self.type_name = type_name
@@ -604,4 +606,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -4,8 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class TechnicianConfig(BaseModel):
-    """
-    Configuration for a GymTechnician.
+    """Configuration for a GymTechnician.
 
     Fields cover identity, fatigue dynamics, and knowledge-grid parameters.
     """

@@ -1,7 +1,5 @@
 """Pydantic configuration models for Source entities."""
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -21,7 +19,7 @@ class SourceConfig(BaseModel):
         default_factory=list,
         description="Ordered list of machine type names that products must visit.",
     )
-    max_products: Optional[int] = Field(
+    max_products: int | None = Field(
         default=None,
         ge=1,
         description="Maximum number of products to generate (None = unlimited).",

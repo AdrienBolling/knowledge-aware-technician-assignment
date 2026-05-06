@@ -1,0 +1,20 @@
+{
+  "mode": "eval",
+  "seed": 42,
+  "n_episodes": 1,
+  "log_interval": 1,
+  "eval": {
+    "enabled": true,
+    "interval": 1,
+    "n_episodes": 20,
+    "deterministic": true
+  },
+  "checkpoint": {
+    "enabled": false
+  },
+  "wandb": {
+    "enabled": true,
+    "project": "kata-experiments",
+    "log_interval": 1
+  }
+}

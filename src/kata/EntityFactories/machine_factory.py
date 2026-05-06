@@ -1,5 +1,4 @@
-"""
-This file describes the numpy template corresponding to a machine.
+"""This file describes the numpy template corresponding to a machine.
 
 It also implements several machine templates and a MachineFactory class that can be used to create machines according to the specified template.
 """
@@ -19,9 +18,10 @@ Each machine is an object, where the attributes are used to store the init param
 The numpy array will be used to store the state of the machine for simulation purposes, the class will only be used for initilization and attributes reading purposes.
 """
 
-import numpy as np
 import importlib.resources as res
 import json
+
+import numpy as np
 
 
 class Machine:
@@ -44,9 +44,7 @@ class Machine:
         self.weibull_lambda = weibull_lambda
 
     def get_state_numpy_array(self) -> np.ndarray:
-        """
-        Returns a numpy array with the initial state of the machine.
-        """
+        """Returns a numpy array with the initial state of the machine."""
         return np.array(
             [
                 0,  # machine status (-1: maintenance, 0: idle, 1: running)
@@ -59,9 +57,7 @@ class Machine:
         )
 
     def get_parameters_numpy_array(self) -> np.ndarray:
-        """
-        Returns a numpy array with the parameters of the machine.
-        """
+        """Returns a numpy array with the parameters of the machine."""
         return np.array(
             [
                 self.weibull_k,  # Weibull shape parameter
@@ -81,9 +77,7 @@ class MachineFactory:
         weibull_k: float = 1.0,
         weibull_lambda: float = 1.0,
     ) -> Machine:
-        """
-        Creates a machine with the specified parameters.
-        """
+        """Creates a machine with the specified parameters."""
         return Machine(
             prod_rate, name, brand, type, components, weibull_k, weibull_lambda
         )
@@ -92,12 +86,10 @@ class MachineFactory:
     def create_machine_from_template(
         template_name: str,
     ) -> Machine:
-        """
-        Creates a machine from a template.
+        """Creates a machine from a template.
         A template is a predefined set of parameters for a machine.
         They are stored under the template json file
         """
-
         with (
             res.files("kata.resources")
             .joinpath("machine_templates.json")
@@ -124,12 +116,9 @@ class MachineFactory:
     def create_machines_from_templates(
         template_names: list,
     ) -> list:
-        """
-        Creates multiple machines from a list of templates.
-        """
+        """Creates multiple machines from a list of templates."""
         machines = []
         for template_name in template_names:
             machine = MachineFactory.create_machine_from_template(template_name)
             machines.append(machine)
         return machines
-

@@ -1,7 +1,6 @@
-"""
-SyntheticTicket implementation for maintenance tickets based on machine failures.
-"""
-from typing import TYPE_CHECKING, Optional
+"""SyntheticTicket implementation for maintenance tickets based on machine failures."""
+
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from kata.entities.machines.machine import Machine
@@ -10,14 +9,13 @@ from kata.entities.tickets.base import Ticket
 
 
 class SyntheticTicket(Ticket):
-    """
-    A synthetic maintenance ticket generated from machine failure events.
-    
+    """A synthetic maintenance ticket generated from machine failure events.
+
     This ticket captures all relevant information about a machine failure including
     the machine details, component failure information, operational context, and
     priority for maintenance scheduling.
     """
-    
+
     def __init__(
         self,
         machine: "Machine",
@@ -26,14 +24,13 @@ class SyntheticTicket(Ticket):
         priority: int,
         nb_in_buffer: int,
         created_at: int,
-        ticket_id: Optional[int] = None,
-        component_id: Optional[str] = None,
-        component_type: Optional[str] = None,
-        repair_time_estimate: Optional[float] = None,
+        ticket_id: int | None = None,
+        component_id: str | None = None,
+        component_type: str | None = None,
+        repair_time_estimate: float | None = None,
     ) -> None:
-        """
-        Initialize a SyntheticTicket.
-        
+        """Initialize a SyntheticTicket.
+
         Args:
             machine: Reference to the failed machine
             machine_type: Type/category of the machine
@@ -45,6 +42,7 @@ class SyntheticTicket(Ticket):
             component_id: ID of the failed component (if applicable)
             component_type: Type of the failed component (if applicable)
             repair_time_estimate: Estimated repair time (if available)
+
         """
         self.machine = machine
         self.machine_type = machine_type
@@ -56,46 +54,48 @@ class SyntheticTicket(Ticket):
         self.component_id = component_id
         self.component_type = component_type
         self.repair_time_estimate = repair_time_estimate
-    
+
     def get_machine_id(self) -> int:
         """Get the ID of the failed machine."""
         return self.machine.machine_id
-    
+
     def get_machine_type(self) -> str:
         """Get the type of the failed machine."""
         return self.machine_type
-    
+
     def get_failure_type(self) -> str:
         """Get the type of failure that occurred."""
         return self.failure_type
-    
+
     def get_priority(self) -> int:
         """Get the priority level of this ticket."""
         return self.priority
-    
+
     def get_buffer_level(self) -> int:
         """Get the number of items in the machine's input buffer."""
         return self.nb_in_buffer
-    
-    def get_component_info(self) -> Optional[dict]:
-        """
-        Get information about the failed component.
-        
+
+    def get_component_info(self) -> dict | None:
+        """Get information about the failed component.
+
         Returns:
             Dictionary with component details, or None if not a component failure
+
         """
         if self.component_id is None:
             return None
-        
+
         return {
             "component_id": self.component_id,
             "component_type": self.component_type,
             "repair_time_estimate": self.repair_time_estimate,
         }
-    
+
     def __repr__(self) -> str:
         """String representation of the ticket."""
-        comp_info = f" ({self.component_type}:{self.component_id})" if self.component_id else ""
+        comp_info = (
+            f" ({self.component_type}:{self.component_id})" if self.component_id else ""
+        )
         return (
             f"SyntheticTicket(id={self.ticket_id}, machine={self.get_machine_id()}, "
             f"type={self.machine_type}, failure={self.failure_type}{comp_info}, "

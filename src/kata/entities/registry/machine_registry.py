@@ -1,7 +1,7 @@
 import importlib.resources as res
 import json
+from collections.abc import Callable
 from functools import partial
-from typing import Callable
 
 from kata.core.common import ArgType
 from kata.entities.machines.machine import Machine
@@ -14,9 +14,8 @@ Permanent registration requires adding the new configuration file to the machine
 machine_templates = {}
 # Load the machine templates from the resources
 ref = res.files("kata.resources.templates") / "machine_templates.json"
-with res.as_file(path=ref) as file_path:
-    with file_path.open("r") as f:
-        machine_templates: dict[str, dict[str, ArgType]] = json.load(f)
+with res.as_file(path=ref) as file_path, file_path.open("r") as f:
+    machine_templates: dict[str, dict[str, ArgType]] = json.load(f)
 
 
 machine_registry: dict[str, Callable[..., Machine]] = {
