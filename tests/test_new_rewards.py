@@ -611,6 +611,94 @@ class TestSelectionDiversity:
 
 
 # ======================================================================
+# terminal_finished_products
+# ======================================================================
+
+
+class _FakeSink:
+    def __init__(self, completed: int = 0):
+        self.completed = int(completed)
+
+
+class TestTerminalFinishedProducts:
+    """Terminal bonus must fire only on the episode's last step."""
+
+    def _setup_env(self, sinks_completed, coef=1.0, n_requests=1):
+        sim_env = FakeSimEnv()
+        dispatcher = FakeDispatcher(tech_count=2)
+        # Sinks live on the dispatcher (env.dispatcher.sinks)
+        dispatcher.sinks = [_FakeSink(completed=c) for c in sinks_completed]
+        for i in range(n_requests):
+            dispatcher.repair_queue.items.append(
+                FakeRequest(machine_id=i + 1, created_at=0.0)
+            )
+        env = _make_env(
+            sim_env=sim_env,
+            dispatcher=dispatcher,
+            reward_overrides={
+                "terminal_finished_products": {
+                    "enabled": True,
+                    "coefficient": float(coef),
+                },
+            },
+        )
+        return env
+
+    def test_fires_only_on_terminal_step(self):
+        # Two requests in the queue → first step is non-terminal, second is.
+        env = self._setup_env(sinks_completed=[7], coef=1.0, n_requests=2)
+        env.reset()
+
+        _, reward1, term1, _, info1 = env.step(0)
+        assert term1 is False
+        # No terminal_finished_products contribution on non-terminal steps
+        assert info1["reward_breakdown"].get("terminal_finished_products", 0.0) == 0.0
+
+        _, reward2, term2, _, info2 = env.step(0)
+        assert term2 is True
+        # Bonus equals coef × total finished across sinks
+        assert info2["reward_breakdown"]["terminal_finished_products"] == 7.0
+
+    def test_coefficient_scales_the_bonus(self):
+        env = self._setup_env(sinks_completed=[10], coef=2.5, n_requests=1)
+        env.reset()
+        _, reward, term, _, info = env.step(0)
+        assert term is True
+        # coef=2.5, n_finished=10 → bonus 25.0
+        assert info["reward_breakdown"]["terminal_finished_products"] == 25.0
+        # And it's reflected in the total reward
+        assert reward >= 25.0  # other components may add
+
+    def test_sums_across_multiple_sinks(self):
+        env = self._setup_env(sinks_completed=[3, 5, 2], coef=1.0, n_requests=1)
+        env.reset()
+        _, _, term, _, info = env.step(0)
+        assert term is True
+        assert info["reward_breakdown"]["terminal_finished_products"] == 10.0
+
+    def test_disabled_pays_nothing(self):
+        # Override-the-override: disable explicitly
+        sim_env = FakeSimEnv()
+        dispatcher = FakeDispatcher(tech_count=2)
+        dispatcher.sinks = [_FakeSink(completed=99)]
+        dispatcher.repair_queue.items.append(FakeRequest(machine_id=1, created_at=0.0))
+        env = _make_env(
+            sim_env=sim_env,
+            dispatcher=dispatcher,
+            reward_overrides={
+                "terminal_finished_products": {
+                    "enabled": False,
+                    "coefficient": 5.0,
+                },
+            },
+        )
+        env.reset()
+        _, _, term, _, info = env.step(0)
+        assert term is True
+        assert "terminal_finished_products" not in info["reward_breakdown"]
+
+
+# ======================================================================
 # fleet_knowledge (replacement for knowledge_match)
 # ======================================================================
 

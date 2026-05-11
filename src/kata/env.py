@@ -1188,6 +1188,18 @@ class KataEnv(gym.Env):
                 {m.name: m.compute(self) for m in EPISODE_METRICS}
             )
 
+            # Terminal reward — fires once, proportional to finished
+            # products.  Tracked in the reward breakdown so the
+            # decomposition plots remain accurate.
+            if self.config.reward.terminal_finished_products.enabled:
+                sinks = getattr(self.dispatcher, "sinks", []) or []
+                n_finished = sum(int(getattr(s, "completed", 0)) for s in sinks)
+                bonus = self._reward_component(
+                    "terminal_finished_products", float(n_finished)
+                )
+                self._last_reward_breakdown["terminal_finished_products"] = bonus
+                reward += bonus
+
         return self._obs(), reward, terminated, False, self._info()
 
     def render(self):
