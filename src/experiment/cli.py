@@ -96,6 +96,24 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Extra W&B tags to append.",
     )
+    parser.add_argument(
+        "--exp-id",
+        default=None,
+        help=(
+            "Override the experiment id used as the report sub-folder "
+            "name (reports/<exp_id>/).  Defaults to <agent>_seed<S>_<TS>."
+        ),
+    )
+    parser.add_argument(
+        "--reports-dir",
+        default=None,
+        help="Root directory for report artefacts (default: ./reports).",
+    )
+    parser.add_argument(
+        "--no-reports",
+        action="store_true",
+        help="Disable writing the local CSV report artefacts.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -138,6 +156,16 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.wandb_group is not None:
         exp.exp_cfg.wandb.group = args.wandb_group
+
+    if args.no_reports:
+        exp.exp_cfg.reports.enabled = False
+        exp.reconfigure_reports()
+    if args.exp_id is not None or args.reports_dir is not None:
+        if args.exp_id is not None:
+            exp.exp_cfg.reports.exp_id = args.exp_id
+        if args.reports_dir is not None:
+            exp.exp_cfg.reports.dir = args.reports_dir
+        exp.reconfigure_reports()
 
     if args.wandb_tags:
         exp.exp_cfg.wandb.tags.extend(args.wandb_tags)

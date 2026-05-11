@@ -65,8 +65,12 @@ class FakeRequest:
 
 
 class FakeTech:
-    def __init__(self, tech_id: int = 0):
+    def __init__(self, tech_id: int = 0, name: str | None = None):
         self.id = tech_id
+        # Unique per-id default keeps the fleet-name uniqueness check
+        # in ``KataEnv._bootstrap_scenario`` happy in test scenarios
+        # that spin up multiple FakeTechs.
+        self.name = name if name is not None else f"tech_{tech_id}"
         self.busy = False
         self.fatigue = 0.0
         self.knowledge = 0.0

@@ -23,7 +23,7 @@ import torch
 from torch import nn
 from torch.distributions import Categorical
 
-from agents.base import Agent
+from agents.base import Agent, resolve_device
 from agents.networks.transformer import TransformerEncoder
 
 # ---------------------------------------------------------------------------
@@ -129,10 +129,10 @@ class GRPOAgent(Agent):
         hidden_dim: int = 128,
         lr: float = 3e-4,
         max_seq_len: int = 128,
-        device: str = "cpu",
+        device: str = "auto",
     ) -> None:
         super().__init__(n_actions, name="GRPO")
-        self.device = torch.device(device)
+        self.device = torch.device(resolve_device(device))
         self.group_size = group_size
         self.clip_eps = clip_eps
         self.entropy_coef = entropy_coef

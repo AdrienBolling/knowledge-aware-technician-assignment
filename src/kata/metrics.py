@@ -77,11 +77,17 @@ class EpisodeMetric(ABC):
 
 
 class RepairTimeDelta(StepMetric):
-    """Difference between base and effective repair time.
+    """Time saved by the chosen technician versus the base repair time.
 
-    Positive means the chosen technician is *slower* than the base time
-    (bad); negative means faster (good).  The raw value is in simulation
-    time units so it is directly interpretable.
+    Computed as ``base - effective`` (in simulation time units): the
+    knowledge multiplier and the fatigue multiplier are both in
+    ``(0, 1]`` so ``effective <= base`` and the metric is non-negative.
+    Higher is better — the chosen technician is faster than a baseline
+    one with no knowledge and no fatigue would be.
+
+    The raw value (rather than a ratio) is reported so it is directly
+    interpretable in time units; divide by the request's base repair
+    time if a normalised speed-up is needed.
     """
 
     name = "repair_time_delta"
@@ -94,10 +100,143 @@ class RepairTimeDelta(StepMetric):
         )
         compute_fn = getattr(tech, "compute_repair_time", None)
         if compute_fn is not None and callable(compute_fn):
-            effective = float(compute_fn(int(base), request))
+            effective = float(compute_fn(base, request))
         else:
             effective = base
-        return effective - base
+        return max(0.0, base - effective)
+
+
+class RepairTimeDeltaPercent(StepMetric):
+    """Time saved by the chosen technician as a percentage of the base.
+
+    Same idea as :class:`RepairTimeDelta` but normalised by the
+    request's base repair time so values are comparable across
+    components with different absolute repair durations:
+
+    ``(base - effective) / base * 100`` clipped to ``[0, 100]``.
+
+    A value of ``0`` means no speed-up over a fresh, no-knowledge
+    technician; ``100`` means the chosen technician would resolve the
+    repair instantaneously.
+    """
+
+    name = "repair_time_delta_per"
+
+    def compute(self, tech: Any, request: Any, env: Any) -> float:
+        base = (
+            float(request.get_repair_time())
+            if hasattr(request, "get_repair_time")
+            else 10.0
+        )
+        if base <= 0.0:
+            return 0.0
+        compute_fn = getattr(tech, "compute_repair_time", None)
+        if compute_fn is not None and callable(compute_fn):
+            effective = float(compute_fn(base, request))
+        else:
+            effective = base
+        pct = (base - effective) / base * 100.0
+        return max(0.0, min(100.0, pct))
+
+
+def _fleet_labels(techs: list[Any]) -> dict[Any, str]:
+    """Return a ``{tech: tech.name}`` mapping.
+
+    Technician name uniqueness is enforced at environment initialisation
+    (see ``KataEnv._bootstrap_scenario``), so labels are simply the
+    technician's ``name`` attribute.  Duplicate names would silently
+    overwrite each other in the resulting plot dict — the env-level
+    check fails fast instead.
+    """
+    return {t: str(getattr(t, "name", f"tech_{getattr(t, 'id', '?')}")) for t in techs}
+
+
+class TechnicianKnowledge(StepMetric):
+    """Per-technician knowledge level.
+
+    Returns a dict ``{label: max_knowledge}`` with one entry per
+    technician in the dispatcher.  The env unpacks this into individual
+    step series ``tech_knowledge/<label>`` so the evolution of each
+    technician's expertise can be plotted at episode end.
+
+    ``max_knowledge`` is the peak value over the knowledge grid — a
+    monotonically non-decreasing scalar in ``[0, +inf)`` in this
+    knowledge model.
+    """
+
+    name = "tech_knowledge"
+
+    def compute(self, tech: Any, request: Any, env: Any) -> dict[str, float]:
+        _ = tech, request
+        techs = getattr(env.dispatcher, "techs", [])
+        labels = _fleet_labels(techs)
+        out: dict[str, float] = {}
+        for t in techs:
+            grid = getattr(t, "knowledge_grid", None)
+            if grid is not None and hasattr(grid, "knowledge_volume"):
+                value = float(grid.knowledge_volume())
+            else:
+                # Fallback for technicians without a knowledge grid
+                # (e.g. the lightweight ``FakeTech`` used in tests).
+                value = float(getattr(t, "knowledge", 0.0))
+            out[labels[t]] = value
+        return out
+
+
+class TechnicianSpecializationIndex(StepMetric):
+    """Per-technician specialization index.
+
+    Returns a dict ``{label: specialization_index}`` with one entry per
+    technician in the dispatcher.  The env unpacks this into individual
+    step series ``tech_specialization/<label>`` so the evolution of each
+    technician's specialization can be plotted at episode end.
+
+    The specialization index is computed as the normalized entropy of the
+    technician's knowledge distribution across repair types, giving a
+    value in ``[0, 1]`` where 0 means fully specialized (all knowledge
+    concentrated in one repair type) and 1 means fully generalized
+    (knowledge evenly distributed across all repair types).
+    """
+
+    name = "tech_specialization"
+
+    def compute(self, tech: Any, request: Any, env: Any) -> dict[str, float]:
+        _ = tech, request
+        techs = getattr(env.dispatcher, "techs", [])
+        labels = _fleet_labels(techs)
+        out: dict[str, float] = {}
+        for t in techs:
+            grid = getattr(t, "knowledge_grid", None)
+            if grid is not None and hasattr(grid, "specialization_index"):
+                value = float(grid.specialization_index())
+            else:
+                # Fallback for technicians without a knowledge grid
+                value = 1.0  # Assume fully generalized if no knowledge info
+            out[labels[t]] = value
+        return out
+
+
+class TechnicianFatigue(StepMetric):
+    """Per-technician fatigue level, sampled at every assignment step.
+
+    Returns a dict ``{label: fatigue}`` with one entry per technician.
+    The env unpacks this into individual step series
+    ``tech_fatigue/<label>`` and the runner renders them as a single
+    multi-line matplotlib figure per episode (``train/metrics/
+    tech_fatigue_episode``).
+
+    Fatigue is in ``[0, 1]`` — 0 fresh, 1 fully exhausted.  The value
+    is updated by the simulator at repair completion, so what is
+    sampled here is the most recent post-repair fatigue.
+    """
+
+    name = "tech_fatigue"
+
+    def compute(self, tech: Any, request: Any, env: Any) -> dict[str, float]:
+        _ = tech, request
+        techs = getattr(env.dispatcher, "techs", [])
+        labels = _fleet_labels(techs)
+        return {labels[t]: float(getattr(t, "fatigue", 0.0)) for t in techs}
 
 
 class RepairQuality(StepMetric):
@@ -137,13 +276,59 @@ class TotalBreakdowns(EpisodeMetric):
         return float(getattr(env, "_breakdown_counter", 0))
 
 
+class TotalAssignments(EpisodeMetric):
+    """Count of repair assignments dispatched during the episode.
+
+    Increments at every ``env.step()`` that picked a technician. Some
+    assignments may still be in-flight at episode end — see
+    ``total_completed_repairs`` for the count of repairs that actually
+    finished within the episode.
+    """
+
+    name = "total_assignments"
+
+    def compute(self, env: Any) -> float:
+        return float(getattr(env, "_repair_counter", 0))
+
+
 class TotalRepairs(EpisodeMetric):
-    """Count of completed repairs during the episode."""
+    """Count of repairs that actually completed during the episode.
+
+    Driven by the dispatcher's ``on_repair_completed`` callback, so
+    only counts assignments whose SimPy job ran to completion before
+    the episode terminated.
+    """
 
     name = "total_repairs"
 
     def compute(self, env: Any) -> float:
-        return float(getattr(env, "_repair_counter", 0))
+        return float(getattr(env, "_completed_repair_counter", 0))
+
+
+class IllTechnicianCount(EpisodeMetric):
+    """Number of technicians that experienced at least one disruption.
+
+    Counts the distinct technicians whose ``disruption_count`` is
+    non-zero — i.e. technicians that went on sick leave (or any other
+    stochastic disruption configured under
+    ``sim.disruptions.dis_dict``) at least once during the episode.
+
+    With the current dispatcher, each technician runs a single one-shot
+    disruption process per episode so this metric is bounded above by
+    ``len(dispatcher.techs)``.
+    """
+
+    name = "ill_technician_count"
+
+    def compute(self, env: Any) -> float:
+        techs = getattr(env.dispatcher, "techs", [])
+        return float(
+            sum(
+                t.disruption_count
+                for t in techs
+                if int(getattr(t, "disruption_count", 0)) > 0
+            )
+        )
 
 
 class FinishedProducts(EpisodeMetric):
@@ -157,21 +342,27 @@ class FinishedProducts(EpisodeMetric):
 
 
 class MeanTimeToRepair(EpisodeMetric):
-    """Average repair duration across all completed repairs (MTTR).
+    """Mean duration of one completed repair (MTTR).
 
-    Computed as ``total_sim_time / total_repairs``.  Lower is better —
-    indicates the assignment policy is selecting skilled, rested
-    technicians.  Returns 0 if no repairs were completed.
+    Computed as ``total_repair_time / total_completed_repairs`` where
+    ``total_repair_time`` is the sum of actual on-tool repair durations
+    reported by the dispatcher (excluding queueing and travel).  Lower
+    is better — a skilled, rested fleet brings this down.  Returns 0
+    when no repair has completed.
+
+    NOTE: this is the textbook MTTR definition, not
+    ``sim_time / repair_count`` (which is mean *time between* repairs
+    and conflates demand intensity with repair speed).
     """
 
     name = "mttr"
 
     def compute(self, env: Any) -> float:
-        repairs = getattr(env, "_repair_counter", 0)
+        repairs = getattr(env, "_completed_repair_counter", 0)
         if repairs == 0:
             return 0.0
-        sim_time = float(getattr(env.sim_env, "now", 0.0))
-        return sim_time / repairs
+        total = float(getattr(env, "_total_repair_time", 0.0))
+        return total / repairs
 
 
 class FleetAvailabilityRate(EpisodeMetric):
@@ -219,12 +410,18 @@ class ThroughputRate(EpisodeMetric):
 
 STEP_METRICS: list[StepMetric] = [
     RepairTimeDelta(),
+    RepairTimeDeltaPercent(),
     RepairQuality(),
+    TechnicianKnowledge(),
+    TechnicianFatigue(),
+    TechnicianSpecializationIndex(),
 ]
 
 EPISODE_METRICS: list[EpisodeMetric] = [
     TotalBreakdowns(),
+    TotalAssignments(),
     TotalRepairs(),
+    IllTechnicianCount(),
     FinishedProducts(),
     MeanTimeToRepair(),
     FleetAvailabilityRate(),

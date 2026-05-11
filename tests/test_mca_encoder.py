@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from kata.entities.encoder.mca_encoder import MCAEncoder, _bucket_repair_time
+from kata.entities.encoder.mca_encoder import MCAEncoder
 
 
 class _FakeMachine:
@@ -34,15 +34,6 @@ class _FakeRequest:
             "component_id": f"{self._comp_type}_0",
             "repair_time": self._repair_time,
         }
-
-
-class TestBucketRepairTime:
-    def test_buckets(self):
-        assert _bucket_repair_time(3) == "very_short"
-        assert _bucket_repair_time(10) == "short"
-        assert _bucket_repair_time(25) == "medium"
-        assert _bucket_repair_time(45) == "long"
-        assert _bucket_repair_time(100) == "very_long"
 
 
 class TestMCAEncoderUnfitted:
@@ -117,3 +108,54 @@ class TestMCAEncoderFitted:
         result = enc.encode(requests[0])
         assert result.shape == (3,)
         assert all(0 <= c < 5 for c in result)
+
+
+class TestMCAEncoderDiagnostics:
+    def _diverse(self, n=80) -> list[_FakeRequest]:
+        types = ["CNC", "lathe", "drill", "grinder", "press"]
+        comps = ["motor", "spindle", "bearing", "belt", "sensor"]
+        out = []
+        for i in range(n):
+            out.append(
+                _FakeRequest(
+                    machine_type=types[i % len(types)],
+                    component_type=comps[(i * 3) % len(comps)],
+                )
+            )
+        return out
+
+    def test_diagnostics_exposed_after_fit(self):
+        enc = MCAEncoder(grid_shape=(10, 10), n_components=2)
+        enc.fit(self._diverse())
+        d = enc.fit_diagnostics
+        assert d["n_requests"] == 80
+        assert d["n_unique_feature_tuples"] >= 5
+        assert "eigenvalues" in d and len(d["eigenvalues"]) >= 1
+        assert 0.0 <= d["cumulative_inertia"] <= 1.0 + 1e-9
+        assert "explained_inertia" in d
+
+    def test_well_trained_true_for_clean_data(self):
+        enc = MCAEncoder(grid_shape=(10, 10), n_components=2)
+        enc.fit(self._diverse())
+        # Two independent categorical features with multiple levels each
+        # → MCA captures essentially all of the (categorical) variance.
+        assert enc.is_well_trained()
+        assert enc.fit_diagnostics["cumulative_inertia"] > 0.5
+
+    def test_summary_string_safe(self):
+        enc = MCAEncoder()
+        # Not fitted yet
+        assert "not fitted" in enc.summary()
+        enc.fit(self._diverse())
+        assert "well_trained" in enc.summary()
+
+    def test_singleton_dataset_does_not_fit(self):
+        enc = MCAEncoder()
+        # All requests share the same feature tuple
+        reqs = [_FakeRequest(machine_type="A", component_type="motor") for _ in range(10)]
+        enc.fit(reqs)
+        assert not enc.fitted
+        # Falls back to hash encoding deterministically
+        a = enc.encode(reqs[0])
+        b = enc.encode(reqs[1])
+        np.testing.assert_array_equal(a, b)

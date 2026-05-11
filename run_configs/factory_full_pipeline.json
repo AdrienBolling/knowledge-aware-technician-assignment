@@ -1,0 +1,64 @@
+{
+  "technicians": {
+    "expert_1":     { "template": "expert",     "name": "expert_1" },
+    "senior_1":     { "template": "senior",     "name": "senior_1" },
+    "generalist_1": { "template": "generalist", "name": "generalist_1" },
+    "junior_1":     { "template": "junior",     "name": "junior_1" }
+  },
+  "machines": {
+    "conv_1":   { "template": "conveyor" },
+    "conv_2":   { "template": "conveyor" },
+    "cnc_1":    { "template": "cnc_weibull" },
+    "cnc_2":    { "template": "cnc_weibull" },
+    "drill_1":  { "template": "drill" },
+    "drill_2":  { "template": "drill" },
+    "welder_1": { "template": "welder" },
+    "welder_2": { "template": "welder" },
+    "asm_1":    { "template": "assembly_mixed" },
+    "asm_2":    { "template": "assembly_robot" },
+    "asm_3":    { "template": "assembly_robot" },
+    "paint_1":  { "template": "paint" },
+    "paint_2":  { "template": "paint" },
+    "qc_1":     { "template": "inspection" },
+    "qc_2":     { "template": "inspection" }
+  },
+  "products": {
+    "widget": {
+      "product_type": "widget",
+      "route": ["Conveyor", "CNC", "Drill", "Welder", "Assembly", "Paint", "Inspection"]
+    }
+  },
+  "sim": {
+    "technicians": {
+      "travel_time": 15,
+      "fatigue_model": "exponential",
+      "fatigue_alpha": 0.5
+    },
+    "repair": {
+      "knowledge_enabled": true,
+      "fatigue_enabled": true
+    }
+  },
+  "gym": {
+    "max_episode_steps": 5000,
+    "max_sim_time": 50000.0,
+    "observation_representation": "token_ids",
+    "observation_mode": "factory_level",
+    "include_technician_fatigue_tokens": true,
+    "include_technician_knowledge_tokens": true,
+    "tokenizer_seq_length": 128,
+    "reward": {
+      "assignment":             { "enabled": true, "coefficient": 1.0 },
+      "wait_time":              { "enabled": true, "coefficient": 1.0 },
+      "queue_size":             { "enabled": true, "coefficient": 0.5 },
+      "busy_technician":        { "enabled": true, "coefficient": 1.0 },
+      "fleet_knowledge":        { "enabled": true, "coefficient": 1.5 },
+      "fatigue_cost":           { "enabled": true, "coefficient": 1.0 },
+      "estimated_repair_time":  { "enabled": true, "coefficient": 0.5 },
+      "fleet_availability":     { "enabled": true, "coefficient": 1.0 },
+      "throughput_delta":       { "enabled": true, "coefficient": 2.0 },
+      "downtime_cost":          { "enabled": true, "coefficient": 1.5 },
+      "selection_diversity":    { "enabled": true, "coefficient": 1.0 }
+    }
+  }
+}

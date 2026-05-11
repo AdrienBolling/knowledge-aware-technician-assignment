@@ -1,49 +1,13 @@
 {
   "technicians": {
-    "tech_senior": {
-      "name": "senior_tech",
-      "fatigue_lambda": 0.005,
-      "fatigue_mu": 0.08,
-      "knowledge_k_shape": [10, 10],
-      "knowledge_propagation_sigma": 1.5,
-      "knowledge_transmission_factor": 0.7,
-      "knowledge_learning_rate": 0.15
-    },
-    "tech_junior_1": {
-      "name": "junior_tech_1",
-      "fatigue_lambda": 0.02,
-      "fatigue_mu": 0.03,
-      "knowledge_k_shape": [10, 10],
-      "knowledge_propagation_sigma": 0.5,
-      "knowledge_transmission_factor": 0.3,
-      "knowledge_learning_rate": 0.05
-    },
-    "tech_junior_2": {
-      "name": "junior_tech_2",
-      "fatigue_lambda": 0.02,
-      "fatigue_mu": 0.03,
-      "knowledge_k_shape": [10, 10],
-      "knowledge_propagation_sigma": 0.5,
-      "knowledge_transmission_factor": 0.3,
-      "knowledge_learning_rate": 0.05
-    }
+    "tech_senior": { "template": "senior", "name": "senior_tech" },
+    "tech_junior_1": { "template": "junior", "name": "junior_tech_1" },
+    "tech_junior_2": { "template": "junior", "name": "junior_tech_2" }
   },
   "machines": {
-    "drill_1": {
-      "machine_type": "Drill",
-      "process_time": 15,
-      "dt": 1
-    },
-    "drill_2": {
-      "machine_type": "Drill",
-      "process_time": 15,
-      "dt": 1
-    },
-    "paint_1": {
-      "machine_type": "Paint",
-      "process_time": 20,
-      "dt": 1
-    }
+    "drill_1": { "template": "drill" },
+    "drill_2": { "template": "drill" },
+    "paint_1": { "template": "paint" }
   },
   "products": {
     "widget": {

@@ -1,0 +1,121 @@
+{
+  "technicians": {
+    "expert_1":     { "template": "expert",     "name": "expert_1" },
+    "senior_1":     { "template": "senior",     "name": "senior_1" },
+    "generalist_1": { "template": "generalist", "name": "generalist_1" },
+    "junior_1":     { "template": "junior",     "name": "junior_1" }
+  },
+
+  "machines": {
+    "cnc_1":   { "template": "cnc_weibull" },
+    "cnc_2":   { "template": "cnc_weibull" },
+    "cnc_3":   { "template": "cnc_weibull" },
+    "cnc_4":   { "template": "cnc_weibull" },
+    "cnc_5":   { "template": "cnc_weibull" },
+    "cnc_6":   { "template": "cnc_weibull" },
+    "asm_1":   { "template": "assembly_mixed" },
+    "asm_2":   { "template": "assembly_mixed" },
+    "asm_3":   { "template": "assembly_mixed" },
+    "asm_4":   { "template": "assembly_robot" },
+    "asm_5":   { "template": "assembly_robot" },
+    "asm_6":   { "template": "assembly_robot" },
+    "welder_1":{ "template": "welder" },
+    "welder_2":{ "template": "welder" },
+    "welder_3":{ "template": "welder" },
+    "welder_4":{ "template": "welder" },
+    "conv_1":  { "template": "conveyor" },
+    "conv_2":  { "template": "conveyor" },
+    "conv_3":  { "template": "conveyor" },
+    "conv_4":  { "template": "conveyor" },
+    "conv_5":  { "template": "conveyor" },
+    "conv_6":  { "template": "conveyor" },
+    "qc_1":    { "template": "inspection" },
+    "qc_2":    { "template": "inspection" },
+    "qc_3":    { "template": "inspection" },
+    "qc_4":    { "template": "inspection" }
+  },
+
+  "products": {
+    "widget": {
+      "product_type": "widget",
+      "route": ["Conveyor", "CNC", "Welder", "Assembly", "Inspection"]
+    }
+  },
+
+  "sim": {
+    "technicians": {
+      "travel_time": 20,
+      "fatigue_model": "exponential",
+      "fatigue_alpha": 0.5
+    },
+    "repair": {
+      "knowledge_enabled": true,
+      "fatigue_enabled": true,
+      "min_repair_fraction": 0.3,
+      "knowledge_sensitivity": 0.002
+    },
+    "disruptions": {
+      "interrupt_on_disrupt": true,
+      "dis_dict": {
+        "sick_leave": { "mu": 480.0, "sig": 120.0, "prob": 1.0 }
+      }
+    }
+  },
+
+  "gym": {
+    "max_episode_steps": 10000,
+    "max_sim_time": 50000.0,
+
+    "observation_representation": "token_ids",
+    "observation_mode": "tech_aware",
+    "include_technician_fatigue_tokens": true,
+    "include_technician_knowledge_tokens": true,
+
+    "use_mca_encoder": true,
+    "warmup_steps": 400,
+    "mca_grid_shape": [10, 10],
+    "mca_n_components": 2,
+    "tokenizer_seq_length": 192,
+
+    "assignment_reward": 0.1,
+    "ticket_wait_time_penalty": 0.01,
+    "fleet_knowledge_scale": 10.0,
+    "expose_action_mask": true,
+
+    "reward": {
+      "assignment":             { "enabled": true,  "coefficient": 1.0 },
+      "wait_time":              { "enabled": true,  "coefficient": 1.0 },
+      "queue_size":             { "enabled": true,  "coefficient": 0.5 },
+      "busy_technician":        { "enabled": true,  "coefficient": 1.0 },
+      "fleet_knowledge":        { "enabled": true,  "coefficient": 1.5 },
+      "fatigue_cost":           { "enabled": true,  "coefficient": 1.0 },
+      "estimated_repair_time":  { "enabled": true,  "coefficient": 0.5 },
+      "workload_balance":       { "enabled": false, "coefficient": 1.0 },
+      "machine_criticality":    { "enabled": false, "coefficient": 1.0 },
+      "fleet_availability":     { "enabled": true,  "coefficient": 1.0 },
+      "throughput_delta":       { "enabled": true,  "coefficient": 2.0 },
+      "repair_backlog_age":     { "enabled": true,  "coefficient": 0.5 },
+      "technician_utilization": { "enabled": true,  "coefficient": 0.5 },
+      "downtime_cost":          { "enabled": true,  "coefficient": 1.5 },
+      "selection_diversity":    { "enabled": true,  "coefficient": 1.0 }
+    }
+  },
+
+  "ticket_factory": {
+    "priority_rules": {
+      "motor": 10,
+      "spindle": 9,
+      "pump": 8,
+      "bearing": 6,
+      "torch": 7,
+      "drive": 9,
+      "electronics": 8,
+      "sensor": 5,
+      "mechanical": 4,
+      "end_effector": 5,
+      "general_failure": 5
+    },
+    "add_randomness": false,
+    "random_priority_variance": 0
+  }
+}

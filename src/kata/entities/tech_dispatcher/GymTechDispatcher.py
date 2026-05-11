@@ -45,6 +45,11 @@ class GymTechDispatcher:
             capacity=cfg.repair_queue_capacity,
         )
 
+        # Optional callback invoked when a repair finishes — used by the
+        # Gym wrapper to track completed repairs and actual repair
+        # durations.  Signature: ``(request, repair_duration)``.
+        self.on_repair_completed: callable | None = None
+
         # Start stochastic disruption processes
         for t in technicians:
             _ = env.process(
@@ -89,7 +94,13 @@ class GymTechDispatcher:
         machine._log(f"Requesting repair by Tech {tech.id}")
         with tech_res.request(priority=0, preempt=False) as req:
             yield req  # Wait for technician to be available
-            tech.busy = True
+            # Hand off to the technician so it can recover fatigue based
+            # on the time elapsed since its previous ``repair_finished``
+            # before flipping ``busy = True``.
+            if hasattr(tech, "start_repair"):
+                tech.start_repair(self.env.now)
+            else:
+                tech.busy = True
 
             # Travel time
             t_travel = tech.travel_time(machine)
@@ -111,3 +122,9 @@ class GymTechDispatcher:
             )
 
             tech.repair_finished(request, self.env.now)
+
+            # Notify any listener (e.g. KataEnv) that a repair just
+            # completed.  ``final_repair_time`` excludes travel and
+            # queue waiting so it is exactly the repair duration.
+            if self.on_repair_completed is not None:
+                self.on_repair_completed(request, float(final_repair_time))

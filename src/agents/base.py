@@ -7,6 +7,24 @@ from pathlib import Path
 from typing import Any
 
 
+def resolve_device(device: str) -> str:
+    """Resolve a user-provided device string.
+
+    ``"auto"`` picks the best available backend: CUDA → MPS → CPU.
+    Anything else is returned unchanged so callers can force a specific
+    device (e.g. for tests or out-of-memory mitigation).
+    """
+    if device != "auto":
+        return device
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 class Agent(ABC):
     """Base class for agents interacting with KataEnv.
 

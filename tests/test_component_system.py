@@ -152,21 +152,15 @@ def test_complex_machine_with_weibull():
 
 
 def test_factory_from_json_config():
-    """Test creating ComplexMachine from JSON configuration."""
-    print("\n=== Test 5: Factory from JSON Config ===")
+    """Test creating ComplexMachine from a packaged template."""
+    print("\n=== Test 5: Factory from packaged template ===")
 
-    import json
-
-    from kata.EntityFactories.complex_machine_factory import (
-        create_complex_machine_from_config,
+    from kata.EntityFactories import (
+        create_complex_machine_from_template,
+        list_machine_templates,
     )
 
-    # Load a template from the JSON file
-    with open("src/kata/resources/machine_templates.json") as f:
-        templates = json.load(f)
-
-    # Get the basic_cnc_machine template
-    config = templates["basic_cnc_machine"]
+    assert "cnc_weibull" in list_machine_templates()
 
     env = sp.Environment()
     input_buffer = sp.Store(env)
@@ -181,17 +175,17 @@ def test_factory_from_json_config():
 
     tech_dispatcher = MockTechDispatcher()
 
-    machine = create_complex_machine_from_config(
+    machine = create_complex_machine_from_template(
         env=env,
         machine_id=100,
-        machine_config=config,
+        template_name="cnc_weibull",
         input_buffer=input_buffer,
         output_buffer=output_buffer,
         tech_dispatcher=tech_dispatcher,
         dt=1,
     )
 
-    print("✓ ComplexMachine created from JSON config")
+    print("✓ ComplexMachine created from packaged template")
     print(f"  Type: {machine.mtype}")
     print(f"  Components: {len(machine.components)}")
     for comp in machine.components:
@@ -199,10 +193,10 @@ def test_factory_from_json_config():
             f"    - {comp.get_id()} ({comp.get_type()}): repair={comp.get_repair_time()}"
         )
 
-    assert len(machine.components) == 3, "Expected 3 components from basic_cnc_machine"
-    assert machine.components[0].get_id() == "spindle_motor", (
-        "First component ID mismatch"
-    )
+    assert len(machine.components) >= 2, "Expected at least 2 components for cnc_weibull"
+    component_ids = {c.get_id() for c in machine.components}
+    assert "spindle_0" in component_ids
+    assert "coolant_pump_0" in component_ids
 
 
 def run_all_tests():

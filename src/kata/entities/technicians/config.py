@@ -1,12 +1,23 @@
 """Pydantic configuration models for Technician entities."""
 
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class TechnicianConfig(BaseModel):
     """Configuration for a GymTechnician.
 
     Fields cover identity, fatigue dynamics, and knowledge-grid parameters.
+
+    A config entry may also be expanded from a named template by
+    providing a ``template`` key.  The named template is loaded from
+    :mod:`kata.EntityFactories.technician_factory` and any other fields
+    in the entry override the template's defaults.
+
+    Example (in JSON)::
+
+        {"template": "expert", "name": "alice"}
     """
 
     name: str = Field(
@@ -58,6 +69,24 @@ class TechnicianConfig(BaseModel):
         le=1.0,
         description="Learning rate for knowledge updates.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expand_template(cls, data: Any) -> Any:
+        """Expand a ``template`` key by merging the named template's fields."""
+        if not isinstance(data, dict):
+            return data
+        template_name = data.get("template")
+        if template_name is None:
+            return data
+        from kata.EntityFactories.technician_factory import get_template
+
+        merged: dict[str, Any] = get_template(template_name)
+        for key, value in data.items():
+            if key == "template":
+                continue
+            merged[key] = value
+        return merged
 
 
 # ---------------------------------------------------------------------------

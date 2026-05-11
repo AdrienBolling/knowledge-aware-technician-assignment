@@ -46,6 +46,7 @@ class AgentConfig(BaseModel):
         "shortest_queue",
         "rainbow_dqn",
         "grpo",
+        "ppo_transformer",
     ] = Field(description="Agent class to instantiate.")
 
     params: dict[str, Any] = Field(
@@ -100,6 +101,38 @@ class CheckpointConfig(BaseModel):
     save_best: bool = Field(
         default=True,
         description="Additionally save the best model by mean eval reward.",
+    )
+
+
+class ReportsConfig(BaseModel):
+    """Settings for the local per-experiment metric reports.
+
+    Two CSVs (``episode_metrics.csv``, ``step_metrics.csv``) and a
+    ``config.json`` snapshot are written under
+    ``<dir>/<exp_id>/`` at the end of each run.  The reports are
+    independent of W&B and are the recommended source for offline
+    analysis / paper figures.
+    """
+
+    enabled: bool = Field(default=True, description="Write reports to disk.")
+    dir: str = Field(
+        default="reports",
+        description="Root directory for report artefacts (relative to CWD).",
+    )
+    exp_id: str | None = Field(
+        default=None,
+        description=(
+            "Identifier for this experiment.  When None, an id is "
+            "auto-generated from the agent type, seed and a timestamp."
+        ),
+    )
+    log_steps: bool = Field(
+        default=True,
+        description=(
+            "Record one row per env step in step_metrics.csv.  "
+            "Disable when running very long rollouts to keep memory and "
+            "disk usage down (episode_metrics.csv is unaffected)."
+        ),
     )
 
 
@@ -167,6 +200,7 @@ class ExperimentConfig(BaseModel):
     eval: EvalConfig = Field(default_factory=EvalConfig)
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
     wandb: WandbConfig = Field(default_factory=WandbConfig)
+    reports: ReportsConfig = Field(default_factory=ReportsConfig)
 
 
 # ======================================================================

@@ -1,114 +1,14 @@
 {
   "technicians": {
-    "expert_1": {
-      "name": "expert_1",
-      "fatigue_lambda": 0.005,
-      "fatigue_mu": 0.08,
-      "knowledge_k_shape": [10, 10],
-      "knowledge_propagation_sigma": 1.5,
-      "knowledge_transmission_factor": 0.7,
-      "knowledge_learning_rate": 0.15
-    },
-    "generalist_1": {
-      "name": "generalist_1",
-      "fatigue_lambda": 0.01,
-      "fatigue_mu": 0.05,
-      "knowledge_k_shape": [10, 10],
-      "knowledge_propagation_sigma": 1.0,
-      "knowledge_transmission_factor": 0.5,
-      "knowledge_learning_rate": 0.1
-    },
-    "junior_1": {
-      "name": "junior_1",
-      "fatigue_lambda": 0.02,
-      "fatigue_mu": 0.03,
-      "knowledge_k_shape": [10, 10],
-      "knowledge_propagation_sigma": 0.5,
-      "knowledge_transmission_factor": 0.3,
-      "knowledge_learning_rate": 0.05
-    },
-    "junior_2": {
-      "name": "junior_2",
-      "fatigue_lambda": 0.02,
-      "fatigue_mu": 0.03,
-      "knowledge_k_shape": [10, 10],
-      "knowledge_propagation_sigma": 0.5,
-      "knowledge_transmission_factor": 0.3,
-      "knowledge_learning_rate": 0.05
-    }
+    "expert_1": { "template": "expert", "name": "expert_1" },
+    "generalist_1": { "template": "generalist", "name": "generalist_1" },
+    "junior_1": { "template": "junior", "name": "junior_1" },
+    "junior_2": { "template": "junior", "name": "junior_2" }
   },
   "machines": {
-    "cnc_1": {
-      "machine_type": "CNC",
-      "process_time": 200,
-      "dt": 1,
-      "components": {
-        "spindle_0": {
-          "component_id": "spindle_0",
-          "component_type": "spindle",
-          "base_repair_time": 90.0,
-          "idle_degradation_factor": 0.05,
-          "breakdown_model": "weibull",
-          "weibull_breakdown": { "shape": 2.5, "scale": 800.0 }
-        },
-        "coolant_pump_0": {
-          "component_id": "coolant_pump_0",
-          "component_type": "pump",
-          "base_repair_time": 40.0,
-          "idle_degradation_factor": 0.05,
-          "breakdown_model": "weibull",
-          "weibull_breakdown": { "shape": 3.0, "scale": 1200.0 }
-        }
-      }
-    },
-    "cnc_2": {
-      "machine_type": "CNC",
-      "process_time": 200,
-      "dt": 1,
-      "components": {
-        "spindle_0": {
-          "component_id": "spindle_0",
-          "component_type": "spindle",
-          "base_repair_time": 90.0,
-          "idle_degradation_factor": 0.05,
-          "breakdown_model": "weibull",
-          "weibull_breakdown": { "shape": 2.5, "scale": 800.0 }
-        },
-        "coolant_pump_0": {
-          "component_id": "coolant_pump_0",
-          "component_type": "pump",
-          "base_repair_time": 40.0,
-          "idle_degradation_factor": 0.05,
-          "breakdown_model": "weibull",
-          "weibull_breakdown": { "shape": 3.0, "scale": 1200.0 }
-        }
-      }
-    },
-    "assembly_1": {
-      "machine_type": "Assembly",
-      "process_time": 120,
-      "dt": 1,
-      "components": {
-        "motor_0": {
-          "component_id": "motor_0",
-          "component_type": "motor",
-          "base_repair_time": 50.0,
-          "idle_degradation_factor": 0.05,
-          "breakdown_model": "weibull",
-          "weibull_breakdown": { "shape": 2.5, "scale": 800.0 }
-        },
-        "bearing_0": {
-          "component_id": "bearing_0",
-          "component_type": "bearing",
-          "base_repair_time": 30.0,
-          "breakdown_model": "simple",
-          "simple_breakdown": {
-            "failure_prob_working": 0.002,
-            "failure_prob_idle": 0.0002
-          }
-        }
-      }
-    }
+    "cnc_1": { "template": "cnc_weibull" },
+    "cnc_2": { "template": "cnc_weibull" },
+    "assembly_1": { "template": "assembly_mixed" }
   },
   "products": {
     "precision_part": {
@@ -132,8 +32,6 @@
     "max_sim_time": 1000000.0,
     "observation_representation": "structured",
     "observation_mode": "factory_level",
-    "include_technician_fatigue_tokens": true,
-    "include_technician_knowledge_tokens": true,
     "assignment_reward": 1.0,
     "reward": {
       "assignment": { "enabled": true, "coefficient": 1.0 },
@@ -141,7 +39,7 @@
       "queue_size": { "enabled": true, "coefficient": 0.5 },
       "busy_technician": { "enabled": true, "coefficient": 1.5 },
       "fatigue_cost": { "enabled": true, "coefficient": 2.0 },
-      "knowledge_match": { "enabled": true, "coefficient": 3.0 },
+      "fleet_knowledge": { "enabled": true, "coefficient": 3.0 },
       "workload_balance": { "enabled": true, "coefficient": 1.0 },
       "estimated_repair_time": { "enabled": true, "coefficient": 2.0 },
       "machine_criticality": { "enabled": true, "coefficient": 1.5 }
