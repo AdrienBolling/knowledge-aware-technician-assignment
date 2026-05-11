@@ -292,6 +292,18 @@ class GymRewardConfig(BaseModel):
             "assignments have happened yet, the raw value is 1."
         ),
     )
+    terminal_finished_products: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Terminal bonus paid once on the episode's last step, "
+            "proportional to the total number of products that reached "
+            "a sink during the episode.  Use this to make "
+            "*finished products* the dominant training signal without "
+            "flooding every step with dense throughput rewards.  Raw "
+            "value is the integer product count; final contribution is "
+            "``coefficient × n_finished``."
+        ),
+    )
     downtime_cost: RewardComponentConfig = Field(
         default_factory=_disabled_reward_component,
         description=(
