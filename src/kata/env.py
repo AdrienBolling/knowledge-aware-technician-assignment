@@ -110,12 +110,46 @@ class KataEnv(gym.Env):
         # Metrics state (reset each episode)
         self._last_step_metrics: dict[str, float] = {}
         self._breakdown_counter: int = 0
+        # ``_repair_counter`` historically meant "tickets assigned" and is
+        # still incremented at assignment time; ``_completed_repair_counter``
+        # is incremented when the dispatcher finishes a repair so we can
+        # distinguish in-flight from completed work.
         self._repair_counter: int = 0
+        self._completed_repair_counter: int = 0
+        # Sum of estimated repair times across all assignments — used by
+        # the MTTR metric so it reflects mean repair *duration*, not the
+        # mean time between repairs.
+        self._total_repair_time: float = 0.0
 
-        # State tracking for delta-based rewards
+        # State tracking for delta-based rewards.  These are updated on
+        # every step (regardless of which reward components are enabled)
+        # so that episode-level metrics like fleet availability stay
+        # accurate even when the corresponding reward is off.
         self._prev_finished_products: int = 0
         self._machine_down_since: dict[int, float] = {}  # machine_id -> time it broke
         self._total_downtime: float = 0.0  # accumulated machine-time lost
+
+        # Per-machine episode stats — populated by
+        # ``_update_machine_state_tracking`` and surfaced through
+        # ``info["machine_stats"]`` so the runner can render one
+        # histogram per machine at episode end.
+        self._machine_total_downtime: dict[int, float] = {}
+        self._machine_total_processing_time: dict[int, float] = {}
+        self._machine_processing_since: dict[int, float] = {}
+        self._machine_breakdown_counts: dict[int, int] = {}
+        self._machine_labels: dict[int, str] = {}
+
+        # Per-technician assignment counts within the current episode.
+        # Drives the ``selection_diversity`` reward and is reset on
+        # ``reset()``.  Indexed by the *action* (= position in
+        # ``self.dispatcher.techs``), so it stays valid even if
+        # technicians are re-instantiated by the scenario builder.
+        self._tech_assignment_counts: list[int] = []
+        # Simulation time at which each technician was last assigned a
+        # repair (``-1.0`` ≡ "never assigned this episode").  Used by
+        # the ``tech_aware`` observation mode to surface a per-tech
+        # idle-time signal to the policy.
+        self._tech_last_assignment_time: list[float] = []
 
         self._bootstrap_scenario()
 
@@ -132,31 +166,47 @@ class KataEnv(gym.Env):
             )
             raise ValueError(message)
 
+        # Technician names must be unique across the fleet — they are
+        # used as labels in fleet-wide plots and metrics, and silent
+        # collisions would merge two technicians' series in W&B.  Fail
+        # fast here with a clear remediation hint.
+        self._check_technician_name_uniqueness(self.dispatcher.techs)
+
+        # Listen for repair-completion events so MTTR / completed-repair
+        # metrics stay accurate even when the corresponding rewards are
+        # disabled.
+        if hasattr(self.dispatcher, "on_repair_completed"):
+            self.dispatcher.on_repair_completed = self._on_repair_completed
+
         n_techs = len(self.dispatcher.techs)
+        # Re-shape the per-tech counters to match the new fleet (they
+        # are fully reset at every ``reset()`` regardless).
+        self._tech_assignment_counts = [0] * n_techs
+        self._tech_last_assignment_time = [-1.0] * n_techs
         self.action_space = gym.spaces.Discrete(n_techs)
         if self.config.observation_representation == "token_ids":
             seq_len = self.config.tokenizer_seq_length
-            self.observation_space = gym.spaces.Dict(
-                {
-                    "token_ids": gym.spaces.Box(
-                        low=0,
-                        high=np.iinfo(np.int64).max,
-                        shape=(seq_len,),
-                        dtype=np.int64,
-                    ),
-                }
-            )
+            space_dict: dict[str, gym.Space] = {
+                "token_ids": gym.spaces.Box(
+                    low=0,
+                    high=np.iinfo(np.int64).max,
+                    shape=(seq_len,),
+                    dtype=np.int64,
+                ),
+            }
+            if self.config.expose_action_mask:
+                space_dict["action_mask"] = gym.spaces.MultiBinary(n_techs)
+            self.observation_space = gym.spaces.Dict(space_dict)
             return
         if self.config.observation_representation == "tokens":
             token_spaces = tuple(
                 gym.spaces.Text(max_length=self.config.token_max_length)
                 for _ in range(self.config.token_observation_length)
             )
-            self.observation_space = gym.spaces.Dict(
-                {
-                    "tokens": gym.spaces.Tuple(token_spaces),
-                }
-            )
+            space_dict = {"tokens": gym.spaces.Tuple(token_spaces)}
+            if self.config.expose_action_mask:
+                space_dict["action_mask"] = gym.spaces.MultiBinary(n_techs)
+            self.observation_space = gym.spaces.Dict(space_dict)
             return
 
         observation_space: dict[str, gym.Space] = {
@@ -190,7 +240,34 @@ class KataEnv(gym.Env):
                 high=np.array([np.finfo(np.float32).max], dtype=np.float32),
                 dtype=np.float32,
             )
+        if self.config.expose_action_mask:
+            observation_space["action_mask"] = gym.spaces.MultiBinary(n_techs)
         self.observation_space = gym.spaces.Dict(observation_space)
+
+    @staticmethod
+    def _check_technician_name_uniqueness(techs: list[Any]) -> None:
+        """Raise ``ValueError`` if any two technicians share a name.
+
+        Many fleet-level plots and metrics (``tech_knowledge``,
+        ``tech_fatigue`` …) key on ``tech.name``.  If two technicians
+        share a name their series would silently overwrite each other,
+        so the env refuses to start with duplicates.  Fix the offending
+        config by overriding ``name`` per technician (e.g. by passing
+        a unique ``name`` field next to ``"template": "junior"``).
+        """
+        from collections import Counter
+
+        names = [str(getattr(t, "name", "")) for t in techs]
+        duplicates = sorted(n for n, c in Counter(names).items() if c > 1)
+        if duplicates:
+            msg = (
+                "Technician names must be unique across the fleet "
+                f"(duplicates: {duplicates}). "
+                "Override the 'name' field per technician in the env "
+                "config (e.g. add \"name\": \"junior_1\" alongside the "
+                "\"template\": \"junior\" entry)."
+            )
+            raise ValueError(msg)
 
     def _queue(self) -> Any:
         return self.dispatcher.repair_queue
@@ -353,7 +430,7 @@ class KataEnv(gym.Env):
             machine_type,
         ]
 
-        if self.config.observation_mode in {"broken_machine", "factory_level"}:
+        if self.config.observation_mode in {"broken_machine", "factory_level", "tech_aware"}:
             tokens.extend(
                 [
                     "MACHINE_TYPE",
@@ -371,7 +448,7 @@ class KataEnv(gym.Env):
                 ]
             )
 
-        if self.config.observation_mode == "factory_level":
+        if self.config.observation_mode in {"factory_level", "tech_aware"}:
             machines = self._factory_machines()
             broken_count = sum(1 for m in machines if bool(getattr(m, "broken", False)))
             processing_count = sum(
@@ -395,6 +472,44 @@ class KataEnv(gym.Env):
                 ]
             )
 
+        # -- tech_aware: ticket-specific extras --
+        tech_aware = self.config.observation_mode == "tech_aware"
+        if tech_aware:
+            # Failed component type of the current ticket
+            comp_type = "NONE"
+            if ticket is not None and hasattr(ticket, "get_failed_component_info"):
+                info = ticket.get_failed_component_info()
+                if info:
+                    comp_type = str(info.get("component_type", "NONE"))
+            tokens.extend(["TICKET_COMPONENT_TYPE", comp_type])
+
+            # Peek at the next 2 queued tickets so the agent can plan
+            queue = self._queue()
+            items = getattr(queue, "items", queue) if queue is not None else []
+            for slot in range(2):
+                prefix = f"NEXT{slot + 1}"
+                if slot < len(items):
+                    req = items[slot]
+                    nmt = str(getattr(getattr(req, "machine", None), "mtype", "NONE"))
+                    nct = "NONE"
+                    if hasattr(req, "get_failed_component_info"):
+                        info = req.get_failed_component_info()
+                        if info:
+                            nct = str(info.get("component_type", "NONE"))
+                    nage = self._sim_time() - self._request_created_at(req)
+                else:
+                    nmt, nct, nage = "NONE", "NONE", -1.0
+                tokens.extend(
+                    [
+                        f"{prefix}_MACHINE_TYPE",
+                        nmt,
+                        f"{prefix}_COMPONENT_TYPE",
+                        nct,
+                        f"{prefix}_AGE",
+                        _bucket_time(nage),
+                    ]
+                )
+
         # -- per-technician tokens --
         for idx, tech in enumerate(self.dispatcher.techs):
             tech_prefix = f"TECH_{idx}"
@@ -412,6 +527,40 @@ class KataEnv(gym.Env):
             if self.config.include_technician_knowledge_tokens:
                 knowledge = self._technician_knowledge_value(tech)
                 tokens.extend([tech_prefix, "KNOWLEDGE", _bucket_ratio(knowledge)])
+
+            if tech_aware:
+                # Knowledge match for the current ticket (1 - mult, in [0, 1])
+                match_val = 0.0
+                if ticket is not None and hasattr(tech, "get_knowledge_multiplier"):
+                    try:
+                        mult = float(tech.get_knowledge_multiplier(ticket))
+                        match_val = max(0.0, min(1.0, 1.0 - mult))
+                    except Exception:
+                        match_val = 0.0
+                tokens.extend([tech_prefix, "MATCH", _bucket_ratio(match_val)])
+
+                # Expected repair time for the current ticket
+                eta = -1.0
+                if ticket is not None and hasattr(tech, "compute_repair_time"):
+                    base = (
+                        float(ticket.get_repair_time())
+                        if hasattr(ticket, "get_repair_time")
+                        else 10.0
+                    )
+                    try:
+                        eta = float(tech.compute_repair_time(base, ticket))
+                    except Exception:
+                        eta = base
+                tokens.extend([tech_prefix, "ETA", _bucket_time(eta)])
+
+                # Age since last assignment ("T_NONE" if never assigned)
+                last = (
+                    self._tech_last_assignment_time[idx]
+                    if idx < len(self._tech_last_assignment_time)
+                    else -1.0
+                )
+                last_age = -1.0 if last < 0 else max(0.0, self._sim_time() - last)
+                tokens.extend([tech_prefix, "LAST_AGE", _bucket_time(last_age)])
 
         target_length = self.config.token_observation_length
         if len(tokens) < target_length:
@@ -466,14 +615,48 @@ class KataEnv(gym.Env):
             )
         return {"token_ids": self._tokenizer.encode(list(tokens))}
 
+    def _action_mask(self) -> np.ndarray:
+        """Return a ``(n_techs,)`` ``int8`` mask, 1 = valid (not busy).
+
+        Falls back to all-1 when every technician is busy so that the
+        action space is never empty — the agent must still pick someone
+        to enqueue, even if the choice is forced.
+        """
+        techs = self.dispatcher.techs if self.dispatcher else []
+        mask = np.asarray(
+            [0 if bool(getattr(t, "busy", False)) else 1 for t in techs],
+            dtype=np.int8,
+        )
+        if mask.size == 0 or int(mask.sum()) == 0:
+            mask = np.ones(len(techs), dtype=np.int8)
+        return mask
+
     def _obs(self) -> dict[str, Any]:
         if self.config.observation_representation == "token_ids":
-            return self._token_id_obs()
-        if self.config.observation_representation == "tokens":
-            return self._token_obs()
-        return self._structured_obs()
+            payload = self._token_id_obs()
+        elif self.config.observation_representation == "tokens":
+            payload = self._token_obs()
+        else:
+            payload = self._structured_obs()
+        if self.config.expose_action_mask:
+            payload["action_mask"] = self._action_mask()
+        return payload
 
     def _info(self) -> dict[str, Any]:
+        techs = getattr(self.dispatcher, "techs", []) if self.dispatcher else []
+        # Per-technician assignment counts so far in the episode, keyed
+        # by ``tech.name`` (uniqueness is enforced at env init).  The
+        # runner uses this to plot an end-of-episode histogram.
+        assignment_counts: dict[str, int] = {}
+        for i, t in enumerate(techs):
+            label = str(getattr(t, "name", f"tech_{getattr(t, 'id', i)}"))
+            count = (
+                int(self._tech_assignment_counts[i])
+                if i < len(self._tech_assignment_counts)
+                else 0
+            )
+            assignment_counts[label] = count
+
         return {
             "episode_step": self.episode_step,
             "sim_time": self._sim_time(),
@@ -481,6 +664,8 @@ class KataEnv(gym.Env):
             "pending_queue_size": self._queue_size(),
             "reward_breakdown": dict(self._last_reward_breakdown),
             "metrics": dict(self._last_step_metrics),
+            "assignment_counts": assignment_counts,
+            "machine_stats": self._per_machine_episode_stats(),
         }
 
     def _reward_component(self, name: str, raw: float) -> float:
@@ -513,10 +698,10 @@ class KataEnv(gym.Env):
             fatigue = float(getattr(tech, "fatigue", 0.0))
             breakdown["fatigue_cost"] = self._reward_component("fatigue_cost", -fatigue)
 
-        # --- knowledge_match: reward expertise-repair alignment ---
-        if self.config.reward.knowledge_match.enabled:
-            km = self._knowledge_match_raw(tech, request)
-            breakdown["knowledge_match"] = self._reward_component("knowledge_match", km)
+        # --- fleet_knowledge: reward fleet-wide expertise growth ---
+        if self.config.reward.fleet_knowledge.enabled:
+            fk = self._fleet_knowledge_raw()
+            breakdown["fleet_knowledge"] = self._reward_component("fleet_knowledge", fk)
 
         # --- workload_balance: penalise fatigue disparity across fleet ---
         if self.config.reward.workload_balance.enabled:
@@ -572,6 +757,12 @@ class KataEnv(gym.Env):
                 "downtime_cost", self._downtime_cost_raw()
             )
 
+        # --- selection_diversity: spread assignments across the fleet ---
+        if self.config.reward.selection_diversity.enabled:
+            breakdown["selection_diversity"] = self._reward_component(
+                "selection_diversity", self._selection_diversity_raw(tech_id)
+            )
+
         self._last_reward_breakdown = breakdown
         return float(sum(breakdown.values()))
 
@@ -579,19 +770,49 @@ class KataEnv(gym.Env):
     # Raw reward helpers for new components
     # ------------------------------------------------------------------
 
-    def _knowledge_match_raw(self, tech: Any, request: Any) -> float:
-        """Return a [0, 1] score for how well the tech's knowledge fits.
+    def _fleet_knowledge_raw(self) -> float:
+        """Return a bounded reward for the fleet's accumulated knowledge.
 
-        The knowledge multiplier is in (0, 1]: 1 means no knowledge
-        (base repair time), values near 0 mean high expertise (fast repair).
-        We invert so that high knowledge -> high reward.
+        The raw signal is::
+
+            tanh(mean_per_tech_volume / fleet_knowledge_scale)
+
+        where ``mean_per_tech_volume`` is the average of each
+        technician's knowledge-grid volume, computed via:
+
+        1. ``grid.knowledge_volume()`` if available (newer
+           ``ongoing.KnowledgeGrid`` API),
+        2. else ``grid.get_max_knowledge()`` as a safe fallback,
+        3. else ``tech.knowledge`` (e.g. lightweight test fakes),
+        4. else ``0.0``.
+
+        ``tanh`` keeps the result in ``[0, 1]`` regardless of how big
+        the knowledge grid grows, so the component cannot overshadow
+        the rest of the reward stack — its scale is fully controlled
+        by ``RewardComponentConfig.coefficient``.
         """
-        get_km = getattr(tech, "get_knowledge_multiplier", None)
-        if get_km is None or not callable(get_km):
+        techs = getattr(self.dispatcher, "techs", None) or []
+        if not techs:
             return 0.0
-        # multiplier in (0, 1]: lower = more knowledgeable
-        multiplier = float(get_km(request))
-        return max(0.0, min(1.0, 1.0 - multiplier))
+
+        total = 0.0
+        for tech in techs:
+            grid = getattr(tech, "knowledge_grid", None)
+            if grid is not None and hasattr(grid, "knowledge_volume"):
+                value = float(grid.knowledge_volume())
+            elif grid is not None and hasattr(grid, "get_max_knowledge"):
+                value = float(grid.get_max_knowledge())
+            else:
+                value = float(getattr(tech, "knowledge", 0.0))
+            if not math.isfinite(value):
+                value = 0.0
+            total += max(0.0, value)
+        mean_volume = total / len(techs)
+
+        scale = float(getattr(self.config, "fleet_knowledge_scale", 10.0))
+        if scale <= 0.0:
+            return 0.0
+        return float(math.tanh(mean_volume / scale))
 
     def _estimated_repair_time_raw(self, tech: Any, request: Any) -> float:
         """Return negative log-ratio of estimated vs base repair time.
@@ -607,12 +828,12 @@ class KataEnv(gym.Env):
         )
         compute = getattr(tech, "compute_repair_time", None)
         if compute is not None and callable(compute):
-            estimated = float(compute(int(base), request))
+            estimated = float(compute(base, request))
         else:
             estimated = base
         # Ratio < 1 when tech is knowledgeable (faster), > 1 when fatigued.
         # Log < 0 means faster than base (good), > 0 means slower (bad).
-        ratio = max(estimated, 1.0) / max(base, 1.0)
+        ratio = estimated / max(base, 1e-6)
         return -math.log(max(ratio, 1e-6))
 
     def _machine_criticality_raw(self, request: Any) -> float:
@@ -706,6 +927,123 @@ class KataEnv(gym.Env):
             math.exp(-((utilization - optimal) ** 2) / (2 * sigma * sigma)) * 2.0 - 1.0
         )
 
+    def _update_machine_state_tracking(self) -> None:
+        """Refresh downtime / production / breakdown tracking.
+
+        Called on every step so that episode-level metrics
+        (``fleet_availability_rate``, ``mttr``, the per-machine
+        histograms…) remain accurate whether or not the matching
+        reward components are enabled.
+        """
+        machines = self._factory_machines()
+        now = self._sim_time()
+
+        for m in machines:
+            mid = getattr(m, "machine_id", id(m))
+            # Capture a stable label the first time we see this machine
+            if mid not in self._machine_labels:
+                label = getattr(m, "name", None) or f"{getattr(m, 'mtype', 'machine')}_{mid}"
+                self._machine_labels[mid] = str(label)
+
+            broken_now = bool(getattr(m, "broken", False))
+            # "Productive" processing = the machine claims it's
+            # processing AND it isn't broken.  The simulator leaves
+            # ``is_processing=True`` while a machine waits for a
+            # repair, so without this guard the two intervals would
+            # double-count and overlap.
+            processing_now = (
+                bool(getattr(m, "is_processing", False)) and not broken_now
+            )
+
+            # -- Downtime --
+            if broken_now:
+                if mid not in self._machine_down_since:
+                    # Edge: just transitioned to broken → bump breakdown count.
+                    self._machine_down_since[mid] = now
+                    self._machine_breakdown_counts[mid] = (
+                        self._machine_breakdown_counts.get(mid, 0) + 1
+                    )
+            elif mid in self._machine_down_since:
+                elapsed = now - self._machine_down_since.pop(mid)
+                self._total_downtime += elapsed
+                self._machine_total_downtime[mid] = (
+                    self._machine_total_downtime.get(mid, 0.0) + elapsed
+                )
+
+            # -- Production time (per-machine) --
+            if processing_now:
+                if mid not in self._machine_processing_since:
+                    self._machine_processing_since[mid] = now
+            elif mid in self._machine_processing_since:
+                elapsed = now - self._machine_processing_since.pop(mid)
+                self._machine_total_processing_time[mid] = (
+                    self._machine_total_processing_time.get(mid, 0.0) + elapsed
+                )
+
+    def _per_machine_episode_stats(self) -> dict[str, dict[str, float]]:
+        """Return ``{label: {maintenance, production, breakdowns}}``.
+
+        Pending-broken / pending-processing intervals are flushed using
+        the current sim time so the snapshot is accurate even mid-episode.
+        """
+        now = self._sim_time()
+        stats: dict[str, dict[str, float]] = {}
+        all_mids = (
+            set(self._machine_labels.keys())
+            | set(self._machine_total_downtime.keys())
+            | set(self._machine_total_processing_time.keys())
+            | set(self._machine_breakdown_counts.keys())
+        )
+        for mid in all_mids:
+            label = self._machine_labels.get(mid, f"machine_{mid}")
+            maintenance = self._machine_total_downtime.get(mid, 0.0)
+            if mid in self._machine_down_since:
+                maintenance += max(0.0, now - self._machine_down_since[mid])
+            production = self._machine_total_processing_time.get(mid, 0.0)
+            if mid in self._machine_processing_since:
+                production += max(0.0, now - self._machine_processing_since[mid])
+            stats[label] = {
+                "maintenance_time": float(maintenance),
+                "production_time": float(production),
+                "breakdowns": float(self._machine_breakdown_counts.get(mid, 0)),
+            }
+        return stats
+
+    def _on_repair_completed(self, request: Any, repair_duration: float) -> None:
+        """Dispatcher callback invoked when a repair finishes."""
+        _ = request
+        self._completed_repair_counter += 1
+        self._total_repair_time += float(repair_duration)
+
+    def _selection_diversity_raw(self, action: int) -> float:
+        """Reward for spreading assignments across the fleet.
+
+        Returns a value in ``[0, 1]`` based on per-technician assignment
+        counts collected so far in the episode (BEFORE this step is
+        recorded):
+
+        * 1.0 when the chosen technician is tied for the *least* used
+          (or when no assignments have happened yet).
+        * 0.0 when the chosen technician is tied for the *most* used.
+        * Linearly interpolated in between using the
+          ``(max - chosen) / (max - min)`` ratio over the per-tech
+          counts.
+        """
+        counts = self._tech_assignment_counts
+        if not counts or action < 0 or action >= len(counts):
+            return 0.0
+        if sum(counts) == 0:
+            # First assignment of the episode — diversity is undefined,
+            # treat any pick as fully diverse.
+            return 1.0
+        chosen = counts[action]
+        mn, mx = min(counts), max(counts)
+        if mx == mn:
+            # All technicians used the same amount so far — no
+            # imbalance, every choice is equally diverse.
+            return 1.0
+        return float((mx - chosen) / (mx - mn))
+
     def _downtime_cost_raw(self) -> float:
         """Negative fraction of machine-time lost to breakdowns — [-1, 0].
 
@@ -713,17 +1051,10 @@ class KataEnv(gym.Env):
         start, normalised by total available machine-time.  Captures
         the systemic cost of slow repairs.
         """
+        self._update_machine_state_tracking()
+
         machines = self._factory_machines()
         now = self._sim_time()
-
-        # Update downtime tracking for currently broken machines
-        for m in machines:
-            mid = getattr(m, "machine_id", id(m))
-            if bool(getattr(m, "broken", False)):
-                if mid not in self._machine_down_since:
-                    self._machine_down_since[mid] = now
-            elif mid in self._machine_down_since:
-                self._total_downtime += now - self._machine_down_since.pop(mid)
 
         # Include still-broken machines in the total
         active_downtime = sum(now - t0 for t0 in self._machine_down_since.values())
@@ -782,9 +1113,18 @@ class KataEnv(gym.Env):
         self._last_step_metrics = {}
         self._breakdown_counter = 0
         self._repair_counter = 0
+        self._completed_repair_counter = 0
+        self._total_repair_time = 0.0
         self._prev_finished_products = 0
         self._machine_down_since = {}
         self._total_downtime = 0.0
+        self._machine_total_downtime = {}
+        self._machine_total_processing_time = {}
+        self._machine_processing_since = {}
+        self._machine_breakdown_counts = {}
+        self._machine_labels = {}
+        self._tech_assignment_counts = [0] * len(self.dispatcher.techs)
+        self._tech_last_assignment_time = [-1.0] * len(self.dispatcher.techs)
         self._advance_until_next_ticket()
         return self._obs(), self._info()
 
@@ -813,17 +1153,37 @@ class KataEnv(gym.Env):
         self.episode_step += 1
         self._repair_counter += 1
 
-        # Step metrics
-        self._last_step_metrics = {
-            m.name: m.compute(tech, request, self) for m in STEP_METRICS
-        }
+        # Step metrics — a metric may return either a scalar or a dict
+        # mapping sub-keys to values; dicts are flattened into individual
+        # series with names like ``<metric>/<subkey>``.
+        self._last_step_metrics = {}
+        for m in STEP_METRICS:
+            value = m.compute(tech, request, self)
+            if isinstance(value, dict):
+                for subkey, subval in value.items():
+                    self._last_step_metrics[f"{m.name}/{subkey}"] = float(subval)
+            else:
+                self._last_step_metrics[m.name] = float(value)
 
         reward = self._reward_for_assignment(request, action)
+        # Record the assignment for the diversity counter AFTER computing
+        # the reward, so the reward sees pre-assignment counts and the
+        # *next* step sees this assignment in the history.
+        if 0 <= action < len(self._tech_assignment_counts):
+            self._tech_assignment_counts[action] += 1
+            self._tech_last_assignment_time[action] = self._sim_time()
         self._advance_until_next_ticket()
+        # Update bookkeeping every step regardless of reward config so
+        # episode-level metrics stay accurate when their matching reward
+        # components are disabled.
+        self._update_machine_state_tracking()
         terminated = self._is_done()
 
-        # On episode end, append episode-level metrics
+        # On episode end, append episode-level metrics.  Run a final
+        # tracking update first so any machines still down at episode
+        # boundary are accounted for.
         if terminated:
+            self._update_machine_state_tracking()
             self._last_step_metrics.update(
                 {m.name: m.compute(self) for m in EPISODE_METRICS}
             )

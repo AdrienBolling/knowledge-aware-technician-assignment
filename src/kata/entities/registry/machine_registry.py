@@ -1,24 +1,31 @@
-import importlib.resources as res
-import json
-from collections.abc import Callable
-from functools import partial
+"""Backwards-compatible re-exports of the machine template registry.
 
-from kata.core.common import ArgType
-from kata.entities.machines.machine import Machine
-
+The single source of truth for machine templates is
+:mod:`kata.EntityFactories.machine_factory`.  This module simply
+re-exposes the registry under its historical name so older callers
+keep working.
 """
-This file contains a registry of the registered machine pre-confingurations available in kata/resources/templates/machine_tempaltes.json
-It is also possible to register new machine configurations by using the "register_machine" function to temporarily add it to the registery during runtime.
-Permanent registration requires adding the new configuration file to the machine_templates folder.
-"""
-machine_templates = {}
-# Load the machine templates from the resources
-ref = res.files("kata.resources.templates") / "machine_templates.json"
-with res.as_file(path=ref) as file_path, file_path.open("r") as f:
-    machine_templates: dict[str, dict[str, ArgType]] = json.load(f)
 
+from kata.EntityFactories.machine_factory import (
+    _machine_templates as machine_templates,
+    create_config_from_template,
+    list_templates,
+    register_template,
+)
 
-machine_registry: dict[str, Callable[..., Machine]] = {
-    name: partial(Machine, **machine_config)
-    for name, machine_config in machine_templates.items()
+# ``machine_registry`` historically mapped a template name to a callable
+# that returns a ``MachineConfig``.  The new factory exposes the same
+# behaviour through ``create_config_from_template``; keep the dict for
+# code that iterates over it.
+machine_registry: dict[str, callable] = {
+    name: (lambda n=name: create_config_from_template(n))
+    for name in machine_templates
 }
+
+__all__ = [
+    "create_config_from_template",
+    "list_templates",
+    "machine_registry",
+    "machine_templates",
+    "register_template",
+]

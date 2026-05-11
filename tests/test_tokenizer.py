@@ -94,6 +94,137 @@ class TestDecode:
         assert "<EOS>" not in decoded
 
 
+class TestBuildVocabCoversAllEmittedTokens:
+    """End-to-end audit: ``build_vocab`` must cover every token any
+    observation mode of the env can actually produce.
+
+    Runs short rollouts over all four observation modes with both
+    fatigue and knowledge tokens enabled, and asserts that *every*
+    token emitted lands on a real vocab ID (i.e. ``token_to_id`` never
+    returns ``UNK_ID``).
+    """
+
+    def test_no_silent_unk_across_all_modes(self):
+        import os
+        import random
+
+        os.environ["KATA_CONF_PATH"] = "/dev/null/__no_file__"
+
+        from kata.core.config import KATAConfig
+        from kata.env import KataEnv
+        from kata.scenario import ScenarioBuilder
+
+        # Use the richest run config we ship so the audit exercises
+        # all machine types, all component types, and the largest
+        # technician fleet.
+        with open("run_configs/factory_v2.json") as f:
+            import json as _json
+            data = _json.load(f)
+        base_cfg = KATAConfig(**data)
+
+        machine_types = sorted({m.machine_type for m in base_cfg.machines.values()})
+        component_types = sorted(
+            {
+                c.component_type
+                for m in base_cfg.machines.values()
+                for c in m.components.values()
+            }
+        )
+        tok = StateTokenizer.build_vocab(
+            machine_types=machine_types,
+            n_technicians=len(base_cfg.technicians),
+            seq_length=base_cfg.gym.tokenizer_seq_length or 128,
+            component_types=component_types,
+        )
+        assert tok.frozen, "build_vocab should freeze the tokenizer"
+
+        for mode in (
+            "ticket_only",
+            "broken_machine",
+            "factory_level",
+            "tech_aware",
+        ):
+            cfg = KATAConfig(**data)
+            cfg.gym.observation_representation = "tokens"
+            cfg.gym.observation_mode = mode
+            cfg.gym.include_technician_fatigue_tokens = True
+            cfg.gym.include_technician_knowledge_tokens = True
+            cfg.gym.token_observation_length = 128
+
+            env = KataEnv(
+                scenario_factory=lambda c=cfg: ScenarioBuilder(c).build(),
+                config=cfg.gym,
+            )
+            env.reset(seed=0)
+
+            unknowns: list[tuple[str, int]] = []  # (token, step_idx)
+            for tok_str in env._token_obs()["tokens"]:
+                if tok_str == "<PAD>":
+                    continue
+                if tok.token_to_id(tok_str) == UNK_ID:
+                    unknowns.append((tok_str, -1))
+
+            random.seed(0)
+            done = False
+            step_i = 0
+            while not done and step_i < 80:
+                a = random.randrange(env.action_space.n)
+                _, _, done, _, _ = env.step(a)
+                for tok_str in env._token_obs()["tokens"]:
+                    if tok_str == "<PAD>":
+                        continue
+                    if tok.token_to_id(tok_str) == UNK_ID:
+                        unknowns.append((tok_str, step_i))
+                step_i += 1
+
+            assert not unknowns, (
+                f"observation_mode={mode!r} emitted tokens that are not in the "
+                f"frozen vocab and would silently map to <UNK>: "
+                f"{sorted(set(t for t, _ in unknowns))}"
+            )
+
+    def test_build_vocab_contains_every_documented_key(self):
+        """Make sure build_vocab keys haven't drifted away from the env's
+        token emission code (regression catch for token-name typos)."""
+        tok = StateTokenizer.build_vocab(
+            machine_types=["CNC"],
+            n_technicians=2,
+            seq_length=64,
+        )
+        # Every key the env's _token_obs may emit
+        required_keys = {
+            "OBS_MODE", "SIM_TIME", "HAS_TICKET", "TICKET_AGE",
+            "TICKET_MACHINE_TYPE", "TICKET_COMPONENT_TYPE",
+            "MACHINE_TYPE", "MACHINE_BROKEN", "MACHINE_PROCESSING",
+            "MACHINE_TOTAL_PROCESSED", "MACHINE_INPUT_BUF", "MACHINE_OUTPUT_BUF",
+            "FACTORY_MACHINES", "FACTORY_BROKEN", "FACTORY_PROCESSING",
+            "FACTORY_PRODUCED", "FACTORY_QUEUE",
+            "BUSY", "FATIGUE", "KNOWLEDGE",
+            "MATCH", "ETA", "LAST_AGE",
+            "NEXT1_MACHINE_TYPE", "NEXT1_COMPONENT_TYPE", "NEXT1_AGE",
+            "NEXT2_MACHINE_TYPE", "NEXT2_COMPONENT_TYPE", "NEXT2_AGE",
+        }
+        for key in required_keys:
+            assert tok.token_to_id(key) != UNK_ID, f"missing vocab entry: {key}"
+        for mode in ("ticket_only", "broken_machine", "factory_level", "tech_aware"):
+            assert tok.token_to_id(mode) != UNK_ID, f"missing OBS_MODE value: {mode}"
+        # Bucket values
+        for t in ("T_NONE", "T_0_50", "T_5K+"):
+            assert tok.token_to_id(t) != UNK_ID
+        for r in ("R_0", "R_HIGH"):
+            assert tok.token_to_id(r) != UNK_ID
+        for c in ("C_0", "C_20+"):
+            assert tok.token_to_id(c) != UNK_ID
+        for b in ("TRUE", "FALSE"):
+            assert tok.token_to_id(b) != UNK_ID
+        # NONE sentinel + the one machine type we supplied
+        assert tok.token_to_id("NONE") != UNK_ID
+        assert tok.token_to_id("CNC") != UNK_ID
+        # Per-tech prefixes
+        assert tok.token_to_id("TECH_0") != UNK_ID
+        assert tok.token_to_id("TECH_1") != UNK_ID
+
+
 class TestSerialisation:
     def test_get_and_load_vocab(self):
         tok1 = StateTokenizer(seq_length=8)

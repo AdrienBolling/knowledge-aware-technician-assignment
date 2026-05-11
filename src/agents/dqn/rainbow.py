@@ -22,7 +22,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from agents.base import Agent
+from agents.base import Agent, resolve_device
 from agents.networks.replay_buffer import PrioritizedReplayBuffer
 from agents.networks.transformer import TransformerEncoder
 
@@ -211,10 +211,10 @@ class RainbowDQNAgent(Agent):
         target_update_freq: int = 1_000,
         min_replay_size: int = 1_000,
         max_seq_len: int = 128,
-        device: str = "cpu",
+        device: str = "auto",
     ) -> None:
         super().__init__(n_actions, name="RainbowDQN")
-        self.device = torch.device(device)
+        self.device = torch.device(resolve_device(device))
         self.gamma = gamma
         self.n_step = n_step
         self.batch_size = batch_size

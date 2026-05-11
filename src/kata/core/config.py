@@ -75,7 +75,20 @@ class DisruptionConfig(BaseModel):
 
 
 class RepairConfig(BaseModel):
-    """Global switches that control how repair time is computed."""
+    """Global switches and parameters that control how repair time is computed.
+
+    The knowledge multiplier follows a saturating-exponential law:
+
+        m_k = min_repair_fraction
+              + (1 - min_repair_fraction) * exp(-knowledge_sensitivity * k)
+
+    where ``k`` is the technician's knowledge for the current request:
+
+      * ``k = 0``      → ``m_k = 1`` (no speed-up, full base repair time)
+      * ``k → +inf``   → ``m_k = min_repair_fraction`` (asymptotic floor)
+      * ``knowledge_sensitivity`` tunes how quickly knowledge translates
+        into a speed-up — higher values give a steeper drop near ``k=0``.
+    """
 
     knowledge_enabled: bool = Field(
         default=True,
@@ -84,6 +97,28 @@ class RepairConfig(BaseModel):
     fatigue_enabled: bool = Field(
         default=True,
         description="Apply fatigue multiplier to base repair time when True.",
+    )
+    min_repair_fraction: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Lower bound on the knowledge multiplier — even an arbitrarily "
+            "experienced technician will still spend at least "
+            "``min_repair_fraction * base_repair_time`` on a repair."
+        ),
+    )
+    knowledge_sensitivity: float = Field(
+        default=0.002,
+        gt=0.0,
+        description=(
+            "Decay rate ``alpha`` of the saturating-exponential knowledge "
+            "response.  Larger values produce a steeper speed-up at low "
+            "knowledge; smaller values give a more gradual descent.  "
+            "With the default knowledge-grid settings (learning_rate=0.1, "
+            "propagation_sigma=1.0) ``alpha=0.002`` saturates the "
+            "multiplier at the floor after ~60–70 similar repairs."
+        ),
     )
 
 
@@ -97,12 +132,21 @@ class GlobalTechniciansConfig(BaseModel):
     )
     fatigue_model: str = Field(
         default="exponential",
-        description="Fatigue model to use: 'exponential' or 'linear'.",
+        description=(
+            "Fatigue-multiplier model.  Both shapes are slowdowns "
+            "(multiplier >= 1, growing with fatigue):"
+            " 'linear'      -> 1 + fatigue            (range [1, 2]);"
+            " 'exponential' -> exp(alpha * fatigue)   (range [1, exp(alpha)])."
+        ),
     )
     fatigue_alpha: float = Field(
         default=0.5,
         gt=0.0,
-        description="Alpha parameter for the exponential fatigue model.",
+        description=(
+            "Alpha parameter for the exponential fatigue model.  At "
+            "fatigue=1 a tech needs ``exp(alpha)`` times the base repair "
+            "time — alpha=0.5 -> ~1.65x; alpha=1.0 -> ~2.72x."
+        ),
     )
 
 
@@ -164,21 +208,25 @@ class GymRewardConfig(BaseModel):
             "negative fatigue level of the assigned technician in [0, 1]."
         ),
     )
-    knowledge_match: RewardComponentConfig = Field(
+    fleet_knowledge: RewardComponentConfig = Field(
         default_factory=_disabled_reward_component,
         description=(
-            "Rewards assigning a technician whose knowledge matches the "
-            "repair request.  Raw value is the knowledge multiplier "
-            "reduction (higher knowledge -> lower multiplier -> higher "
-            "reward), normalized to [0, 1]."
+            "Rewards growing the fleet-wide knowledge volume.  Raw value "
+            "is ``tanh(mean_per_tech_volume / fleet_knowledge_scale)`` so "
+            "it stays in [0, 1] regardless of how large the underlying "
+            "knowledge grid grows.  Replaces the old ``knowledge_match`` "
+            "(which tied the signal to the *currently broken* machine "
+            "rather than the fleet's overall expertise)."
         ),
     )
     workload_balance: RewardComponentConfig = Field(
         default_factory=_disabled_reward_component,
         description=(
             "Penalizes unbalanced workload across the fleet.  Raw value "
-            "is the negative standard deviation of technician fatigue "
-            "levels after the assignment."
+            "is the negative standard deviation of current technician "
+            "fatigue levels (measured before the new assignment lands; "
+            "fatigue is updated by the simulator at repair completion, "
+            "not at dispatch)."
         ),
     )
     estimated_repair_time: RewardComponentConfig = Field(
@@ -226,7 +274,22 @@ class GymRewardConfig(BaseModel):
         description=(
             "Rewards productive use of the technician workforce.  "
             "Raw value peaks at an optimal utilization ratio and "
-            "penalizes both under- and over-utilization, in [-1, 1]."
+            "penalizes both under- and over-utilization, in [-1, 1].  "
+            "Utilization is measured BEFORE the new assignment is "
+            "reflected (the freshly-assigned tech only flips ``busy`` "
+            "after acquiring the SimPy resource)."
+        ),
+    )
+    selection_diversity: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Encourages spreading assignments across the fleet.  Raw "
+            "value is in ``[0, 1]``: 1 when the chosen technician is "
+            "tied for *least* used so far in the episode, 0 when they "
+            "are tied for *most* used, with linear interpolation in "
+            "between (computed from the per-episode assignment counts "
+            "BEFORE this step is recorded).  At episode start, when no "
+            "assignments have happened yet, the raw value is 1."
         ),
     )
     downtime_cost: RewardComponentConfig = Field(
@@ -276,6 +339,17 @@ class GymEnvConfig(BaseModel):
             "The resulting raw component is `-ticket_wait_time_penalty * wait_time`."
         ),
     )
+    fleet_knowledge_scale: float = Field(
+        default=10.0,
+        gt=0.0,
+        description=(
+            "Saturation scale for the ``fleet_knowledge`` reward component: "
+            "raw = tanh(mean_per_tech_knowledge_volume / fleet_knowledge_scale).  "
+            "Smaller values make the reward saturate earlier (good when the "
+            "knowledge grid stays small); larger values keep the curve "
+            "informative for longer-horizon training runs."
+        ),
+    )
     reward: GymRewardConfig = Field(
         default_factory=GymRewardConfig,
         description="Composable reward settings with configurable sub-components.",
@@ -288,9 +362,21 @@ class GymEnvConfig(BaseModel):
             "'token_ids' returns integer ID sequences for Transformer input."
         ),
     )
-    observation_mode: Literal["ticket_only", "broken_machine", "factory_level"] = Field(
+    observation_mode: Literal[
+        "ticket_only",
+        "broken_machine",
+        "factory_level",
+        "tech_aware",
+    ] = Field(
         default="ticket_only",
-        description="Level of context to include in token observations.",
+        description=(
+            "Level of context to include in token observations. "
+            "``tech_aware`` is a superset of ``factory_level`` that also "
+            "exposes per-technician *ticket-specific* signals — expected "
+            "repair time, knowledge match for this component type, age "
+            "since last assignment — plus the failed component type and "
+            "a peek at the next 2 queued tickets."
+        ),
     )
     token_observation_length: int = Field(
         default=64,
@@ -349,6 +435,95 @@ class GymEnvConfig(BaseModel):
     include_queue_size_in_observation: bool = Field(
         default=True,
         description="Include pending-repair queue size in observations.",
+    )
+    expose_action_mask: bool = Field(
+        default=True,
+        description=(
+            "When True, the observation includes an ``action_mask`` field "
+            "— a ``MultiBinary(n_techs)`` array where 1 means the "
+            "technician is currently NOT busy (valid pick).  Agents that "
+            "support action masking (e.g. PPOTransformerAgent) read it to "
+            "constrain the policy to valid technicians.  Falls back to "
+            "all-1 when every technician is busy, so a valid action "
+            "always exists."
+        ),
+    )
+
+
+class RandomizedScenarioConfig(BaseModel):
+    """Per-episode factory randomisation.
+
+    When ``enabled`` is True, the scenario builder is replaced with a
+    sampler that, on every ``env.reset()``, draws a fresh combination
+    of machines, technicians and product route from the configured
+    pools.  Used during training to prevent the agent from overfitting
+    to a single factory layout.
+
+    The number of technicians is kept FIXED across episodes so the
+    action space (``Discrete(n_techs)``) stays stable; their *profiles*
+    are sampled from ``technician_templates``.  Machines vary in count
+    (``n_machines_min``..``n_machines_max``) and templates.  The route
+    is sampled from the set of machine types actually present in the
+    drawn machines, so products always have somewhere to go.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="When True, draw a new factory every env.reset().",
+    )
+    seed: int | None = Field(
+        default=None,
+        description=(
+            "Seed for the per-episode sampler.  None = non-deterministic. "
+            "Distinct from ``ExperimentConfig.seed`` so factory layouts "
+            "can be repeated across agent seeds and vice-versa."
+        ),
+    )
+    n_technicians: int = Field(
+        default=4,
+        gt=0,
+        description="Fixed number of technicians (action space size).",
+    )
+    technician_templates: list[str] = Field(
+        default_factory=lambda: ["expert", "senior", "generalist", "junior", "trainee"],
+        description=(
+            "Pool of technician templates the sampler can draw from "
+            "(must exist in the technician template registry)."
+        ),
+    )
+    n_machines_min: int = Field(
+        default=10,
+        gt=0,
+        description="Lower bound on the number of machines sampled per episode.",
+    )
+    n_machines_max: int = Field(
+        default=20,
+        gt=0,
+        description="Upper bound on the number of machines sampled per episode.",
+    )
+    machine_templates: list[str] = Field(
+        default_factory=lambda: [
+            "cnc_weibull",
+            "assembly_mixed",
+            "assembly_robot",
+            "conveyor",
+            "welder",
+            "inspection",
+        ],
+        description=(
+            "Pool of machine templates the sampler can draw from "
+            "(must exist in the machine template registry)."
+        ),
+    )
+    route_min_length: int = Field(
+        default=2,
+        gt=0,
+        description="Lower bound on the product route length.",
+    )
+    route_max_length: int = Field(
+        default=6,
+        gt=0,
+        description="Upper bound on the product route length (clamped by available types).",
     )
 
 
@@ -420,6 +595,16 @@ class KATAConfig(BaseSettings):
     ticket_factory: SyntheticTicketFactoryConfig = Field(
         default_factory=SyntheticTicketFactoryConfig,
         description="Configuration for the SyntheticTicketFactory.",
+    )
+    randomized_scenario: RandomizedScenarioConfig = Field(
+        default_factory=RandomizedScenarioConfig,
+        description=(
+            "When enabled, the runner replaces the static scenario "
+            "builder with a per-episode random sampler that draws fresh "
+            "technicians, machines and product routes from the "
+            "configured pools.  Used to train policies that generalise "
+            "across factory layouts."
+        ),
     )
 
     @classmethod

@@ -2,14 +2,14 @@
 Shows a ComplexMachine with multiple components running in a simulation.
 """
 
-import json
-
 import simpy as sp
 
 from kata.entities.components.component import MachineComponent
 from kata.entities.machines.complex_machine import ComplexMachine
-from kata.EntityFactories.complex_machine_factory import (
-    create_complex_machine_from_config,
+from kata.EntityFactories import (
+    create_complex_machine_from_template,
+    create_machine_config,
+    list_machine_templates,
 )
 from kata.features.breakdown.simple_breakdown import SimpleBreakdownProcess
 
@@ -158,34 +158,25 @@ def demo_complex_machine_simple():
 
 
 def demo_complex_machine_from_json():
-    """Demo 2: ComplexMachine created from JSON template."""
+    """Demo 2: ComplexMachine created from a packaged template."""
     print("\n" + "=" * 70)
-    print("  DEMO 2: ComplexMachine from JSON Template")
+    print("  DEMO 2: ComplexMachine from Packaged Template")
     print("=" * 70)
 
     env = sp.Environment()
 
-    # Load machine template
-    with open("src/kata/resources/machine_templates.json") as f:
-        templates = json.load(f)
-
-    # Use the assembly robot template
-    config = templates["assembly_robot"]
-
-    print("\nLoading template: assembly_robot")
-    print(f"Machine: {config['name']} ({config['brand']})")
-    print(f"Components: {len(config['components'])}")
+    template_name = "assembly_robot"
+    print(f"\nLoading template: {template_name}")
 
     # Create buffers and dispatcher
     input_buffer = sp.Store(env, capacity=10)
     output_buffer = sp.Store(env, capacity=10)
     tech_dispatcher = SimpleTechDispatcher(env)
 
-    # Create machine from config
-    machine = create_complex_machine_from_config(
+    machine = create_complex_machine_from_template(
         env=env,
         machine_id=100,
-        machine_config=config,
+        template_name=template_name,
         input_buffer=input_buffer,
         output_buffer=output_buffer,
         tech_dispatcher=tech_dispatcher,
@@ -216,22 +207,18 @@ def demo_comparison():
     print("  DEMO 3: Comparing Different Machine Templates")
     print("=" * 70)
 
-    # Load templates
-    with open("src/kata/resources/machine_templates.json") as f:
-        templates = json.load(f)
-
     print("\nAvailable machine templates:")
-    for name, config in templates.items():
-        components = config.get("components", [])
+    for name in list_machine_templates():
+        cfg = create_machine_config(name)
         print(f"\n  {name}:")
-        print(f"    Name: {config['name']}")
-        print(f"    Brand: {config['brand']}")
-        print(f"    Type: {config['type']}")
-        print(f"    Components: {len(components)}")
-        for comp in components:
+        print(f"    machine_type: {cfg.machine_type}")
+        print(f"    process_time: {cfg.process_time}")
+        print(f"    components: {len(cfg.components)}")
+        for comp_id, comp in cfg.components.items():
             print(
-                f"      - {comp['component_id']} ({comp['component_type']}): "
-                f"repair={comp['base_repair_time']}min"
+                f"      - {comp_id} ({comp.component_type}): "
+                f"repair={comp.base_repair_time}, "
+                f"model={comp.breakdown_model}"
             )
 
 

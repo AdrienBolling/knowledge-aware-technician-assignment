@@ -162,6 +162,7 @@ class StateTokenizer:
         n_technicians: int,
         *,
         seq_length: int = 64,
+        component_types: list[str] | None = None,
     ) -> StateTokenizer:
         """Create a tokenizer pre-populated with every possible token.
 
@@ -177,6 +178,12 @@ class StateTokenizer:
             Number of technicians in the environment.
         seq_length:
             Fixed output sequence length.
+        component_types:
+            Unique component type strings used in the factory (e.g.
+            ``["motor", "spindle", "pump"]``).  Only required for the
+            ``tech_aware`` observation mode; unknown component types
+            still work via the tokenizer's UNK fallback but will all
+            collide on a single ID.
 
         Returns
         -------
@@ -187,7 +194,7 @@ class StateTokenizer:
         tok = cls(seq_length=seq_length)
 
         # -- observation mode values --
-        for mode in ("ticket_only", "broken_machine", "factory_level"):
+        for mode in ("ticket_only", "broken_machine", "factory_level", "tech_aware"):
             tok._add_token(mode)
 
         # -- key tokens --
@@ -197,6 +204,7 @@ class StateTokenizer:
             "HAS_TICKET",
             "TICKET_AGE",
             "TICKET_MACHINE_TYPE",
+            "TICKET_COMPONENT_TYPE",
             "MACHINE_TYPE",
             "MACHINE_BROKEN",
             "MACHINE_PROCESSING",
@@ -211,6 +219,15 @@ class StateTokenizer:
             "BUSY",
             "FATIGUE",
             "KNOWLEDGE",
+            "MATCH",
+            "ETA",
+            "LAST_AGE",
+            "NEXT1_MACHINE_TYPE",
+            "NEXT1_COMPONENT_TYPE",
+            "NEXT1_AGE",
+            "NEXT2_MACHINE_TYPE",
+            "NEXT2_COMPONENT_TYPE",
+            "NEXT2_AGE",
         ]
         for k in keys:
             tok._add_token(k)
@@ -247,6 +264,11 @@ class StateTokenizer:
         tok._add_token("NONE")
         for mt in machine_types:
             tok._add_token(mt)
+
+        # -- component type values (for tech_aware mode) --
+        if component_types:
+            for ct in component_types:
+                tok._add_token(ct)
 
         tok.freeze()
         return tok

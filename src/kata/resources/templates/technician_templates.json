@@ -1,0 +1,56 @@
+{
+  "default": {
+    "name": "technician",
+    "fatigue_lambda": 0.01,
+    "fatigue_mu": 0.05,
+    "knowledge_k_shape": [10, 10],
+    "knowledge_propagation_sigma": 1.0,
+    "knowledge_transmission_factor": 0.5,
+    "knowledge_learning_rate": 0.1
+  },
+  "expert": {
+    "name": "expert",
+    "fatigue_lambda": 0.005,
+    "fatigue_mu": 0.08,
+    "knowledge_k_shape": [10, 10],
+    "knowledge_propagation_sigma": 1.5,
+    "knowledge_transmission_factor": 0.7,
+    "knowledge_learning_rate": 0.15
+  },
+  "senior": {
+    "name": "senior",
+    "fatigue_lambda": 0.005,
+    "fatigue_mu": 0.08,
+    "knowledge_k_shape": [10, 10],
+    "knowledge_propagation_sigma": 1.5,
+    "knowledge_transmission_factor": 0.7,
+    "knowledge_learning_rate": 0.15
+  },
+  "generalist": {
+    "name": "generalist",
+    "fatigue_lambda": 0.01,
+    "fatigue_mu": 0.05,
+    "knowledge_k_shape": [10, 10],
+    "knowledge_propagation_sigma": 1.0,
+    "knowledge_transmission_factor": 0.5,
+    "knowledge_learning_rate": 0.1
+  },
+  "junior": {
+    "name": "junior",
+    "fatigue_lambda": 0.02,
+    "fatigue_mu": 0.03,
+    "knowledge_k_shape": [10, 10],
+    "knowledge_propagation_sigma": 0.5,
+    "knowledge_transmission_factor": 0.3,
+    "knowledge_learning_rate": 0.05
+  },
+  "trainee": {
+    "name": "trainee",
+    "fatigue_lambda": 0.025,
+    "fatigue_mu": 0.025,
+    "knowledge_k_shape": [10, 10],
+    "knowledge_propagation_sigma": 0.3,
+    "knowledge_transmission_factor": 0.2,
+    "knowledge_learning_rate": 0.04
+  }
+}

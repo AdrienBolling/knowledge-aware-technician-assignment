@@ -55,15 +55,7 @@ class ScenarioBuilder:
         technicians = self._build_technicians()
 
         # -- Dispatcher -------------------------------------------------------
-        dispatcher = (
-            GymTechDispatcher(
-                env,
-                technicians,
-                config=self.config.ticket_factory_dispatcher_config,
-            )
-            if hasattr(self.config, "ticket_factory_dispatcher_config")
-            else GymTechDispatcher(env, technicians)
-        )
+        dispatcher = GymTechDispatcher(env, technicians)
 
         # -- Buffers & Machines -----------------------------------------------
         machines_by_type: dict[str, list[Machine]] = {}
@@ -93,6 +85,12 @@ class ScenarioBuilder:
                     out_buf,
                     dispatcher,
                 )
+
+            # Tag the simulator-side machine with its config-side name
+            # so observability tooling can label per-machine plots with
+            # human-readable identifiers ("cnc_1") instead of the
+            # hashed numeric machine_id.
+            machine.name = name  # type: ignore[attr-defined]
 
             machines_by_type.setdefault(mtype, []).append(machine)
             machine_input_buffers.setdefault(mtype, []).append(in_buf)

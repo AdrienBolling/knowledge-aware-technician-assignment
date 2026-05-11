@@ -1,13 +1,9 @@
 {
   "technicians": {
-    "tech_0": { "name": "tech_0" }
+    "tech_0": { "template": "default" }
   },
   "machines": {
-    "machine_0": {
-      "machine_type": "generic",
-      "process_time": 50,
-      "dt": 1
-    }
+    "machine_0": { "template": "generic", "process_time": 50 }
   },
   "products": {
     "product_0": {

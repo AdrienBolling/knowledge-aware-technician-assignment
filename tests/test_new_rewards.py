@@ -517,6 +517,163 @@ class TestAllNewRewardsEnabled:
 
 
 # ======================================================================
+# selection_diversity
+# ======================================================================
+
+
+class TestSelectionDiversity:
+    """Reward for spreading assignments across the fleet."""
+
+    def _make_env(self, tech_count=3, coefficient=1.0):
+        sim_env = FakeSimEnv()
+        dispatcher = FakeDispatcher(tech_count=tech_count)
+        env = _make_env(
+            sim_env=sim_env,
+            dispatcher=dispatcher,
+            reward_overrides={
+                "selection_diversity": {
+                    "enabled": True,
+                    "coefficient": float(coefficient),
+                },
+            },
+        )
+        return env, dispatcher
+
+    def _enqueue(self, dispatcher, n: int) -> None:
+        for i in range(n):
+            dispatcher.repair_queue.items.append(
+                FakeRequest(machine_id=i + 1, created_at=0.0)
+            )
+
+    def test_first_pick_is_full_diversity(self):
+        env, disp = self._make_env(tech_count=3)
+        self._enqueue(disp, 1)
+        env.reset()
+        _, _, _, _, info = env.step(0)
+        # No prior assignments → 1.0
+        assert info["reward_breakdown"]["selection_diversity"] == 1.0
+
+    def test_repicking_overused_tech_gets_zero(self):
+        env, disp = self._make_env(tech_count=3)
+        self._enqueue(disp, 5)
+        env.reset()
+        # Pick tech 0 three times — counts become [3, 0, 0]
+        for _ in range(3):
+            env.step(0)
+        # 4th pick of tech 0: chosen_count=3, max=3, min=0
+        # → (max - chosen) / (max - min) = 0/3 = 0.0
+        _, _, _, _, info = env.step(0)
+        assert info["reward_breakdown"]["selection_diversity"] == 0.0
+
+    def test_picking_least_used_gets_one(self):
+        env, disp = self._make_env(tech_count=3)
+        self._enqueue(disp, 5)
+        env.reset()
+        # Counts [3, 0, 0] after three picks of tech 0
+        for _ in range(3):
+            env.step(0)
+        # Pick tech 1: chosen=0, max=3, min=0 → 1.0
+        _, _, _, _, info = env.step(1)
+        assert info["reward_breakdown"]["selection_diversity"] == 1.0
+
+    def test_intermediate_pick_is_interpolated(self):
+        env, disp = self._make_env(tech_count=3)
+        self._enqueue(disp, 6)
+        env.reset()
+        # Counts after these picks: [2, 1, 0]
+        env.step(0); env.step(0); env.step(1)
+        # Pick tech 1 again: chosen=1, max=2, min=0 → (2-1)/(2-0) = 0.5
+        _, _, _, _, info = env.step(1)
+        assert abs(info["reward_breakdown"]["selection_diversity"] - 0.5) < 1e-9
+
+    def test_counter_resets_on_env_reset(self):
+        env, disp = self._make_env(tech_count=3)
+        self._enqueue(disp, 5)
+        env.reset()
+        for _ in range(3):
+            env.step(0)
+        assert env._tech_assignment_counts == [3, 0, 0]
+        # Re-enqueue work and reset
+        self._enqueue(disp, 1)
+        env.reset()
+        assert env._tech_assignment_counts == [0, 0, 0]
+        _, _, _, _, info = env.step(0)
+        # Fresh episode: first pick → 1.0
+        assert info["reward_breakdown"]["selection_diversity"] == 1.0
+
+    def test_coefficient_applied(self):
+        env, disp = self._make_env(tech_count=3, coefficient=2.5)
+        self._enqueue(disp, 1)
+        env.reset()
+        _, _, _, _, info = env.step(0)
+        # Raw 1.0 × coefficient 2.5 = 2.5
+        assert abs(info["reward_breakdown"]["selection_diversity"] - 2.5) < 1e-9
+
+
+# ======================================================================
+# fleet_knowledge (replacement for knowledge_match)
+# ======================================================================
+
+
+class TestFleetKnowledgeReward:
+    """Verify the fleet_knowledge reward stays bounded and uses fleet state."""
+
+    def _make_env_with_volume(self, volumes, scale=10.0, coefficient=1.0):
+        """Create an env whose techs report the given knowledge volumes."""
+        sim_env = FakeSimEnv()
+        dispatcher = FakeDispatcher(tech_count=len(volumes))
+        for tech, v in zip(dispatcher.techs, volumes, strict=True):
+            tech.knowledge = float(v)  # FakeTech has no grid; fallback path
+        dispatcher.repair_queue.items.append(
+            FakeRequest(machine_id=1, created_at=0.0)
+        )
+        env = _make_env(
+            sim_env=sim_env,
+            dispatcher=dispatcher,
+            reward_overrides={
+                "fleet_knowledge": {
+                    "enabled": True,
+                    "coefficient": float(coefficient),
+                },
+            },
+            fleet_knowledge_scale=float(scale),
+        )
+        env.reset()
+        return env
+
+    def test_zero_when_no_knowledge(self):
+        env = self._make_env_with_volume([0.0, 0.0])
+        _, reward, _, _, info = env.step(0)
+        assert info["reward_breakdown"]["fleet_knowledge"] == 0.0
+        assert reward == 0.0
+
+    def test_bounded_in_zero_one(self):
+        # Huge knowledge values must still stay bounded by the tanh cap.
+        env = self._make_env_with_volume([1e6, 1e6], scale=10.0)
+        _, _, _, _, info = env.step(0)
+        v = info["reward_breakdown"]["fleet_knowledge"]
+        assert 0.0 <= v <= 1.0
+        # tanh saturates very close to 1 well before 1e6 / 10
+        assert v > 0.999
+
+    def test_uses_mean_across_fleet(self):
+        # Mixed fleet — the raw should be tanh(mean / scale)
+        import math
+        volumes = [0.0, 20.0]  # mean = 10
+        env = self._make_env_with_volume(volumes, scale=10.0)
+        _, _, _, _, info = env.step(0)
+        expected = math.tanh(10.0 / 10.0)
+        assert abs(info["reward_breakdown"]["fleet_knowledge"] - expected) < 1e-6
+
+    def test_coefficient_applied(self):
+        env = self._make_env_with_volume([10.0, 10.0], scale=10.0, coefficient=3.0)
+        _, _, _, _, info = env.step(0)
+        # raw is tanh(1) ≈ 0.7616; with coefficient 3.0 → ≈ 2.285
+        v = info["reward_breakdown"]["fleet_knowledge"]
+        assert abs(v - 3.0 * math.tanh(1.0)) < 1e-6
+
+
+# ======================================================================
 # New episode metrics
 # ======================================================================
 
@@ -524,7 +681,8 @@ class TestAllNewRewardsEnabled:
 class TestNewEpisodeMetrics:
     """Verify the new episode-level metrics are produced."""
 
-    def test_mttr_metric(self):
+    def test_mttr_metric_zero_when_no_completions(self):
+        """Without a completed repair, MTTR is 0 (no data)."""
         sim_env = FakeSimEnv()
         sim_env.now = 200.0
         dispatcher = FakeDispatcher(tech_count=1)
@@ -535,10 +693,29 @@ class TestNewEpisodeMetrics:
         _, _, terminated, _, info = env.step(0)
 
         assert terminated is True
-        metrics = info["metrics"]
-        assert "mttr" in metrics
-        # MTTR = sim_time / repairs = 200 / 1 = 200
-        assert metrics["mttr"] == 200.0
+        # FakeDispatcher does not run a SimPy repair job, so the
+        # ``on_repair_completed`` callback never fires.
+        assert info["metrics"]["mttr"] == 0.0
+
+    def test_mttr_metric_uses_actual_repair_durations(self):
+        """MTTR = mean of the actual repair durations reported."""
+        sim_env = FakeSimEnv()
+        sim_env.now = 200.0
+        dispatcher = FakeDispatcher(tech_count=1)
+        dispatcher.repair_queue.items.append(FakeRequest(machine_id=1, created_at=0.0))
+
+        env = _make_env(sim_env=sim_env, dispatcher=dispatcher)
+        env.reset()
+
+        # Simulate three completed repairs of 30, 60 and 90 time units.
+        for d in (30.0, 60.0, 90.0):
+            env._on_repair_completed(FakeRequest(), d)
+
+        _, _, terminated, _, info = env.step(0)
+
+        assert terminated is True
+        # MTTR = (30 + 60 + 90) / 3 = 60
+        assert info["metrics"]["mttr"] == 60.0
 
     def test_fleet_availability_rate_metric(self):
         sim_env = FakeSimEnv()

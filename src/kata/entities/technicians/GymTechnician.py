@@ -43,6 +43,21 @@ class GymTechnician(Technician):
         self.fatigue_mu: float = tech_conf.fatigue_mu
         self.exhausted: bool = False
 
+        # Number of stochastic disruptions (sick leaves, …) this
+        # technician has experienced.  Reset to 0 on each scenario build
+        # since technicians are re-instantiated by the scenario builder
+        # at every ``env.reset``.
+        self.disruption_count: int = 0
+
+        # Simulation time at which the technician last became idle.
+        # Used by ``start_repair`` to drive fatigue recovery: the gap
+        # between this timestamp and the moment the tech actually
+        # starts the next repair is the idle interval.  Initialised
+        # to 0.0 (the scenario start) so the first repair correctly
+        # accounts for any pre-work idle time, but with fatigue at 0
+        # the recovery is a no-op then anyway.
+        self._last_idle_since: float = 0.0
+
         # Knowledge parameters
         self.k_shape = tech_conf.knowledge_k_shape
         self.k_propagation_sigma = tech_conf.knowledge_propagation_sigma
@@ -88,6 +103,9 @@ class GymTechnician(Technician):
             priority=1, preempt=self._interrupt_on_disrupt
         ) as req:
             yield req
+            # The technician has just gone on disruption (e.g. sick
+            # leave) — record it for the ``ill_technician_count`` metric.
+            self.disruption_count += 1
             yield env.timeout(self._get_stochastic_disruption_duration())
 
     def _get_stochastic_disruption_duration(self) -> int:
@@ -106,14 +124,34 @@ class GymTechnician(Technician):
         chosen_type: str = np.random.choice(a=types, p=probs)
         return chosen_type
 
-    def compute_repair_time(self, base_repair_time: int, request: RepairRequest) -> int:
-        """Compute repair time applying knowledge and fatigue multipliers."""
+    def compute_repair_time(
+        self,
+        base_repair_time: float,
+        request: RepairRequest,
+    ) -> float:
+        """Compute the effective repair duration in simulation time units.
+
+        Applies two multipliers on top of ``base_repair_time``:
+
+        * **knowledge multiplier** ``m_k ∈ [min_repair_fraction, 1]`` —
+          lower means more skilled, so the repair finishes faster;
+        * **fatigue multiplier** ``m_f ∈ [1, +∞)`` — higher means
+          more tired, so the repair *takes longer*.
+
+        Effective time ``= base × m_k × m_f``.  Note that the floor
+        ``min_repair_fraction`` only constrains ``m_k``; a fatigued
+        technician can still push the effective time above ``base``.
+
+        Returns a non-negative ``float`` — no integer truncation, no
+        artificial floor.  SimPy's ``timeout`` accepts floats so the
+        dispatcher consumes this directly.
+        """
         base: float = float(base_repair_time)
         if CONFIG.sim.repair.knowledge_enabled:
             base *= self.get_knowledge_multiplier(request)
         if CONFIG.sim.repair.fatigue_enabled:
             base *= self.get_fatigue_multiplier()
-        return max(1, int(base))
+        return max(0.0, base)
 
     def increase_knowledge(self, request: RepairRequest) -> None:
         """Increase knowledge based on the completed repair."""
@@ -121,17 +159,25 @@ class GymTechnician(Technician):
         self.knowledge_grid.add_ticket_knowledge(embedding)
 
     def get_knowledge_multiplier(self, request: RepairRequest) -> float:
-        """Return knowledge-based repair time multiplier in (0, 1].
+        """Return knowledge-based repair time multiplier in ``[min_floor, 1]``.
 
-        Higher knowledge → lower multiplier → faster repair.
-        ``get_knowledge()`` returns ``experiences^b`` (>= 0, unbounded).
-        We map this to (0, 1] via ``1 / (1 + knowledge)`` so that:
-        - No experience → multiplier = 1 (base repair time).
-        - High experience → multiplier → 0 (near-instant repair).
+        Saturating-exponential response::
+
+            m_k = min_floor + (1 - min_floor) * exp(-alpha * k)
+
+        where ``min_floor = sim.repair.min_repair_fraction`` and
+        ``alpha = sim.repair.knowledge_sensitivity``.
+
+        - No experience (k = 0) → multiplier = 1 (full base repair time).
+        - High experience (k → ∞) → multiplier → ``min_floor`` (bounded
+          speed-up, never instant).
         """
         embedding = self.encoder.encode(request)
-        knowledge = self.knowledge_grid.get_knowledge(embedding)
-        return 1.0 / (1.0 + knowledge)
+        knowledge = float(self.knowledge_grid.get_knowledge(embedding))
+
+        min_floor = float(CONFIG.sim.repair.min_repair_fraction)
+        alpha = float(CONFIG.sim.repair.knowledge_sensitivity)
+        return min_floor + (1.0 - min_floor) * math.exp(-alpha * knowledge)
 
     def decay_knowledge(self) -> None:
         """Decay knowledge over time."""
@@ -140,16 +186,25 @@ class GymTechnician(Technician):
     def get_fatigue_multiplier(self) -> float:
         """Return fatigue-based repair time multiplier.
 
-        - linear: multiplier = max(0, 1 - fatigue)
-        - exponential: multiplier = exp(-fatigue_alpha * fatigue)
+        Fatigue *slows* repairs — the multiplier is ``>= 1`` and grows
+        as the technician gets tired:
+
+        - ``linear``      : ``multiplier = 1 + fatigue``
+                            (range ``[1, 2]``)
+        - ``exponential`` : ``multiplier = exp(fatigue_alpha * fatigue)``
+                            (range ``[1, exp(alpha)]``)
+
+        ``fatigue`` is a unit-interval scalar in ``[0, 1]`` (0 = fresh,
+        1 = exhausted).  At ``fatigue = 0`` both models give ``1`` so a
+        fresh technician's repair time is unchanged from the base.
         """
         model = CONFIG.sim.technicians.fatigue_model
         alpha = CONFIG.sim.technicians.fatigue_alpha
 
         if model == "linear":
-            return max(0.0, 1.0 - self.fatigue)
+            return 1.0 + self.fatigue
         if model == "exponential":
-            return math.exp(-alpha * self.fatigue)
+            return math.exp(alpha * self.fatigue)
         msg = f"Unknown fatigue model: {model}"
         raise ValueError(msg)
 
@@ -171,10 +226,26 @@ class GymTechnician(Technician):
         self.fatigue = self.fatigue * math.exp(-self.fatigue_mu * idle_time)
         self.fatigue = min(1.0, max(0.0, self.fatigue))
 
+    def start_repair(self, when: float) -> None:
+        """Mark the technician as starting a repair at simulation time ``when``.
+
+        Recovers fatigue based on the idle time since this technician's
+        last completed repair (or the start of the episode) before
+        flipping ``busy = True``.  Called by the dispatcher's
+        ``_repair_job`` once the SimPy resource has been acquired.
+        """
+        idle_time = max(0.0, float(when) - float(self._last_idle_since))
+        if idle_time > 0:
+            self._recover_fatigue(int(idle_time))
+        self.busy = True
+
     def repair_finished(self, request: RepairRequest, when: float) -> None:
         """Update technician state after a repair is completed."""
-        _ = when
         self.busy = False
         repair_time = request.get_repair_time()
         self._increase_fatigue(int(repair_time))
         self.increase_knowledge(request)
+        # Bookkeeping for the next call to ``start_repair`` — anything
+        # past this timestamp counts as idle and contributes to the
+        # next recovery interval.
+        self._last_idle_since = float(when)

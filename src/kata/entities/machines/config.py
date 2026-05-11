@@ -1,12 +1,24 @@
 """Pydantic configuration models for machines."""
 
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
 
 from kata.entities.components.config import ComponentConfig
 
 
 class MachineConfig(BaseModel):
-    """Configuration for a SimPy-based Machine or ComplexMachine."""
+    """Configuration for a SimPy-based Machine or ComplexMachine.
+
+    A config entry may also be expanded from a named template by
+    providing a ``template`` key.  The named template is loaded from
+    :mod:`kata.EntityFactories.machine_factory` and any other fields
+    in the entry override the template's defaults.
+
+    Example (in JSON)::
+
+        {"template": "cnc_weibull", "process_time": 250}
+    """
 
     machine_type: str = Field(
         default="generic",
@@ -29,6 +41,28 @@ class MachineConfig(BaseModel):
             "When non-empty the machine will be created as a ComplexMachine."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expand_template(cls, data: Any) -> Any:
+        """Expand a ``template`` key by merging the named template's fields.
+
+        Any explicit fields in ``data`` win over the template defaults.
+        """
+        if not isinstance(data, dict):
+            return data
+        template_name = data.get("template")
+        if template_name is None:
+            return data
+        # Local import to avoid an import cycle at module load time.
+        from kata.EntityFactories.machine_factory import get_template
+
+        merged: dict[str, Any] = get_template(template_name)
+        for key, value in data.items():
+            if key == "template":
+                continue
+            merged[key] = value
+        return merged
 
 
 # ---------------------------------------------------------------------------

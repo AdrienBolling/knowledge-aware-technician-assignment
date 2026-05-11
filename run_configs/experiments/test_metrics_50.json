@@ -1,0 +1,21 @@
+{
+  "mode": "train",
+  "seed": 42,
+  "n_episodes": 50,
+  "log_interval": 5,
+  "eval": {
+    "enabled": true,
+    "interval": 25,
+    "n_episodes": 3,
+    "deterministic": true
+  },
+  "checkpoint": {
+    "enabled": false
+  },
+  "wandb": {
+    "enabled": true,
+    "project": "kata-experiments",
+    "log_interval": 1,
+    "tags": ["metric-test", "short-run"]
+  }
+}
