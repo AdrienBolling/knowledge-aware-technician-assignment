@@ -102,6 +102,31 @@ class TestComponentConfig:
         with pytest.raises(ValidationError):
             ComponentConfig(idle_degradation_factor=1.5)
 
+    def test_knowledge_overrides_default_to_none(self):
+        cfg = ComponentConfig()
+        assert cfg.min_repair_fraction is None
+        assert cfg.knowledge_sensitivity is None
+
+    def test_knowledge_overrides_accept_valid_values(self):
+        cfg = ComponentConfig(
+            min_repair_fraction=0.25,
+            knowledge_sensitivity=0.15,
+        )
+        assert cfg.min_repair_fraction == 0.25
+        assert cfg.knowledge_sensitivity == 0.15
+
+    def test_min_repair_fraction_outside_unit_interval_rejected(self):
+        with pytest.raises(ValidationError):
+            ComponentConfig(min_repair_fraction=1.5)
+        with pytest.raises(ValidationError):
+            ComponentConfig(min_repair_fraction=-0.1)
+
+    def test_knowledge_sensitivity_must_be_strictly_positive(self):
+        with pytest.raises(ValidationError):
+            ComponentConfig(knowledge_sensitivity=0.0)
+        with pytest.raises(ValidationError):
+            ComponentConfig(knowledge_sensitivity=-0.1)
+
 
 class TestComponentRegistry:
     def test_has_expected_keys(self):
@@ -302,7 +327,7 @@ class TestTechnicianConfig:
         assert cfg.knowledge_k_shape == (10, 10)
         assert cfg.knowledge_propagation_sigma > 0.0
         assert 0.0 < cfg.knowledge_transmission_factor <= 1.0
-        assert 0.0 < cfg.knowledge_learning_rate <= 1.0
+        assert 0.5 <= cfg.knowledge_learning_rate <= 1.0
 
     def test_invalid_fatigue_lambda(self):
         with pytest.raises(ValidationError):
@@ -311,6 +336,29 @@ class TestTechnicianConfig:
     def test_invalid_transmission_factor(self):
         with pytest.raises(ValidationError):
             TechnicianConfig(knowledge_transmission_factor=1.5)
+
+    def test_invalid_learning_rate_below_floor(self):
+        # Values below 0.5 would produce super-linear knowledge growth
+        # (b = -log(lr)/log(2) > 1) and saturate the multiplier within
+        # ~10 repairs — the validator rejects them outright.
+        with pytest.raises(ValidationError):
+            TechnicianConfig(knowledge_learning_rate=0.4)
+
+    def test_invalid_learning_rate_above_ceiling(self):
+        with pytest.raises(ValidationError):
+            TechnicianConfig(knowledge_learning_rate=1.5)
+
+    def test_invalid_learning_rate_endpoints_rejected(self):
+        # The underlying ``ongoing.KnowledgeGrid`` enforces a strictly
+        # *open* interval, so 0.5 and 1.0 themselves are out.
+        with pytest.raises(ValidationError):
+            TechnicianConfig(knowledge_learning_rate=0.5)
+        with pytest.raises(ValidationError):
+            TechnicianConfig(knowledge_learning_rate=1.0)
+
+    def test_valid_learning_rate_inside_open_interval(self):
+        TechnicianConfig(knowledge_learning_rate=0.51)
+        TechnicianConfig(knowledge_learning_rate=0.99)
 
     def test_expert_config(self):
         assert expert_technician.fatigue_lambda < default_technician.fatigue_lambda
@@ -525,6 +573,13 @@ class TestSimEnvSubConfigs:
         cfg = RepairConfig()
         assert cfg.knowledge_enabled is True
         assert cfg.fatigue_enabled is True
+        # Failure-wise knowledge overrides default OFF — preserves the
+        # global single-curve behaviour unless opted into.
+        assert cfg.failure_wise_knowledge_parameters is False
+
+    def test_repair_config_failure_wise_flag_toggles(self):
+        cfg = RepairConfig(failure_wise_knowledge_parameters=True)
+        assert cfg.failure_wise_knowledge_parameters is True
 
     def test_global_technicians_config(self):
         cfg = GlobalTechniciansConfig()

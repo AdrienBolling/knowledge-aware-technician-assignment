@@ -120,6 +120,21 @@ class RepairConfig(BaseModel):
             "multiplier at the floor after ~60–70 similar repairs."
         ),
     )
+    failure_wise_knowledge_parameters: bool = Field(
+        default=False,
+        description=(
+            "When False (the default), every failure uses the global "
+            "``min_repair_fraction`` and ``knowledge_sensitivity`` "
+            "values.  When True, the simulator first checks the "
+            "failed component for a per-component override (set via "
+            "``ComponentConfig.min_repair_fraction`` / "
+            "``ComponentConfig.knowledge_sensitivity``) and falls back "
+            "to the global values when the component has none.  Use "
+            "this to model that some failures are barely accelerated "
+            "by experience while others can be heavily sped up by a "
+            "trained technician."
+        ),
+    )
 
 
 class GlobalTechniciansConfig(BaseModel):
@@ -536,6 +551,25 @@ class RandomizedScenarioConfig(BaseModel):
         default=6,
         gt=0,
         description="Upper bound on the product route length (clamped by available types).",
+    )
+    randomize_eval: bool = Field(
+        default=False,
+        description=(
+            "When False (the default), the eval environment uses a "
+            "*single fixed factory* sampled once at construction time "
+            "from this same pool — so the eval-return curve measures "
+            "policy quality without scenario noise.  Set True to "
+            "evaluate on freshly-sampled factories every eval episode "
+            "(useful for measuring generalisation, but adds noise)."
+        ),
+    )
+    eval_seed: int | None = Field(
+        default=None,
+        description=(
+            "Seed used to draw the *fixed* eval scenario when "
+            "``randomize_eval`` is False.  Defaults to ``seed + 1`` if "
+            "left unset, so train and eval factories are distinct."
+        ),
     )
 
 

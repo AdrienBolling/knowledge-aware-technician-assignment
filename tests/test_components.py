@@ -52,3 +52,18 @@ class TestMachineComponent:
         p2 = comp.step_and_get_failure_prob(True)
         # Weibull with shape>1 has increasing hazard
         assert p2 > p1
+
+    def test_knowledge_parameters_default_to_none(self):
+        comp = self._make_component()
+        assert comp.get_knowledge_parameters() == (None, None)
+
+    def test_knowledge_parameters_round_trip(self):
+        comp = self._make_component(
+            min_repair_fraction=0.4,
+            knowledge_sensitivity=0.2,
+        )
+        assert comp.get_knowledge_parameters() == (0.4, 0.2)
+
+    def test_knowledge_parameters_partial_override(self):
+        comp = self._make_component(min_repair_fraction=0.7)
+        assert comp.get_knowledge_parameters() == (0.7, None)

@@ -65,17 +65,22 @@ def _features_from_request(request: RepairRequest) -> dict[str, str]:
 
 
 class MCAEncoder:
-    """Encoder that uses fitted MCA to map repair requests to grid coordinates.
+    """Encoder that uses fitted MCA to map repair requests to embeddings.
 
     Parameters
     ----------
     grid_shape:
-        Shape of the target KnowledgeGrid.
+        Grid shape (kept for backwards compat; only used to infer
+        embedding dimensionality when ``embedding_bounds`` is the
+        default).
     n_components:
         Number of MCA components to keep.  Must be >= len(grid_shape).
     min_cumulative_inertia:
         Threshold (in [0, 1]) under which ``is_well_trained`` returns
         ``False`` — the MCA fit captured too little of the variance.
+    embedding_bounds:
+        ``(n_dims, 2)`` array of ``[lo, hi]`` bounds matching the
+        consuming :class:`KnowledgeGrid`'s ``embedding_bounds``.
 
     """
 
@@ -84,10 +89,16 @@ class MCAEncoder:
         grid_shape: tuple[int, ...] = (10, 10),
         n_components: int = 2,
         min_cumulative_inertia: float = 0.30,
+        embedding_bounds: NDArray[np.float64] | None = None,
     ) -> None:
         self.grid_shape = grid_shape
         self.n_components = max(n_components, len(grid_shape))
         self.min_cumulative_inertia = float(min_cumulative_inertia)
+        if embedding_bounds is None:
+            embedding_bounds = np.array(
+                [[0.0, 100.0]] * len(grid_shape), dtype=np.float64
+            )
+        self.embedding_bounds = np.asarray(embedding_bounds, dtype=np.float64)
 
         self._mca: prince.MCA | None = None
         self._fitted = False
@@ -209,8 +220,8 @@ class MCAEncoder:
     # Encoding
     # ------------------------------------------------------------------
 
-    def encode(self, request: RepairRequest) -> NDArray[np.intp]:
-        """Return the grid coordinate for *request*.
+    def encode(self, request: RepairRequest) -> NDArray[np.float64]:
+        """Return an embedding for *request* inside ``embedding_bounds``.
 
         If the MCA has not been fitted yet, falls back to deterministic
         hashing (same behaviour as ``HashEncoder``).
@@ -229,25 +240,32 @@ class MCAEncoder:
         coords = self._mca.transform(df).values[0]  # (n_comp,)
 
         # Robust normalisation: clip into [low, high] then linearly map
-        # to [0, 1] before discretising.
+        # to [0, 1] before scaling to the grid's embedding bounds.
         normalised = (coords - self._col_low) / (self._col_high - self._col_low)
         normalised = np.clip(normalised, 0.0, 1.0)
 
-        grid_coords = []
-        for i, dim in enumerate(self.grid_shape):
-            idx = i if i < len(normalised) else 0
-            # Uniform binning: each grid bin spans 1/dim of the [0, 1]
-            # interval, with the last bin capped to ``dim - 1``.
-            bin_idx = int(normalised[idx] * dim)
-            grid_coords.append(min(bin_idx, dim - 1))
-        return np.array(grid_coords, dtype=np.intp)
+        out = np.empty(self.embedding_bounds.shape[0], dtype=np.float64)
+        for d, (lo, hi) in enumerate(self.embedding_bounds):
+            idx = d if d < len(normalised) else 0
+            out[d] = float(lo) + float(normalised[idx]) * (float(hi) - float(lo))
+        return out
 
-    def _fallback_encode(self, request: RepairRequest) -> NDArray[np.intp]:
-        """Hash-based fallback when MCA is not yet fitted."""
+    def _fallback_encode(self, request: RepairRequest) -> NDArray[np.float64]:
+        """Hash-based fallback when MCA is not yet fitted.
+
+        Produces the same embedding contract as the fitted path —
+        floats inside ``embedding_bounds`` — so callers (the
+        ``KnowledgeGrid``) receive a uniform representation.
+        """
+        from kata.entities.encoder.base import _signature_to_float
+
         features = _features_from_request(request)
         key = f"{features['machine_type']}::{features['component_type']}"
-        h = hash(key)
-        return np.array([abs(h) % dim for dim in self.grid_shape], dtype=np.intp)
+        out = np.empty(self.embedding_bounds.shape[0], dtype=np.float64)
+        for d, (lo, hi) in enumerate(self.embedding_bounds):
+            u = _signature_to_float(key, d)
+            out[d] = float(lo) + u * (float(hi) - float(lo))
+        return out
 
     # ------------------------------------------------------------------
     # Reporting

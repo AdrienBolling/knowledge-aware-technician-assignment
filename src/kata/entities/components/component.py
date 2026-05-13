@@ -14,6 +14,8 @@ class MachineComponent(Component):
         breakdown_process: BreakdownProcess,
         base_repair_time: float = 10.0,
         idle_degradation_factor: float = 0.1,
+        min_repair_fraction: float | None = None,
+        knowledge_sensitivity: float | None = None,
     ):
         """Initialize a MachineComponent.
 
@@ -23,6 +25,12 @@ class MachineComponent(Component):
             breakdown_process: The breakdown process governing this component's degradation
             base_repair_time: Base time required to repair this component
             idle_degradation_factor: Factor to reduce degradation when machine is idle (default 0.1)
+            min_repair_fraction: Per-component floor on the knowledge multiplier.
+                When ``sim.repair.failure_wise_knowledge_parameters`` is True
+                this overrides the global floor.  ``None`` defers to global.
+            knowledge_sensitivity: Per-component alpha on the
+                saturating-exponential knowledge response.  Same gating
+                behaviour as ``min_repair_fraction``.
 
         """
         self._component_id = component_id
@@ -30,6 +38,8 @@ class MachineComponent(Component):
         self._breakdown_process = breakdown_process
         self._base_repair_time = base_repair_time
         self._idle_degradation_factor = idle_degradation_factor
+        self._min_repair_fraction = min_repair_fraction
+        self._knowledge_sensitivity = knowledge_sensitivity
 
     def get_id(self) -> str:
         """Get the unique identifier for this component."""
@@ -60,3 +70,11 @@ class MachineComponent(Component):
     def get_repair_time(self) -> float:
         """Get the base repair time for this component."""
         return self._base_repair_time
+
+    def get_knowledge_parameters(self) -> tuple[float | None, float | None]:
+        """Return ``(min_repair_fraction, knowledge_sensitivity)``.
+
+        Either or both entries may be ``None`` — meaning "no override,
+        defer to the global value".
+        """
+        return (self._min_repair_fraction, self._knowledge_sensitivity)

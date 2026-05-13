@@ -39,6 +39,34 @@ class ComponentConfig(BaseModel):
         default_factory=WeibullBreakdownConfig,
         description="Config for Weibull breakdown model (used when breakdown_model='weibull').",
     )
+    # ------------------------------------------------------------------
+    # Per-failure knowledge response (used when
+    # ``sim.repair.failure_wise_knowledge_parameters`` is True).
+    # ------------------------------------------------------------------
+    min_repair_fraction: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Per-component override for ``sim.repair.min_repair_fraction``.  "
+            "Lower = more aggressively reducible by an expert. "
+            "Only consulted when "
+            "``sim.repair.failure_wise_knowledge_parameters`` is True; "
+            "``None`` falls back to the global value."
+        ),
+    )
+    knowledge_sensitivity: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Per-component override for ``sim.repair.knowledge_sensitivity``.  "
+            "Larger = repairs of this component get faster more quickly "
+            "as the technician gains experience. "
+            "Only consulted when "
+            "``sim.repair.failure_wise_knowledge_parameters`` is True; "
+            "``None`` falls back to the global value."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
