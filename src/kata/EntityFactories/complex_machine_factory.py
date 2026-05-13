@@ -119,6 +119,8 @@ def create_complex_machine_from_config(
                 breakdown_process=breakdown_process,
                 base_repair_time=base_repair_time,
                 idle_degradation_factor=idle_factor,
+                min_repair_fraction=comp_config.get("min_repair_fraction"),
+                knowledge_sensitivity=comp_config.get("knowledge_sensitivity"),
             )
         )
 

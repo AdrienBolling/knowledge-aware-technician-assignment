@@ -64,10 +64,20 @@ class TechnicianConfig(BaseModel):
         description="Fraction of knowledge transmitted when sharing.",
     )
     knowledge_learning_rate: float = Field(
-        default=0.1,
-        gt=0.0,
-        le=1.0,
-        description="Learning rate for knowledge updates.",
+        default=0.7,
+        gt=0.5,
+        lt=1.0,
+        description=(
+            "Knowledge-grid learning parameter for ``ongoing.KnowledgeGrid``. "
+            "Despite the name, the package interprets this as the inverse of "
+            "the knowledge-vs-experiences exponent: "
+            "``knowledge = experiences ** b`` with ``b = -log(lr)/log(2)``. "
+            "So *lower* values produce *faster* (sub-linear) knowledge growth. "
+            "Constrained to the open interval ``(0.5, 1.0)`` so b stays in "
+            "``(0, 1)``: values approaching 0.5 give near-linear (fastest) "
+            "growth, values approaching 1.0 give near-zero learning.  The "
+            "endpoints themselves are rejected by the underlying package."
+        ),
     )
 
     @model_validator(mode="before")
@@ -102,7 +112,7 @@ expert_technician = TechnicianConfig(
     knowledge_k_shape=(10, 10),
     knowledge_propagation_sigma=1.5,
     knowledge_transmission_factor=0.7,
-    knowledge_learning_rate=0.15,
+    knowledge_learning_rate=0.51,  # near-linear knowledge growth (fastest)
 )
 
 junior_technician = TechnicianConfig(
@@ -112,7 +122,7 @@ junior_technician = TechnicianConfig(
     knowledge_k_shape=(10, 10),
     knowledge_propagation_sigma=0.5,
     knowledge_transmission_factor=0.3,
-    knowledge_learning_rate=0.05,
+    knowledge_learning_rate=0.85,  # heavily-saturating knowledge growth
 )
 
 # Repository of named default technician configurations

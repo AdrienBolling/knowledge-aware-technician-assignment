@@ -165,18 +165,35 @@ class GymTechnician(Technician):
 
             m_k = min_floor + (1 - min_floor) * exp(-alpha * k)
 
-        where ``min_floor = sim.repair.min_repair_fraction`` and
-        ``alpha = sim.repair.knowledge_sensitivity``.
+        where ``min_floor`` and ``alpha`` are by default taken from
+        ``sim.repair.min_repair_fraction`` / ``sim.repair.knowledge_sensitivity``.
+
+        When ``sim.repair.failure_wise_knowledge_parameters`` is True the
+        simulator looks at the *failed component* first and uses any
+        per-component override it carries (``ComponentConfig.min_repair_fraction`` /
+        ``ComponentConfig.knowledge_sensitivity``), falling back to the
+        global value for whichever parameter is ``None``.
 
         - No experience (k = 0) → multiplier = 1 (full base repair time).
-        - High experience (k → ∞) → multiplier → ``min_floor`` (bounded
-          speed-up, never instant).
+        - High experience (k → ∞) → multiplier → ``min_floor``.
         """
         embedding = self.encoder.encode(request)
         knowledge = float(self.knowledge_grid.get_knowledge(embedding))
 
-        min_floor = float(CONFIG.sim.repair.min_repair_fraction)
-        alpha = float(CONFIG.sim.repair.knowledge_sensitivity)
+        cfg = CONFIG.sim.repair
+        min_floor = float(cfg.min_repair_fraction)
+        alpha = float(cfg.knowledge_sensitivity)
+
+        if getattr(cfg, "failure_wise_knowledge_parameters", False):
+            getter = getattr(request, "get_knowledge_parameters", None)
+            params = getter() if callable(getter) else None
+            if params is not None:
+                per_floor, per_alpha = params
+                if per_floor is not None:
+                    min_floor = float(per_floor)
+                if per_alpha is not None:
+                    alpha = float(per_alpha)
+
         return min_floor + (1.0 - min_floor) * math.exp(-alpha * knowledge)
 
     def decay_knowledge(self) -> None:

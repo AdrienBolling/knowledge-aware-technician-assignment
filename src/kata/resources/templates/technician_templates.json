@@ -6,7 +6,7 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 1.0,
     "knowledge_transmission_factor": 0.5,
-    "knowledge_learning_rate": 0.1
+    "knowledge_learning_rate": 0.7
   },
   "expert": {
     "name": "expert",
@@ -15,7 +15,7 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 1.5,
     "knowledge_transmission_factor": 0.7,
-    "knowledge_learning_rate": 0.15
+    "knowledge_learning_rate": 0.51
   },
   "senior": {
     "name": "senior",
@@ -24,7 +24,7 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 1.5,
     "knowledge_transmission_factor": 0.7,
-    "knowledge_learning_rate": 0.15
+    "knowledge_learning_rate": 0.6
   },
   "generalist": {
     "name": "generalist",
@@ -33,7 +33,7 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 1.0,
     "knowledge_transmission_factor": 0.5,
-    "knowledge_learning_rate": 0.1
+    "knowledge_learning_rate": 0.7
   },
   "junior": {
     "name": "junior",
@@ -42,7 +42,7 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 0.5,
     "knowledge_transmission_factor": 0.3,
-    "knowledge_learning_rate": 0.05
+    "knowledge_learning_rate": 0.85
   },
   "trainee": {
     "name": "trainee",
@@ -51,6 +51,6 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 0.3,
     "knowledge_transmission_factor": 0.2,
-    "knowledge_learning_rate": 0.04
+    "knowledge_learning_rate": 0.95
   }
 }

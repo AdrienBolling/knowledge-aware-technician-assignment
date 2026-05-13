@@ -205,6 +205,8 @@ class ScenarioBuilder:
                     breakdown_process=bp,
                     base_repair_time=ccfg.base_repair_time,
                     idle_degradation_factor=ccfg.idle_degradation_factor,
+                    min_repair_fraction=ccfg.min_repair_fraction,
+                    knowledge_sensitivity=ccfg.knowledge_sensitivity,
                 )
             )
 

@@ -56,3 +56,17 @@ class RepairRequest(Request):
             "component_type": self._failed_component.get_type(),
             "repair_time": self._failed_component.get_repair_time(),
         }
+
+    def get_knowledge_parameters(self) -> tuple[float | None, float | None] | None:
+        """Return the failed component's per-failure knowledge overrides.
+
+        Returns ``(min_repair_fraction, knowledge_sensitivity)`` — either
+        entry may be ``None`` to fall back to the global value.  Returns
+        ``None`` outright when there is no failed component (simple
+        machine breakdown) or the component does not expose
+        ``get_knowledge_parameters``.
+        """
+        comp = self._failed_component
+        if comp is None or not hasattr(comp, "get_knowledge_parameters"):
+            return None
+        return comp.get_knowledge_parameters()

@@ -23,7 +23,8 @@
     },
     "repair": {
       "knowledge_enabled": true,
-      "fatigue_enabled": true
+      "fatigue_enabled": true,
+      "failure_wise_knowledge_parameters": true
     },
     "disruptions": {
       "interrupt_on_disrupt": true,

@@ -89,7 +89,9 @@ class TestTechnicianTemplates:
         cfg = create_technician_config("expert")
         assert isinstance(cfg, TechnicianConfig)
         assert cfg.fatigue_lambda == pytest.approx(0.005)
-        assert cfg.knowledge_learning_rate == pytest.approx(0.15)
+        # Expert technician = near-linear knowledge growth, the
+        # smallest learning_rate in the valid open interval (0.5, 1.0).
+        assert cfg.knowledge_learning_rate == pytest.approx(0.51)
 
     def test_create_with_overrides(self):
         cfg = create_technician_config("junior", name="alice")
@@ -110,7 +112,7 @@ class TestTechnicianTemplates:
                 "knowledge_k_shape": [4, 4],
                 "knowledge_propagation_sigma": 0.5,
                 "knowledge_transmission_factor": 0.5,
-                "knowledge_learning_rate": 0.1,
+                "knowledge_learning_rate": 0.7,
             },
         )
         cfg = create_technician_config("tmp_test_tech_template")

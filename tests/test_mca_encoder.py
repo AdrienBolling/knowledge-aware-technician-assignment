@@ -46,8 +46,10 @@ class TestMCAEncoderUnfitted:
         req = _FakeRequest()
         result = enc.encode(req)
         assert result.shape == (2,)
-        assert result.dtype == np.intp
-        assert all(0 <= c < 10 for c in result)
+        # Embeddings are floats inside ``embedding_bounds`` (default
+        # [0, 100] per axis), not raw grid indices.
+        assert np.issubdtype(result.dtype, np.floating)
+        assert all(0.0 <= c < 100.0 for c in result)
 
     def test_fallback_deterministic(self):
         enc = MCAEncoder(grid_shape=(10, 10))
@@ -85,7 +87,8 @@ class TestMCAEncoderFitted:
 
         result = enc.encode(requests[0])
         assert result.shape == (2,)
-        assert all(0 <= c < 8 for c in result)
+        # Embedding values land inside the default ``[0, 100]`` bounds
+        assert all(0.0 <= c <= 100.0 for c in result)
 
     def test_different_requests_can_differ(self):
         enc = MCAEncoder(grid_shape=(10, 10), n_components=2)
@@ -102,12 +105,15 @@ class TestMCAEncoderFitted:
         assert not enc.fitted  # too few to fit
 
     def test_3d_grid_shape(self):
-        enc = MCAEncoder(grid_shape=(5, 5, 5), n_components=3)
+        bounds = np.array([[0.0, 50.0]] * 3, dtype=np.float64)
+        enc = MCAEncoder(
+            grid_shape=(5, 5, 5), n_components=3, embedding_bounds=bounds
+        )
         requests = self._make_diverse_requests()
         enc.fit(requests)
         result = enc.encode(requests[0])
         assert result.shape == (3,)
-        assert all(0 <= c < 5 for c in result)
+        assert all(0.0 <= c <= 50.0 for c in result)
 
 
 class TestMCAEncoderDiagnostics:

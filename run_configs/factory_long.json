@@ -50,34 +50,32 @@
     "use_mca_encoder": false,
     "tokenizer_seq_length": 192,
 
-    "assignment_reward": 0.0,
+    "assignment_reward": 0.1,
     "ticket_wait_time_penalty": 0.01,
     "fleet_knowledge_scale": 10.0,
     "expose_action_mask": true,
 
     "reward": {
-      "assignment":                 { "enabled": false, "coefficient": 1.0 },
-      "wait_time":                  { "enabled": true,  "coefficient": 1.0 },
-      "queue_size":                 { "enabled": false, "coefficient": 1.0 },
-      "busy_technician":            { "enabled": false, "coefficient": 1.0 },
-      "fleet_knowledge":            { "enabled": true,  "coefficient": 0.5 },
-      "fatigue_cost":               { "enabled": false, "coefficient": 1.0 },
-      "estimated_repair_time":      { "enabled": false, "coefficient": 1.0 },
-      "fleet_availability":         { "enabled": false, "coefficient": 1.0 },
-      "throughput_delta":           { "enabled": true,  "coefficient": 3.0 },
-      "repair_backlog_age":         { "enabled": false, "coefficient": 1.0 },
-      "technician_utilization":     { "enabled": false, "coefficient": 1.0 },
-      "downtime_cost":              { "enabled": false, "coefficient": 1.0 },
-      "selection_diversity":        { "enabled": false, "coefficient": 1.0 },
-      "terminal_finished_products": { "enabled": true,  "coefficient": 2.0 }
+      "assignment":             { "enabled": true,  "coefficient": 1.0 },
+      "wait_time":              { "enabled": true,  "coefficient": 1.0 },
+      "queue_size":             { "enabled": true,  "coefficient": 0.5 },
+      "busy_technician":        { "enabled": true,  "coefficient": 1.0 },
+      "fleet_knowledge":        { "enabled": true,  "coefficient": 1.5 },
+      "fatigue_cost":           { "enabled": true,  "coefficient": 1.0 },
+      "estimated_repair_time":  { "enabled": true,  "coefficient": 0.5 },
+      "fleet_availability":     { "enabled": true,  "coefficient": 1.0 },
+      "throughput_delta":       { "enabled": true,  "coefficient": 2.0 },
+      "repair_backlog_age":     { "enabled": true,  "coefficient": 0.5 },
+      "technician_utilization": { "enabled": true,  "coefficient": 0.5 },
+      "downtime_cost":          { "enabled": true,  "coefficient": 1.5 },
+      "selection_diversity":    { "enabled": true,  "coefficient": 1.0 },
+      "terminal_finished_products": { "enabled": true, "coefficient": 0.05 }
     }
   },
 
   "randomized_scenario": {
     "enabled": true,
     "seed": 1234,
-    "randomize_eval": false,
-    "eval_seed": 9999,
     "n_technicians": 4,
     "technician_templates": ["expert", "senior", "generalist", "junior", "trainee"],
     "n_machines_min": 12,
@@ -91,7 +89,9 @@
       "inspection"
     ],
     "route_min_length": 3,
-    "route_max_length": 6
+    "route_max_length": 6,
+    "randomize_eval": false,
+    "eval_seed": 4321
   },
 
   "ticket_factory": {

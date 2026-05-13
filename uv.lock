@@ -920,8 +920,8 @@ wheels = [
 
 [[package]]
 name = "ongoing"
-version = "0.2.0"
-source = { git = "https://github.com/AdrienBolling/ONGOING.git#87c103b30c5348349081380df750c3e3378a383e" }
+version = "0.2.1"
+source = { git = "https://github.com/AdrienBolling/ONGOING.git#200e1084474267d0a9de21fae0a37036928e8025" }
 dependencies = [
     { name = "numpy" },
     { name = "scipy" },

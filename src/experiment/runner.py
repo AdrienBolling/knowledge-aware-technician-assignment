@@ -148,9 +148,15 @@ class Experiment:
         self._best_eval_return: float = -math.inf
 
         # -- Build environment --
+        # Train env follows the configured randomization.  Eval env
+        # uses a fixed factory (sampled once with ``eval_seed``) unless
+        # ``randomized_scenario.randomize_eval`` is True, so the eval
+        # return curve is a clean policy-quality signal independent of
+        # scenario luck.
         self.tokenizer: StateTokenizer | None = None
-        self.env = self._build_env()
-        self.eval_env = self._build_env()
+        self.env = self._build_env(randomize=True)
+        rcfg = env_config.randomized_scenario
+        self.eval_env = self._build_env(randomize=rcfg.randomize_eval)
 
         # -- Build agent --
         self.agent = self._build_agent()
@@ -191,14 +197,27 @@ class Experiment:
             quiet=quiet,
         )
 
-    def _build_env(self) -> KataEnv:
-        """Create a KataEnv with the right observation mode and tokenizer."""
+    def _build_env(self, *, randomize: bool = True) -> KataEnv:
+        """Create a KataEnv with the right observation mode and tokenizer.
+
+        Parameters
+        ----------
+        randomize:
+            When True and randomisation is enabled in the config, the
+            env's ``scenario_factory`` returns a freshly sampled
+            scenario on every reset.  When False (but randomisation is
+            still enabled in the config), the env binds to a *single*
+            scenario sampled once at construction — used for the eval
+            env so the eval curve isolates policy quality from
+            scenario noise.  Has no effect when randomisation is
+            disabled in the config (static scenario in both cases).
+        """
         cfg = self.env_cfg
         gym_cfg = cfg.gym
         rcfg = cfg.randomized_scenario
 
-        # -- Scenario factory: static or randomised per episode -----------
-        if rcfg.enabled:
+        # -- Scenario factory: static, per-episode random, or fixed-but-sampled -----
+        if rcfg.enabled and randomize:
             from kata.EntityFactories import RandomScenarioSampler
 
             sampler = RandomScenarioSampler(cfg, rcfg, seed=rcfg.seed)
@@ -206,6 +225,23 @@ class Experiment:
             n_techs = rcfg.n_technicians
             machine_types = sampler.all_machine_types()
             component_types = sampler.all_component_types()
+        elif rcfg.enabled and not randomize:
+            from kata.EntityFactories import RandomScenarioSampler
+
+            eval_seed = (
+                rcfg.eval_seed
+                if rcfg.eval_seed is not None
+                else (rcfg.seed + 1 if rcfg.seed is not None else 1)
+            )
+            # Sample ONE scenario and reuse its config on every reset.
+            _sampler = RandomScenarioSampler(cfg, rcfg, seed=eval_seed)
+            fixed_eval_cfg = _sampler.sample_config()
+            factory = lambda c=fixed_eval_cfg: ScenarioBuilder(c).build()
+            n_techs = rcfg.n_technicians
+            # Vocab still needs to cover the full pool so a tokenizer
+            # shared with the train env doesn't surface UNKs.
+            machine_types = _sampler.all_machine_types()
+            component_types = _sampler.all_component_types()
         else:
             factory = lambda: ScenarioBuilder(cfg).build()
             n_techs = len(cfg.technicians)
@@ -403,6 +439,7 @@ class Experiment:
         title: str | None = None,
         ylabel: str | None = None,
         ylim: tuple[float, float] | None = None,
+        rolling_window: int | None = None,
     ) -> None:
         """Log a within-episode time-series as a matplotlib figure image.
 
@@ -410,6 +447,10 @@ class Experiment:
         ``wandb.plot.line`` widget — image panels are reliably
         rendered in the W&B run page (whereas custom-chart panels
         sometimes silently fail to surface).
+
+        When ``rolling_window`` is set, the raw values are drawn at
+        ``alpha=0.5`` and a red trailing-mean overlay is rendered at
+        ``alpha=1`` so the trend is legible even on noisy series.
         """
         if self._wandb_run is None:
             return
@@ -419,7 +460,32 @@ class Experiment:
         import wandb
 
         fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
-        ax.plot(range(len(values)), values, linewidth=1.2)
+        xs = range(len(values))
+
+        if rolling_window is not None and rolling_window > 1 and len(values) >= 2:
+            w = min(int(rolling_window), len(values))
+            # Trailing (causal) rolling mean — no lookahead.
+            csum = [0.0]
+            for v in values:
+                csum.append(csum[-1] + float(v))
+            trend = [
+                (csum[i + 1] - csum[max(0, i + 1 - w)])
+                / float(min(i + 1, w))
+                for i in range(len(values))
+            ]
+            ax.plot(xs, values, linewidth=1.0, alpha=0.5, label="raw")
+            ax.plot(
+                xs,
+                trend,
+                linewidth=1.8,
+                color="red",
+                alpha=1.0,
+                label=f"rolling mean (w={w})",
+            )
+            ax.legend(loc="best", fontsize=8)
+        else:
+            ax.plot(xs, values, linewidth=1.2)
+
         ax.set_xlabel("step within episode")
         ax.set_ylabel(ylabel if ylabel is not None else key.split("/")[-1])
         if ylim is not None:
@@ -437,10 +503,12 @@ class Experiment:
     _PLOT_HINTS: dict[str, dict[str, Any]] = {
         "repair_time_delta": {
             "ylabel": "time saved vs base (sim units)",
+            "rolling_window": 25,
         },
         "repair_time_delta_per": {
             "ylabel": "% time saved vs base",
             "ylim": (0.0, 100.0),
+            "rolling_window": 25,
         },
         "repair_quality": {
             "ylabel": "knowledge match",
@@ -548,6 +616,7 @@ class Experiment:
                 title=f"{name} ({episode_label})",
                 ylabel=hints.get("ylabel"),
                 ylim=hints.get("ylim"),
+                rolling_window=hints.get("rolling_window"),
             )
 
         for prefix, subs in grouped.items():
