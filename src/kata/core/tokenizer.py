@@ -163,6 +163,7 @@ class StateTokenizer:
         *,
         seq_length: int = 64,
         component_types: list[str] | None = None,
+        next_ticket_lookahead: int = 4,
     ) -> StateTokenizer:
         """Create a tokenizer pre-populated with every possible token.
 
@@ -222,38 +223,26 @@ class StateTokenizer:
             "MATCH",
             "ETA",
             "LAST_AGE",
-            "NEXT1_MACHINE_TYPE",
-            "NEXT1_COMPONENT_TYPE",
-            "NEXT1_AGE",
-            "NEXT2_MACHINE_TYPE",
-            "NEXT2_COMPONENT_TYPE",
-            "NEXT2_AGE",
+            "ASSIGN_COUNT",
         ]
         for k in keys:
             tok._add_token(k)
+        for slot in range(1, max(1, int(next_ticket_lookahead)) + 1):
+            for suffix in ("MACHINE_TYPE", "COMPONENT_TYPE", "AGE"):
+                tok._add_token(f"NEXT{slot}_{suffix}")
 
         # -- per-technician prefix tokens --
         for i in range(n_technicians):
             tok._add_token(f"TECH_{i}")
 
-        # -- time bucket values --
-        for v in (
-            "T_NONE",
-            "T_0_50",
-            "T_50_200",
-            "T_200_500",
-            "T_500_1K",
-            "T_1K_5K",
-            "T_5K+",
-        ):
-            tok._add_token(v)
+        # -- bucket values (single source of truth: src/kata/env.py) --
+        from kata.env import _COUNT_BUCKETS, _RATIO_BUCKETS, _TIME_BUCKETS
 
-        # -- ratio bucket values --
-        for v in ("R_0", "R_LOW", "R_MEDLOW", "R_MED", "R_MEDHIGH", "R_HIGH"):
+        for v in _TIME_BUCKETS:
             tok._add_token(v)
-
-        # -- count bucket values --
-        for v in ("C_0", "C_1", "C_2_3", "C_4_5", "C_6_10", "C_11_20", "C_20+"):
+        for v in _RATIO_BUCKETS:
+            tok._add_token(v)
+        for v in _COUNT_BUCKETS:
             tok._add_token(v)
 
         # -- boolean values --
@@ -264,11 +253,23 @@ class StateTokenizer:
         tok._add_token("NONE")
         for mt in machine_types:
             tok._add_token(mt)
+            # Per-machine-type broken-count key used by the opt-in
+            # ``include_broken_by_type_tokens`` token block.
+            tok._add_token(f"BROKEN_{mt}")
 
         # -- component type values (for tech_aware mode) --
         if component_types:
             for ct in component_types:
                 tok._add_token(ct)
+                # Per-component-type queue-composition key used by the
+                # opt-in ``include_queue_composition_tokens`` block.
+                tok._add_token(f"QC_{ct}")
+
+        # ``BROKEN_NONE`` / ``QC_NONE`` can show up when a machine or
+        # request advertises no concrete type yet — register them so
+        # the tokenizer never falls back to UNK.
+        tok._add_token("BROKEN_NONE")
+        tok._add_token("QC_NONE")
 
         tok.freeze()
         return tok

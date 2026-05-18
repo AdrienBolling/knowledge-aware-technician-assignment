@@ -17,8 +17,53 @@ from kata.metrics import EPISODE_METRICS, STEP_METRICS
 # ---------------------------------------------------------------------------
 
 
+_TIME_BUCKETS: tuple[str, ...] = (
+    "T_NONE",
+    "T_0_50",
+    "T_50_200",
+    "T_200_500",
+    "T_500_1K",
+    "T_1K_5K",
+    "T_5K_10K",
+    "T_10K_50K",
+    "T_50K_100K",
+    "T_100K+",
+)
+
+_RATIO_BUCKETS: tuple[str, ...] = (
+    "R_0",
+    "R_0_10",
+    "R_10_20",
+    "R_20_30",
+    "R_30_40",
+    "R_40_50",
+    "R_50_60",
+    "R_60_70",
+    "R_70_80",
+    "R_80_90",
+    "R_90_100",
+)
+
+_COUNT_BUCKETS: tuple[str, ...] = (
+    "C_0",
+    "C_1",
+    "C_2_3",
+    "C_4_5",
+    "C_6_10",
+    "C_11_20",
+    "C_21_50",
+    "C_51_100",
+    "C_100+",
+)
+
+
 def _bucket_time(t: float) -> str:
-    """Bucket a simulation time value into a categorical token."""
+    """Bucket a simulation time value into a categorical token.
+
+    Extended from the original 7-bucket scheme to keep distinguishing
+    information past 5K sim time — long-horizon runs (max_sim_time of
+    50K–200K) used to collapse everything past 5K into a single token.
+    """
     if t < 0:
         return "T_NONE"
     if t < 50:
@@ -31,26 +76,51 @@ def _bucket_time(t: float) -> str:
         return "T_500_1K"
     if t < 5000:
         return "T_1K_5K"
-    return "T_5K+"
+    if t < 10_000:
+        return "T_5K_10K"
+    if t < 50_000:
+        return "T_10K_50K"
+    if t < 100_000:
+        return "T_50K_100K"
+    return "T_100K+"
 
 
 def _bucket_ratio(v: float) -> str:
-    """Bucket a [0, 1] ratio (fatigue, knowledge) into quintiles."""
+    """Bucket a [0, 1] ratio (fatigue, knowledge, match) into deciles.
+
+    Replaces the original 6-bucket scheme that collapsed e.g. 0.61 and
+    0.79 into the same ``R_MEDHIGH`` token — too coarse for fatigue
+    and knowledge-match signals that drive most of the policy gradient.
+    """
     if v <= 0.0:
         return "R_0"
+    if v < 0.1:
+        return "R_0_10"
     if v < 0.2:
-        return "R_LOW"
+        return "R_10_20"
+    if v < 0.3:
+        return "R_20_30"
     if v < 0.4:
-        return "R_MEDLOW"
+        return "R_30_40"
+    if v < 0.5:
+        return "R_40_50"
     if v < 0.6:
-        return "R_MED"
+        return "R_50_60"
+    if v < 0.7:
+        return "R_60_70"
     if v < 0.8:
-        return "R_MEDHIGH"
-    return "R_HIGH"
+        return "R_70_80"
+    if v < 0.9:
+        return "R_80_90"
+    return "R_90_100"
 
 
 def _bucket_count(n: int) -> str:
-    """Bucket a small non-negative count into a categorical token."""
+    """Bucket a small non-negative count into a categorical token.
+
+    Extended past 20 so larger factories (>20 machines) stop saturating
+    the ``FACTORY_MACHINES`` / ``FACTORY_PRODUCED`` tokens.
+    """
     if n <= 0:
         return "C_0"
     if n == 1:
@@ -63,7 +133,11 @@ def _bucket_count(n: int) -> str:
         return "C_6_10"
     if n <= 20:
         return "C_11_20"
-    return "C_20+"
+    if n <= 50:
+        return "C_21_50"
+    if n <= 100:
+        return "C_51_100"
+    return "C_100+"
 
 
 def _bool_token(v: bool) -> str:
@@ -400,9 +474,9 @@ class KataEnv(gym.Env):
 
         Token design principles:
         - Keys are fixed strings (``SIM_TIME``, ``MACHINE_BROKEN``, …)
-        - Time values -> ``T_0_50``, ``T_50_200``, … (7 buckets)
-        - Ratios [0, 1] -> ``R_0``, ``R_LOW``, … (6 buckets)
-        - Counts -> ``C_0``, ``C_1``, ``C_2_3``, … (7 buckets)
+        - Time values -> ``T_0_50``, ``T_50_200``, … (10 buckets, up to ``T_100K+``)
+        - Ratios [0, 1] -> ``R_0``, ``R_0_10``, … ``R_90_100`` (11 deciles)
+        - Counts -> ``C_0``, ``C_1``, ``C_2_3``, … ``C_100+`` (9 buckets)
         - Booleans -> ``TRUE`` / ``FALSE``
         - Machine types -> categorical string (``CNC``, ``Assembly``, …)
         """
@@ -472,6 +546,15 @@ class KataEnv(gym.Env):
                 ]
             )
 
+            if self.config.include_broken_by_type_tokens:
+                broken_by_type: dict[str, int] = {}
+                for m in machines:
+                    if bool(getattr(m, "broken", False)):
+                        mt = str(getattr(m, "mtype", "NONE"))
+                        broken_by_type[mt] = broken_by_type.get(mt, 0) + 1
+                for mt in sorted(broken_by_type):
+                    tokens.extend([f"BROKEN_{mt}", _bucket_count(broken_by_type[mt])])
+
         # -- tech_aware: ticket-specific extras --
         tech_aware = self.config.observation_mode == "tech_aware"
         if tech_aware:
@@ -483,10 +566,14 @@ class KataEnv(gym.Env):
                     comp_type = str(info.get("component_type", "NONE"))
             tokens.extend(["TICKET_COMPONENT_TYPE", comp_type])
 
-            # Peek at the next 2 queued tickets so the agent can plan
+            # Peek at the next ``next_ticket_lookahead`` queued tickets
+            # so the agent can plan ahead.  Lookahead defaults to 4 but
+            # is configurable; deeper lookahead trades sequence positions
+            # for richer scheduling context.
             queue = self._queue()
             items = getattr(queue, "items", queue) if queue is not None else []
-            for slot in range(2):
+            lookahead = int(self.config.next_ticket_lookahead)
+            for slot in range(lookahead):
                 prefix = f"NEXT{slot + 1}"
                 if slot < len(items):
                     req = items[slot]
@@ -510,6 +597,19 @@ class KataEnv(gym.Env):
                     ]
                 )
 
+            # Whole-queue composition by failed component type.
+            if self.config.include_queue_composition_tokens:
+                qc_by_type: dict[str, int] = {}
+                for req in items:
+                    ct = "NONE"
+                    if hasattr(req, "get_failed_component_info"):
+                        info = req.get_failed_component_info()
+                        if info:
+                            ct = str(info.get("component_type", "NONE"))
+                    qc_by_type[ct] = qc_by_type.get(ct, 0) + 1
+                for ct in sorted(qc_by_type):
+                    tokens.extend([f"QC_{ct}", _bucket_count(qc_by_type[ct])])
+
         # -- per-technician tokens --
         for idx, tech in enumerate(self.dispatcher.techs):
             tech_prefix = f"TECH_{idx}"
@@ -527,6 +627,13 @@ class KataEnv(gym.Env):
             if self.config.include_technician_knowledge_tokens:
                 knowledge = self._technician_knowledge_value(tech)
                 tokens.extend([tech_prefix, "KNOWLEDGE", _bucket_ratio(knowledge)])
+            if self.config.include_technician_assignment_count_tokens:
+                ac = (
+                    int(self._tech_assignment_counts[idx])
+                    if idx < len(self._tech_assignment_counts)
+                    else 0
+                )
+                tokens.extend([tech_prefix, "ASSIGN_COUNT", _bucket_count(ac)])
 
             if tech_aware:
                 # Knowledge match for the current ticket (1 - mult, in [0, 1])

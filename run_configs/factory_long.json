@@ -46,9 +46,14 @@
     "observation_mode": "tech_aware",
     "include_technician_fatigue_tokens": true,
     "include_technician_knowledge_tokens": true,
+    "include_technician_assignment_count_tokens": true,
+    "include_queue_composition_tokens": true,
+    "include_broken_by_type_tokens": true,
+    "next_ticket_lookahead": 5,
 
     "use_mca_encoder": false,
-    "tokenizer_seq_length": 192,
+    "tokenizer_seq_length": 256,
+    "token_observation_length": 256,
 
     "assignment_reward": 0.1,
     "ticket_wait_time_penalty": 0.01,

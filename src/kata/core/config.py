@@ -427,6 +427,48 @@ class GymEnvConfig(BaseModel):
         default=False,
         description="Include fleet knowledge tokens when using token observations.",
     )
+    next_ticket_lookahead: int = Field(
+        default=4,
+        ge=0,
+        le=12,
+        description=(
+            "Number of queued tickets after the current one whose "
+            "(machine_type, component_type, age) is exposed in "
+            "``tech_aware`` token observations as ``NEXT{i}_*`` triples.  "
+            "Tradeoff: each slot costs 6 sequence positions and ~3 vocab "
+            "entries; deeper lookahead gives the policy more scheduling "
+            "context but eats into ``token_observation_length``."
+        ),
+    )
+    include_queue_composition_tokens: bool = Field(
+        default=False,
+        description=(
+            "Add ``QC_<component_type> C_<count>`` tokens summarising the "
+            "*entire* pending queue by failed component type.  Independent "
+            "of ``next_ticket_lookahead`` (which only describes individual "
+            "tickets in order) and useful when the agent should reason "
+            "about queue *composition* rather than just the next few items."
+        ),
+    )
+    include_broken_by_type_tokens: bool = Field(
+        default=False,
+        description=(
+            "In ``factory_level`` / ``tech_aware`` observation modes, add "
+            "``BROKEN_<machine_type> C_<count>`` tokens for every machine "
+            "type with at least one broken machine.  Without this flag the "
+            "fleet's broken machines collapse into a single bucketed count "
+            "(``FACTORY_BROKEN``) — fine for small fleets, lossy at scale."
+        ),
+    )
+    include_technician_assignment_count_tokens: bool = Field(
+        default=False,
+        description=(
+            "Add ``TECH_{i} ASSIGN_COUNT C_*`` tokens describing how many "
+            "tickets each technician has been assigned this episode.  Same "
+            "signal the ``selection_diversity`` reward uses internally — "
+            "exposing it lets the policy learn diversification directly."
+        ),
+    )
     # -- MCA / tokenizer warmup settings -----------------------------------
     use_mca_encoder: bool = Field(
         default=False,
