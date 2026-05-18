@@ -208,12 +208,12 @@ class TestBuildVocabCoversAllEmittedTokens:
             assert tok.token_to_id(key) != UNK_ID, f"missing vocab entry: {key}"
         for mode in ("ticket_only", "broken_machine", "factory_level", "tech_aware"):
             assert tok.token_to_id(mode) != UNK_ID, f"missing OBS_MODE value: {mode}"
-        # Bucket values
-        for t in ("T_NONE", "T_0_50", "T_5K+"):
+        # Bucket values (finer-resolution buckets land here as well)
+        for t in ("T_NONE", "T_0_50", "T_1K_5K", "T_10K_50K", "T_100K+"):
             assert tok.token_to_id(t) != UNK_ID
-        for r in ("R_0", "R_HIGH"):
+        for r in ("R_0", "R_0_10", "R_40_50", "R_90_100"):
             assert tok.token_to_id(r) != UNK_ID
-        for c in ("C_0", "C_20+"):
+        for c in ("C_0", "C_11_20", "C_21_50", "C_100+"):
             assert tok.token_to_id(c) != UNK_ID
         for b in ("TRUE", "FALSE"):
             assert tok.token_to_id(b) != UNK_ID

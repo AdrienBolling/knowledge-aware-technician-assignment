@@ -126,9 +126,12 @@ def test_token_observation_factory_level_with_technician_tokens():
     # Key-value pairs: key token followed by bucketed value token
     assert "FACTORY_MACHINES" in tokens
     assert "MACHINE_INPUT_BUF" in tokens
-    # Fatigue 0.3 -> R_MEDLOW bucket; knowledge 0.9 -> R_HIGH bucket
+    # Decile buckets: fatigue 0.3 -> R_30_40, knowledge 0.4 -> R_40_50,
+    # fatigue 0.7 -> R_70_80, knowledge 0.9 -> R_90_100.
     assert "FATIGUE" in tokens
     assert "KNOWLEDGE" in tokens
+    assert "R_30_40" in tokens
+    assert "R_70_80" in tokens
     assert tokens[-1] == "<PAD>"
 
 

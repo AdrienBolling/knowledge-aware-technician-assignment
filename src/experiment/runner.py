@@ -263,6 +263,7 @@ class Experiment:
                 n_technicians=n_techs,
                 seq_length=gym_cfg.tokenizer_seq_length,
                 component_types=component_types,
+                next_ticket_lookahead=gym_cfg.next_ticket_lookahead,
             )
 
         return KataEnv(
