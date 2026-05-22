@@ -1,0 +1,3 @@
+[submodule "paper"]
+	path = paper
+	url = git@github.com:AdrienBolling/JMS_Adrien_RL.git
