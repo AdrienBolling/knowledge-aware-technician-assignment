@@ -47,6 +47,7 @@ class AgentConfig(BaseModel):
         "rainbow_dqn",
         "grpo",
         "ppo_transformer",
+        "ppo_latent",
     ] = Field(description="Agent class to instantiate.")
 
     params: dict[str, Any] = Field(

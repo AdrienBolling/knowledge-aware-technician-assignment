@@ -71,8 +71,11 @@ class TestGymTechDispatcher:
         request = RepairRequest(machine, created_at=0)
         dispatcher.start_repair(techs[0].id, request)
 
-        # Disruption holds the resource for ~480 time units (sick_leave mu),
-        # then travel + repair time. Run long enough.
+        # With the default disruption pool, no disruption is likely to
+        # fire within the first 2000 sim time (random: mean 10000;
+        # vacation: uniform offset of up to 8000; fatigue: needs
+        # accumulated fatigue first), so this exercises a clean
+        # repair → completion path.
         env.run(until=2000)
 
         assert event.triggered
@@ -110,3 +113,312 @@ class TestGymTechDispatcher:
         assert not techs[0].busy
         # Fatigue should have increased
         assert techs[0].fatigue > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Disruption-mechanism tests (added with the per-trigger refactor).
+# ---------------------------------------------------------------------------
+
+
+class TestDisruptionTriggers:
+    """Per-trigger behaviour and preempt-then-requeue."""
+
+    def _build(self, disruption_dict, n_techs=1):
+        """Build a dispatcher with a hand-crafted disruption pool."""
+        from kata import get_config
+        from kata.core.config import DisruptionConfig
+
+        # Mutate the cached singleton so the dispatcher's spawn loop
+        # sees our pool.  Save / restore around the test in a finalizer
+        # built by the caller.
+        cfg = get_config()
+        prev = cfg.sim.disruptions
+        cfg.sim.disruptions = DisruptionConfig(dis_dict=disruption_dict)
+        env, techs, dispatcher = _build_env_and_dispatcher(n_techs=n_techs)
+        return env, techs, dispatcher, prev
+
+    def _restore(self, prev):
+        from kata import get_config
+
+        get_config().sim.disruptions = prev
+
+    def test_periodic_disruption_fires_multiple_times(self):
+        """A periodic disruption with short interval fires many times per episode."""
+        from kata.core.config import DisruptionTypeConfig
+
+        pool = {
+            "tick": DisruptionTypeConfig(
+                trigger="periodic",
+                interval=100.0,
+                jitter=0.0,
+                duration_mu=5.0,
+                duration_sig=0.0,
+                preemptive=False,
+            ),
+        }
+        env, techs, _disp, prev = self._build(pool)
+        try:
+            env.run(until=5_000)
+            # Initial uniform offset of up to ``interval``, then every
+            # 100 sim time units → expect ~40-50 firings in 5000 units.
+            assert techs[0].disruption_count >= 10
+        finally:
+            self._restore(prev)
+
+    def test_random_disruption_fires_at_least_once_with_high_rate(self):
+        from kata.core.config import DisruptionTypeConfig
+
+        pool = {
+            "frequent_injury": DisruptionTypeConfig(
+                trigger="random",
+                rate=1e-2,            # mean inter-arrival = 100
+                duration_mu=5.0,
+                duration_sig=0.0,
+                preemptive=False,
+            ),
+        }
+        env, techs, _disp, prev = self._build(pool)
+        try:
+            env.run(until=10_000)
+            # 10 000 sim time × rate 0.01 → expected ~100 events.  We
+            # only require ``>= 5`` for tail-bound robustness.
+            assert techs[0].disruption_count >= 5
+        finally:
+            self._restore(prev)
+
+    def test_preemptive_disruption_requeues_ticket(self):
+        """A preempting disruption mid-repair must restore tech state + re-queue ticket."""
+        from kata.core.config import DisruptionTypeConfig
+
+        # Pool with a single periodic disruption that fires almost
+        # immediately and preempts.
+        pool = {
+            "preempt_test": DisruptionTypeConfig(
+                trigger="periodic",
+                interval=10.0,
+                jitter=0.0,
+                duration_mu=500.0,
+                duration_sig=0.0,
+                preemptive=True,
+            ),
+        }
+        env, techs, dispatcher, prev = self._build(pool, n_techs=1)
+        try:
+            machine = _make_machine(env, dispatcher)
+            machine.broken = True
+            # Stage a long-base repair so the disruption is highly
+            # likely to land mid-repair.
+            class _LongRequest(RepairRequest):
+                def get_repair_time(self):
+                    return 1_000.0
+
+            request = _LongRequest(machine, created_at=0)
+            dispatcher.start_repair(techs[0].id, request)
+
+            # Run long enough for the disruption to fire and preempt
+            # but not long enough for the disruption (500 units) to end
+            # AND a full follow-up repair to complete.
+            env.run(until=400)
+            assert techs[0].disruption_count >= 1
+            # The preempted ticket must have been re-queued for re-assignment.
+            assert request in list(dispatcher.repair_queue.items)
+            # And the technician must have been released.
+            assert techs[0].busy is False
+        finally:
+            self._restore(prev)
+
+
+class TestDisruptionConfigAlias:
+    """``interrupt_on_disrupt`` is derived from per-type ``preemptive`` flags."""
+
+    def test_true_when_any_type_preempts(self):
+        from kata.core.config import DisruptionConfig, DisruptionTypeConfig
+
+        cfg = DisruptionConfig(
+            dis_dict={
+                "a": DisruptionTypeConfig(
+                    trigger="periodic", interval=100.0, duration_mu=10.0,
+                    preemptive=False,
+                ),
+                "b": DisruptionTypeConfig(
+                    trigger="periodic", interval=100.0, duration_mu=10.0,
+                    preemptive=True,
+                ),
+            }
+        )
+        assert cfg.interrupt_on_disrupt is True
+
+    def test_false_when_no_type_preempts(self):
+        from kata.core.config import DisruptionConfig, DisruptionTypeConfig
+
+        cfg = DisruptionConfig(
+            dis_dict={
+                "a": DisruptionTypeConfig(
+                    trigger="periodic", interval=100.0, duration_mu=10.0,
+                    preemptive=False,
+                ),
+            }
+        )
+        assert cfg.interrupt_on_disrupt is False
+
+
+class TestFatigueTriggeredDisruption:
+    """End-to-end exercise of ``trigger='fatigue'``."""
+
+    def test_fatigue_trigger_fires_when_fatigue_is_high(self):
+        """Force fatigue to 1 and verify the polling loop actually fires.
+
+        The time-aware fatigue property decays the seeded value as the
+        SimPy clock advances; to keep the hazard pinned at its ceiling
+        for the duration of the test we construct the technician with
+        a near-zero recovery rate ``mu`` (the validator forbids 0
+        exactly).
+        """
+        from kata import get_config
+        from kata.core.config import DisruptionConfig, DisruptionTypeConfig
+
+        prev = get_config().sim.disruptions
+        get_config().sim.disruptions = DisruptionConfig(
+            dis_dict={
+                "exhaustion": DisruptionTypeConfig(
+                    trigger="fatigue",
+                    fatigue_coefficient=0.5,
+                    poll_interval=10.0,
+                    duration_mu=5.0,
+                    duration_sig=0.0,
+                    preemptive=False,
+                ),
+            }
+        )
+        try:
+            env = simpy.Environment()
+            techs = [
+                GymTechnician(TechnicianConfig(name="tech_0", fatigue_mu=1e-6))
+            ]
+            disp = GymTechDispatcher(env, techs)
+            disp.seed_disruptions(42)
+            techs[0].fatigue = 1.0
+            env.run(until=2_000)
+            # Per-poll p = clip(0.5 * 1 * 10, 0, 1) = 1.0; every poll
+            # fires, separated by poll (10) + duration (5).  Expected
+            # ~ 2000 / 15 ≈ 130 events; conservative lower bound:
+            assert techs[0].disruption_count >= 50
+        finally:
+            get_config().sim.disruptions = prev
+
+    def test_fatigue_trigger_does_not_fire_at_zero_fatigue(self):
+        """At fatigue=0 the per-poll probability is identically zero."""
+        from kata import get_config
+        from kata.core.config import DisruptionConfig, DisruptionTypeConfig
+
+        prev = get_config().sim.disruptions
+        get_config().sim.disruptions = DisruptionConfig(
+            dis_dict={
+                "exhaustion": DisruptionTypeConfig(
+                    trigger="fatigue",
+                    fatigue_coefficient=1.0,    # extreme
+                    poll_interval=10.0,
+                    duration_mu=5.0,
+                    duration_sig=0.0,
+                    preemptive=False,
+                ),
+            }
+        )
+        try:
+            env, techs, _disp = _build_env_and_dispatcher(n_techs=1)
+            _disp.seed_disruptions(0)
+            techs[0].fatigue = 0.0
+            env.run(until=5_000)
+            assert techs[0].disruption_count == 0
+        finally:
+            get_config().sim.disruptions = prev
+
+
+class TestDisruptionReproducibility:
+    """Same seed → identical disruption sequences across runs."""
+
+    def test_same_seed_same_counts(self):
+        from kata import get_config
+        from kata.core.config import DisruptionConfig, DisruptionTypeConfig
+
+        prev = get_config().sim.disruptions
+        get_config().sim.disruptions = DisruptionConfig(
+            dis_dict={
+                "injury": DisruptionTypeConfig(
+                    trigger="random", rate=5e-3, duration_mu=5.0, duration_sig=0.0,
+                    preemptive=False,
+                ),
+                "vacation": DisruptionTypeConfig(
+                    trigger="periodic", interval=500.0, jitter=50.0,
+                    duration_mu=10.0, duration_sig=0.0, preemptive=False,
+                ),
+            }
+        )
+        try:
+            results = []
+            for _trial in range(2):
+                env, techs, disp = _build_env_and_dispatcher(n_techs=2)
+                disp.seed_disruptions(1234)
+                env.run(until=2_000)
+                results.append(
+                    [(t.disruption_count, dict(t.disruption_counts_by_type)) for t in techs]
+                )
+            assert results[0] == results[1], (
+                f"Same seed produced different disruption sequences: "
+                f"{results[0]} vs {results[1]}"
+            )
+        finally:
+            get_config().sim.disruptions = prev
+
+    def test_different_seeds_diverge(self):
+        from kata import get_config
+        from kata.core.config import DisruptionConfig, DisruptionTypeConfig
+
+        prev = get_config().sim.disruptions
+        get_config().sim.disruptions = DisruptionConfig(
+            dis_dict={
+                "injury": DisruptionTypeConfig(
+                    trigger="random", rate=5e-3, duration_mu=5.0, duration_sig=0.0,
+                    preemptive=False,
+                ),
+            }
+        )
+        try:
+            counts = []
+            for seed in (1, 2, 3):
+                env, techs, disp = _build_env_and_dispatcher(n_techs=2)
+                disp.seed_disruptions(seed)
+                env.run(until=2_000)
+                counts.append(tuple(t.disruption_count for t in techs))
+            # At least one pair of seeds should give different counts.
+            assert len(set(counts)) > 1, (
+                f"Different seeds produced identical counts {counts}"
+            )
+        finally:
+            get_config().sim.disruptions = prev
+
+
+class TestDisruptionAvailability:
+    """A technician in a disruption hold must be masked out of the action set."""
+
+    def test_in_disruption_flag_set_during_hold(self):
+        from kata import get_config
+        from kata.core.config import DisruptionConfig, DisruptionTypeConfig
+
+        prev = get_config().sim.disruptions
+        get_config().sim.disruptions = DisruptionConfig(
+            dis_dict={
+                "vacation": DisruptionTypeConfig(
+                    trigger="periodic", interval=5.0, jitter=0.0,
+                    duration_mu=1000.0, duration_sig=0.0, preemptive=False,
+                ),
+            }
+        )
+        try:
+            env, techs, _disp = _build_env_and_dispatcher(n_techs=1)
+            # Run just long enough for the vacation to start but not end.
+            env.run(until=50)
+            assert techs[0]._in_disruption is True
+            assert techs[0].disruption_count >= 1
+        finally:
+            get_config().sim.disruptions = prev

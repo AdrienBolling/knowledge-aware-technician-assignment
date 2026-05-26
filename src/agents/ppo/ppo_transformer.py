@@ -47,6 +47,7 @@ from torch import nn
 from torch.distributions import Categorical
 
 from agents.base import Agent, resolve_device
+from agents.networks.hybrid_encoder import HybridTokenEncoder
 from agents.networks.modern_transformer import ModernTransformerEncoder
 from agents.networks.running_stats import RunningMeanStd
 
@@ -76,16 +77,22 @@ class ActorCritic(nn.Module):
 
     Forward returns ``(logits, value)`` where ``value`` is a
     ``(batch,)`` tensor (squeezed scalar critic output).
+
+    The forward signature is **dict-typed** so the same module can
+    drive a plain :class:`ModernTransformerEncoder` (single ``token_ids``
+    field) or a :class:`HybridTokenEncoder` (``token_ids`` +
+    ``cont_values`` + ``cont_kinds``) — the encoder picks what it needs.
     """
 
     def __init__(
         self,
-        encoder: ModernTransformerEncoder,
+        encoder: ModernTransformerEncoder | HybridTokenEncoder,
         n_actions: int,
         hidden_dim: int = 256,
     ) -> None:
         super().__init__()
         self.encoder = encoder
+        self._hybrid = isinstance(encoder, HybridTokenEncoder)
         self.policy_head = _MLPHead(encoder.output_dim, hidden_dim, n_actions)
         self.value_head = _MLPHead(encoder.output_dim, hidden_dim, 1)
 
@@ -97,11 +104,21 @@ class ActorCritic(nn.Module):
         nn.init.orthogonal_(self.value_head.net[-1].weight, gain=1.0)
         nn.init.zeros_(self.value_head.net[-1].bias)
 
+    def _encode(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
+        if self._hybrid:
+            return self.encoder(
+                obs["token_ids"], obs["cont_values"], obs["cont_kinds"]
+            )
+        return self.encoder(obs["token_ids"])
+
     def forward(
         self,
-        token_ids: torch.Tensor,
+        obs: dict[str, torch.Tensor] | torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        features = self.encoder(token_ids)
+        # Back-compat: callers passing a bare token-id tensor still work.
+        if not isinstance(obs, dict):
+            obs = {"token_ids": obs}
+        features = self._encode(obs)
         logits = self.policy_head(features)
         value = self.value_head(features).squeeze(-1)
         return logits, value
@@ -169,6 +186,9 @@ class PPOTransformerAgent(Agent):
         normalize_rewards: bool = False,
         # Mixed precision
         use_amp: bool = False,
+        # Hybrid observations (PLE / Time2Vec / Fourier continuous channels)
+        hybrid_obs: bool = False,
+        sim_time_scale: float = 200_000.0,
         # Misc
         seed: int | None = None,
         device: str = "auto",
@@ -181,15 +201,28 @@ class PPOTransformerAgent(Agent):
             torch.manual_seed(int(seed))
 
         # -- Network --
-        encoder = ModernTransformerEncoder(
-            vocab_size=vocab_size,
-            d_model=d_model,
-            n_heads=n_heads,
-            n_layers=n_layers,
-            d_ff=d_ff,
-            max_seq_len=max_seq_len,
-            dropout=dropout,
-        )
+        self.hybrid_obs = bool(hybrid_obs)
+        if self.hybrid_obs:
+            encoder: ModernTransformerEncoder | HybridTokenEncoder = HybridTokenEncoder(
+                vocab_size=vocab_size,
+                d_model=d_model,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                d_ff=d_ff,
+                max_seq_len=max_seq_len,
+                dropout=dropout,
+                sim_time_scale=sim_time_scale,
+            )
+        else:
+            encoder = ModernTransformerEncoder(
+                vocab_size=vocab_size,
+                d_model=d_model,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                d_ff=d_ff,
+                max_seq_len=max_seq_len,
+                dropout=dropout,
+            )
         self.net = ActorCritic(encoder, n_actions, hidden_dim=head_hidden_dim).to(
             self.device
         )
@@ -241,14 +274,14 @@ class PPOTransformerAgent(Agent):
         self._return_running: float = 0.0
 
         # -- Rollout buffers --
-        self._obs_buffer: list[np.ndarray] = []
+        self._obs_buffer: list[dict[str, np.ndarray]] = []
         self._action_buffer: list[int] = []
         self._reward_buffer: list[float] = []
         self._done_buffer: list[bool] = []
         self._logprob_buffer: list[float] = []
         self._value_buffer: list[float] = []
         self._mask_buffer: list[np.ndarray] = []  # action masks at sample time
-        self._last_obs: np.ndarray | None = None  # for value bootstrap
+        self._last_obs: dict[str, np.ndarray] | None = None  # for value bootstrap
         self._last_mask: np.ndarray | None = None  # for final-step bootstrap
 
     # ------------------------------------------------------------------
@@ -272,6 +305,52 @@ class PPOTransformerAgent(Agent):
             padded[: len(ids)] = ids
             return padded
         return ids[: self.max_seq_len]
+
+    def _extract_obs(self, obs: dict[str, Any]) -> dict[str, np.ndarray]:
+        """Return the dict-of-arrays representation consumed by the network.
+
+        Non-hybrid: ``{"token_ids": ...}`` only.
+        Hybrid: ``{"token_ids": ..., "cont_values": ..., "cont_kinds": ...}``.
+        """
+        out: dict[str, np.ndarray] = {"token_ids": self._extract_token_ids(obs)}
+        if self.hybrid_obs:
+            cv = np.asarray(
+                obs.get("cont_values", np.zeros(self.max_seq_len, dtype=np.float32)),
+                dtype=np.float32,
+            )
+            ck = np.asarray(
+                obs.get("cont_kinds", np.zeros(self.max_seq_len, dtype=np.int8)),
+                dtype=np.int8,
+            )
+            # Trim / pad to max_seq_len in lockstep with token_ids
+            if len(cv) < self.max_seq_len:
+                pad_cv = np.zeros(self.max_seq_len, dtype=np.float32)
+                pad_cv[: len(cv)] = cv
+                cv = pad_cv
+            else:
+                cv = cv[: self.max_seq_len]
+            if len(ck) < self.max_seq_len:
+                pad_ck = np.zeros(self.max_seq_len, dtype=np.int8)
+                pad_ck[: len(ck)] = ck
+                ck = pad_ck
+            else:
+                ck = ck[: self.max_seq_len]
+            out["cont_values"] = cv
+            out["cont_kinds"] = ck
+        return out
+
+    def _to_tensor_batch(
+        self, obs_list: list[dict[str, np.ndarray]] | dict[str, np.ndarray]
+    ) -> dict[str, torch.Tensor]:
+        """Stack a list of per-step obs dicts into a batched tensor dict."""
+        if isinstance(obs_list, dict):
+            # Already batched (single step) — just promote to tensors.
+            return {
+                k: torch.from_numpy(np.asarray(v)).to(self.device)
+                for k, v in obs_list.items()
+            }
+        stacked = {k: np.stack([o[k] for o in obs_list], axis=0) for k in obs_list[0]}
+        return {k: torch.from_numpy(v).to(self.device) for k, v in stacked.items()}
 
     def _extract_action_mask(self, obs: dict[str, Any]) -> np.ndarray:
         """Return a boolean mask of length ``n_actions``.
@@ -305,13 +384,16 @@ class PPOTransformerAgent(Agent):
     # ------------------------------------------------------------------
 
     def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
-        token_ids = self._extract_token_ids(obs)
+        obs_dict = self._extract_obs(obs)
         mask = self._extract_action_mask(obs)
-        token_tensor = torch.from_numpy(token_ids).unsqueeze(0).to(self.device)
+        obs_batch = {
+            k: torch.from_numpy(v).unsqueeze(0).to(self.device)
+            for k, v in obs_dict.items()
+        }
         mask_tensor = torch.from_numpy(mask).unsqueeze(0).to(self.device)
 
         with torch.no_grad(), self._autocast_ctx:
-            logits, value = self.net(token_tensor)
+            logits, value = self.net(obs_batch)
         # Apply mask in fp32 so masked positions stay -inf under softmax
         masked_logits = logits.float().masked_fill(~mask_tensor, float("-inf"))
         dist = Categorical(logits=masked_logits)
@@ -357,7 +439,7 @@ class PPOTransformerAgent(Agent):
             if done:
                 self._return_running = 0.0
 
-        self._obs_buffer.append(self._extract_token_ids(obs))
+        self._obs_buffer.append(self._extract_obs(obs))
         self._action_buffer.append(int(action))
         self._reward_buffer.append(r_buf)
         self._done_buffer.append(done)
@@ -370,7 +452,7 @@ class PPOTransformerAgent(Agent):
 
         # Track last observation / mask so we can bootstrap a truncated
         # final value at the boundary of a non-terminal rollout chunk.
-        self._last_obs = self._extract_token_ids(next_obs)
+        self._last_obs = self._extract_obs(next_obs)
         self._last_mask = self._extract_action_mask(next_obs)
 
     # ------------------------------------------------------------------
@@ -383,7 +465,14 @@ class PPOTransformerAgent(Agent):
         if not self._obs_buffer:
             return {}
 
-        obs_arr = np.stack(self._obs_buffer, axis=0)  # (T, S)
+        # Stack each obs-dict channel into a (T, ...) tensor.
+        keys = list(self._obs_buffer[0].keys())
+        obs_t: dict[str, torch.Tensor] = {
+            k: torch.from_numpy(
+                np.stack([o[k] for o in self._obs_buffer], axis=0)
+            ).to(self.device)
+            for k in keys
+        }
         actions = np.asarray(self._action_buffer, dtype=np.int64)
         rewards = np.asarray(self._reward_buffer, dtype=np.float32)
         dones = np.asarray(self._done_buffer, dtype=bool)
@@ -398,15 +487,17 @@ class PPOTransformerAgent(Agent):
         if dones[-1] or self._last_obs is None:
             last_value = 0.0
         else:
-            tok = torch.from_numpy(self._last_obs).unsqueeze(0).to(self.device)
+            last_batch = {
+                k: torch.from_numpy(v).unsqueeze(0).to(self.device)
+                for k, v in self._last_obs.items()
+            }
             with torch.no_grad(), self._autocast_ctx:
-                _, v = self.net(tok)
+                _, v = self.net(last_batch)
             last_value = float(v.item())
 
         advantages, returns = self._compute_gae(rewards, values, dones, last_value)
 
         # Move to tensors for training
-        obs_t = torch.from_numpy(obs_arr).to(self.device)
         actions_t = torch.from_numpy(actions).to(self.device)
         old_log_probs_t = torch.from_numpy(old_log_probs).to(self.device)
         old_values_t = torch.from_numpy(values).to(self.device)
@@ -414,7 +505,7 @@ class PPOTransformerAgent(Agent):
         returns_t = torch.from_numpy(returns).to(self.device)
         masks_t = torch.from_numpy(masks).to(self.device)
 
-        n = obs_t.shape[0]
+        n = next(iter(obs_t.values())).shape[0]
         idx = np.arange(n)
 
         losses, pg_losses, vf_losses, ent_losses, kls, clip_fracs = (
@@ -428,7 +519,7 @@ class PPOTransformerAgent(Agent):
                 if len(mb) < 2:
                     continue
                 mb_t = torch.as_tensor(mb, device=self.device, dtype=torch.long)
-                mb_obs = obs_t.index_select(0, mb_t)
+                mb_obs = {k: v.index_select(0, mb_t) for k, v in obs_t.items()}
                 mb_actions = actions_t.index_select(0, mb_t)
                 mb_old_logp = old_log_probs_t.index_select(0, mb_t)
                 mb_old_values = old_values_t.index_select(0, mb_t)

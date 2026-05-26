@@ -451,3 +451,75 @@ class TestFailureWiseKnowledgeIntegration:
 
         req = RepairRequest(machine=_SimpleMachineStub(), created_at=0)
         assert req.get_knowledge_parameters() is None
+
+
+# ---------------------------------------------------------------------------
+# Time-aware fatigue property (continuous recovery via env-injected clock)
+# ---------------------------------------------------------------------------
+
+
+class TestTimeAwareFatigue:
+    """``GymTechnician.fatigue`` decays continuously during idle periods.
+
+    Unit tests in ``TestFatigue`` exercise the event-driven base value
+    via ``_recover_fatigue`` directly.  These tests exercise the
+    property's lazy-recovery path: with ``self.env`` injected, every
+    read applies ``F * exp(-mu * (now - last_idle_since))`` for the
+    elapsed idle interval, even when no repair has started.
+    """
+
+    def test_no_env_falls_back_to_raw_base(self):
+        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.5))
+        tech.fatigue = 0.8
+        assert tech.env is None
+        # Without env, the property returns the raw base unchanged.
+        assert tech.fatigue == 0.8
+
+    def test_idle_fatigue_decays_with_env_clock(self):
+        import simpy
+
+        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.1))
+        tech.env = simpy.Environment()
+        tech.fatigue = 0.9
+        tech._last_idle_since = 0.0
+        # At sim time 0, no elapsed idle: returns raw base.
+        assert tech.fatigue == 0.9
+        # Advance the clock.  No repair has started, so no event-driven
+        # recovery has happened — the property still returns the
+        # time-aware value.
+        tech.env.run(until=20.0)
+        # exp(-0.1 * 20) ≈ 0.135 → 0.9 * 0.135 ≈ 0.122
+        assert tech.fatigue < 0.9
+        assert abs(tech.fatigue - 0.9 * 2.7182818 ** (-2.0)) < 1e-3
+
+    def test_busy_freezes_recovery(self):
+        import simpy
+
+        tech = GymTechnician(TechnicianConfig(fatigue_mu=1.0))
+        tech.env = simpy.Environment()
+        tech.fatigue = 0.5
+        tech._last_idle_since = 0.0
+        tech.busy = True
+        tech.env.run(until=10.0)
+        # While busy, the property must NOT apply recovery — it returns
+        # the raw base regardless of elapsed time.
+        assert tech.fatigue == 0.5
+        tech.busy = False
+        # And once released, recovery kicks in from the last_idle_since
+        # anchor (which is still 0.0 because no repair_finished fired).
+        assert tech.fatigue < 0.5
+
+    def test_in_disruption_does_not_freeze_recovery(self):
+        """Recovery during a vacation / sick leave is desired — modelled as rest."""
+        import simpy
+
+        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.5))
+        tech.env = simpy.Environment()
+        tech.fatigue = 0.8
+        tech._last_idle_since = 0.0
+        tech._in_disruption = True
+        tech.env.run(until=5.0)
+        # ``_in_disruption`` does not gate recovery — only ``busy``
+        # (i.e. doing a repair) does.  So the property applies decay
+        # for the elapsed 5 sim time even though the tech is on leave.
+        assert tech.fatigue < 0.8

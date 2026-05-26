@@ -38,6 +38,7 @@ from agents import (
     GRPOAgent,
     LeastBusyAgent,
     LeastFatiguedAgent,
+    PPOLatentAgent,
     PPOTransformerAgent,
     RainbowDQNAgent,
     RandomAgent,
@@ -68,10 +69,11 @@ _AGENT_REGISTRY: dict[str, type[Agent]] = {
     "rainbow_dqn": RainbowDQNAgent,
     "grpo": GRPOAgent,
     "ppo_transformer": PPOTransformerAgent,
+    "ppo_latent": PPOLatentAgent,
 }
 
-_LEARNING_AGENTS = {"rainbow_dqn", "grpo", "ppo_transformer"}
-_TOKEN_AGENTS = {"rainbow_dqn", "grpo", "ppo_transformer"}
+_LEARNING_AGENTS = {"rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent"}
+_TOKEN_AGENTS = {"rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent"}
 
 
 def _ticket_context(ticket: Any, sim_time: float) -> dict[str, Any]:
@@ -285,6 +287,14 @@ class Experiment:
         if agent_type in _TOKEN_AGENTS and self.tokenizer is not None:
             params.setdefault("vocab_size", self.tokenizer.vocab_size)
             params.setdefault("max_seq_len", self.env_cfg.gym.tokenizer_seq_length)
+            # Auto-propagate the hybrid-obs flag so the agent builds the
+            # right encoder type.  Each agent class is free to ignore the
+            # kwarg (handled by setdefault, not by force-overwriting).
+            if self.env_cfg.gym.observation_representation == "hybrid":
+                params.setdefault("hybrid_obs", True)
+                params.setdefault(
+                    "sim_time_scale", float(self.env_cfg.gym.max_sim_time)
+                )
 
         return cls(**params)
 

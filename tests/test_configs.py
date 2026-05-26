@@ -516,7 +516,9 @@ class TestKATAConfigDefaults:
 
     def test_disruption_config(self):
         cfg = KATAConfig()
-        assert "sick_leave" in cfg.sim.disruptions.dis_dict
+        # Default pool ships three trigger families.
+        names = set(cfg.sim.disruptions.dis_dict.keys())
+        assert {"injury", "exhaustion", "vacation"} <= names
 
 
 class TestKATAConfigJsonLoading:
@@ -566,8 +568,31 @@ class TestKATAConfigJsonLoading:
 class TestSimEnvSubConfigs:
     def test_disruption_config_defaults(self):
         cfg = DisruptionConfig()
+        # Three trigger families ship by default.
+        assert set(cfg.dis_dict.keys()) == {"injury", "exhaustion", "vacation"}
+        # ``interrupt_on_disrupt`` is now a derived property — True iff
+        # any configured type is preemptive.  The default pool has two.
         assert cfg.interrupt_on_disrupt is True
-        assert "sick_leave" in cfg.dis_dict
+
+    def test_disruption_type_validators(self):
+        """Each trigger requires its own parameter."""
+        from kata.core.config import DisruptionTypeConfig
+
+        # random requires positive rate
+        with pytest.raises(ValidationError):
+            DisruptionTypeConfig(trigger="random", duration_mu=10.0)
+        # fatigue requires positive coefficient
+        with pytest.raises(ValidationError):
+            DisruptionTypeConfig(trigger="fatigue", duration_mu=10.0)
+        # periodic requires positive interval
+        with pytest.raises(ValidationError):
+            DisruptionTypeConfig(trigger="periodic", duration_mu=10.0)
+        # Valid versions of each
+        DisruptionTypeConfig(trigger="random", duration_mu=10.0, rate=1e-3)
+        DisruptionTypeConfig(
+            trigger="fatigue", duration_mu=10.0, fatigue_coefficient=1e-2
+        )
+        DisruptionTypeConfig(trigger="periodic", duration_mu=10.0, interval=100.0)
 
     def test_repair_config_defaults(self):
         cfg = RepairConfig()

@@ -9,9 +9,13 @@ frozen.
 
 Special tokens:
     0 = <PAD>   – used to pad sequences to fixed length
-    1 = <UNK>   – reserved (not used during dynamic growth, but available)
+    1 = <UNK>   – reserved (also reused as the MASK token during MLM)
     2 = <BOS>   – beginning-of-sequence
     3 = <EOS>   – end-of-sequence
+    4 = <NUM>   – placeholder at continuous-value positions in the
+                  ``hybrid`` observation mode (the actual scalar travels
+                  on a parallel float channel; the placeholder keeps
+                  attention masks / position counts honest).
 """
 
 from __future__ import annotations
@@ -24,8 +28,9 @@ PAD_ID = 0
 UNK_ID = 1
 BOS_ID = 2
 EOS_ID = 3
+NUM_ID = 4
 
-_SPECIAL_TOKENS = ["<PAD>", "<UNK>", "<BOS>", "<EOS>"]
+_SPECIAL_TOKENS = ["<PAD>", "<UNK>", "<BOS>", "<EOS>", "<NUM>"]
 
 
 class StateTokenizer:

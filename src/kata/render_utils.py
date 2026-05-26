@@ -66,7 +66,7 @@ def _collect_state(env: Any) -> dict[str, Any]:
                 "name": getattr(t, "name", f"tech_{t.id}"),
                 "busy": bool(getattr(t, "busy", False)),
                 "fatigue": round(float(getattr(t, "fatigue", 0.0)), 4),
-                "exhausted": bool(getattr(t, "exhausted", False)),
+                "in_disruption": bool(getattr(t, "_in_disruption", False)),
                 "fatigue_multiplier": round(float(t.get_fatigue_multiplier()), 4)
                 if hasattr(t, "get_fatigue_multiplier")
                 else None,

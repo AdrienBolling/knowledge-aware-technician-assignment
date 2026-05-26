@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 kata-experiment = "experiment.cli:main"
+kata-pretrain-encoder = "agents.representation.cli:main"
 
 [project.optional-dependencies]
 visual = ["plotly>=6.0.0"]
