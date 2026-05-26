@@ -35,19 +35,47 @@ class GymTechnician(Technician):
         GymTechnician._id_counter += 1
         self.name = tech_conf.name
         self.busy: bool = False
-        self._interrupt_on_disrupt: bool = CONFIG.sim.disruptions.interrupt_on_disrupt
 
-        # Fatigue parameters
-        self.fatigue: float = 0.0
+        # Fatigue parameters.  ``self._fatigue`` is the raw, event-driven
+        # base value, written by ``_increase_fatigue`` / ``_recover_fatigue``
+        # at repair-finished / start-of-next-repair boundaries.  External
+        # consumers (observations, metrics, rewards, exhaustion loop) read
+        # ``self.fatigue`` --- a property that adds *continuous* recovery
+        # for any idle time elapsed since the last event, using the env
+        # clock injected by the dispatcher via ``self.env``.
+        self._fatigue: float = 0.0
         self.fatigue_lambda: float = tech_conf.fatigue_lambda
         self.fatigue_mu: float = tech_conf.fatigue_mu
-        self.exhausted: bool = False
+        # SimPy environment reference --- set by the dispatcher once it
+        # has the technician in its fleet.  Until then the fatigue
+        # property falls back to the raw base value (back-compat for
+        # unit tests that exercise the technician in isolation).
+        self.env: simpy.Environment | None = None
+
+        # Set True for the duration of a stochastic disruption (vacation,
+        # injury, exhaustion).  Distinct from ``busy`` --- which flips
+        # only during a *repair* --- because the fatigue property
+        # *should* keep applying recovery during a disruption (you do
+        # rest while on vacation) while the action mask *should* still
+        # treat the tech as unavailable for new assignments.
+        self._in_disruption: bool = False
+
+        # Per-technician RNG used by the stochastic-disruption loops.
+        # Seeded by the dispatcher via ``seed_disruptions`` so that
+        # ``env.reset(seed=…)`` produces deterministic disruption
+        # timings.  Falls back to a fresh non-seeded generator when no
+        # seed is provided.
+        self._rng: np.random.Generator = np.random.default_rng()
 
         # Number of stochastic disruptions (sick leaves, …) this
         # technician has experienced.  Reset to 0 on each scenario build
         # since technicians are re-instantiated by the scenario builder
-        # at every ``env.reset``.
+        # at every ``env.reset``.  ``disruption_counts_by_type`` carries
+        # the same total broken out by the named type (``injury``,
+        # ``exhaustion``, ``vacation``, …) — used by diagnostic scripts
+        # and metrics that want a per-trigger view.
         self.disruption_count: int = 0
+        self.disruption_counts_by_type: dict[str, int] = {}
 
         # Simulation time at which the technician last became idle.
         # Used by ``start_repair`` to drive fatigue recovery: the gap
@@ -93,36 +121,142 @@ class GymTechnician(Technician):
         _ = machine
         return CONFIG.sim.technicians.travel_time
 
-    def stochastic_disruptions_process(
+    # ------------------------------------------------------------------
+    # Stochastic disruptions
+    # ------------------------------------------------------------------
+    #
+    # Each named disruption type configured in ``CONFIG.sim.disruptions.dis_dict``
+    # is realised as its own long-running SimPy process per technician.
+    # The dispatcher is responsible for spawning these processes (one
+    # per (tech, type) pair) at construction time; here we expose the
+    # loop bodies.  All loops:
+    #
+    #   * run for the entire episode (``while True``),
+    #   * yield to the env until their trigger fires,
+    #   * acquire the technician's resource at priority 0 (above repairs
+    #     at priority 1) with ``preempt=cfg.preemptive``,
+    #   * hold the resource for a Normal(``duration_mu``, ``duration_sig``)
+    #     sample, then release it and loop.
+    #
+    # If a disruption with ``preempt=True`` claims the resource while a
+    # repair is in progress, the repair's ``yield`` raises ``simpy.Interrupt``
+    # and the dispatcher re-queues the partially-completed ticket.
+
+    def run_disruption_process(
         self,
         env: simpy.Environment,
         tech_resource: simpy.PreemptiveResource,
+        dis_name: str,
+        dis_cfg: Any,
     ):  # SimPy generator
-        """Stochastically require the technician resource for the disruption duration."""
-        with tech_resource.request(
-            priority=1, preempt=self._interrupt_on_disrupt
-        ) as req:
+        """Drive ``dis_cfg.trigger``-typed disruptions for this technician."""
+        trigger = dis_cfg.trigger
+        if trigger == "random":
+            yield from self._random_disruption_loop(
+                env, tech_resource, dis_name, dis_cfg
+            )
+        elif trigger == "fatigue":
+            yield from self._fatigue_disruption_loop(
+                env, tech_resource, dis_name, dis_cfg
+            )
+        elif trigger == "periodic":
+            yield from self._periodic_disruption_loop(
+                env, tech_resource, dis_name, dis_cfg
+            )
+        else:
+            msg = f"Unknown disruption trigger: {trigger}"
+            raise ValueError(msg)
+
+    def _take_disruption(
+        self,
+        env: simpy.Environment,
+        tech_resource: simpy.PreemptiveResource,
+        dis_name: str,
+        dis_cfg: Any,
+    ):
+        """Claim the technician resource and hold it for a sampled duration.
+
+        Sets ``self._in_disruption = True`` for the duration of the hold
+        so the env's action mask correctly treats the technician as
+        unavailable.  Fatigue continues to recover during the hold
+        because the fatigue property only checks ``busy`` (which is
+        repair-only), not ``_in_disruption``.
+        """
+        with tech_resource.request(priority=0, preempt=bool(dis_cfg.preemptive)) as req:
             yield req
-            # The technician has just gone on disruption (e.g. sick
-            # leave) — record it for the ``ill_technician_count`` metric.
-            self.disruption_count += 1
-            yield env.timeout(self._get_stochastic_disruption_duration())
+            self._in_disruption = True
+            try:
+                self.disruption_count += 1
+                self.disruption_counts_by_type[dis_name] = (
+                    self.disruption_counts_by_type.get(dis_name, 0) + 1
+                )
+                duration = self._sample_duration(dis_cfg)
+                yield env.timeout(duration)
+            finally:
+                self._in_disruption = False
 
-    def _get_stochastic_disruption_duration(self) -> int:
-        """Return disruption duration sampled from configured distribution."""
-        dis_type = self._get_stochastic_disruption_type()
-        mu = CONFIG.sim.disruptions.dis_dict[dis_type]["mu"]
-        sig = CONFIG.sim.disruptions.dis_dict[dis_type]["sig"]
-        time: float = np.random.normal(mu, sig)
-        return int(time if time > 0 else mu)
+    def _sample_duration(self, dis_cfg: Any) -> float:
+        """Sample a strictly-positive duration from the configured Normal."""
+        sample = float(
+            self._rng.normal(float(dis_cfg.duration_mu), float(dis_cfg.duration_sig))
+        )
+        return sample if sample > 0 else float(dis_cfg.duration_mu)
 
-    def _get_stochastic_disruption_type(self) -> str:
-        """Sample disruption type according to configured probabilities."""
-        disruptions: dict[str, Any] = CONFIG.sim.disruptions.dis_dict
-        types: list[str] = list(disruptions.keys())
-        probs: list[float] = [disruptions[t]["prob"] for t in types]
-        chosen_type: str = np.random.choice(a=types, p=probs)
-        return chosen_type
+    def _random_disruption_loop(
+        self,
+        env: simpy.Environment,
+        tech_resource: simpy.PreemptiveResource,
+        dis_name: str,
+        dis_cfg: Any,
+    ):
+        """Poisson process: exponential inter-arrival times with mean ``1/rate``."""
+        rate = float(dis_cfg.rate or 0.0)
+        if rate <= 0.0:
+            return
+        scale = 1.0 / rate
+        while True:
+            yield env.timeout(float(self._rng.exponential(scale)))
+            yield from self._take_disruption(env, tech_resource, dis_name, dis_cfg)
+
+    def _fatigue_disruption_loop(
+        self,
+        env: simpy.Environment,
+        tech_resource: simpy.PreemptiveResource,
+        dis_name: str,
+        dis_cfg: Any,
+    ):
+        """Polling Bernoulli: fires with probability ``coef * fatigue * poll`` per tick."""
+        coef = float(dis_cfg.fatigue_coefficient or 0.0)
+        poll = float(dis_cfg.poll_interval)
+        if coef <= 0.0:
+            return
+        while True:
+            yield env.timeout(poll)
+            p = min(1.0, coef * float(self.fatigue) * poll)
+            if p > 0.0 and self._rng.random() < p:
+                yield from self._take_disruption(env, tech_resource, dis_name, dis_cfg)
+
+    def _periodic_disruption_loop(
+        self,
+        env: simpy.Environment,
+        tech_resource: simpy.PreemptiveResource,
+        dis_name: str,
+        dis_cfg: Any,
+    ):
+        """Strictly-periodic schedule with optional uniform jitter."""
+        interval = float(dis_cfg.interval or 0.0)
+        jitter = float(dis_cfg.jitter)
+        if interval <= 0.0:
+            return
+        # Stagger initial offset by up to one full interval so that
+        # multiple technicians don't all vacation at sim time = interval.
+        yield env.timeout(float(self._rng.uniform(0.0, interval)))
+        while True:
+            yield from self._take_disruption(env, tech_resource, dis_name, dis_cfg)
+            wait = interval
+            if jitter > 0.0:
+                wait += float(self._rng.uniform(-jitter, jitter))
+            yield env.timeout(max(1.0, wait))
 
     def compute_repair_time(
         self,
@@ -225,23 +359,71 @@ class GymTechnician(Technician):
         msg = f"Unknown fatigue model: {model}"
         raise ValueError(msg)
 
+    # ------------------------------------------------------------------
+    # Fatigue: event-driven base value + continuous-recovery property
+    # ------------------------------------------------------------------
+
+    @property
+    def fatigue(self) -> float:
+        """Current fatigue level with continuous-time recovery applied.
+
+        Returns the raw event-driven base value while the technician
+        is performing a repair (``self.busy``), and otherwise decays
+        it exponentially according to the Jaber recovery model:
+
+            F(now) = F_base * exp(-mu * (now - last_idle_since))
+
+        Disruption holds (vacation, injury, exhaustion) do *not*
+        suspend recovery --- a technician on holiday is still
+        resting --- so the recovery formula applies through them.
+        Availability (whether the action mask considers the
+        technician selectable) is tracked separately via
+        ``self._in_disruption``; see ``KataEnv._action_mask``.
+
+        Every external read --- observations, metrics, rewards, the
+        fatigue-driven exhaustion disruption loop --- goes through
+        this property so they see a fresh value rather than the
+        stale snapshot last written by ``_increase_fatigue`` or
+        ``_recover_fatigue``.
+        """
+        base = self._fatigue
+        if self.busy or self.env is None:
+            return base
+        idle = float(self.env.now) - float(self._last_idle_since)
+        if idle <= 0.0 or self.fatigue_mu <= 0.0:
+            return base
+        return float(base * math.exp(-self.fatigue_mu * idle))
+
+    @fatigue.setter
+    def fatigue(self, value: float) -> None:
+        """Allow tests / external callers to seed the raw base value."""
+        self._fatigue = float(value)
+
     def _increase_fatigue(self, work_time: int) -> None:
-        """Accumulate fatigue after a repair."""
+        """Accumulate fatigue after a repair.
+
+        Reads / writes ``self._fatigue`` directly to bypass the
+        continuous-recovery property: by the time this method runs,
+        ``repair_finished`` has set ``busy = False`` but
+        ``_last_idle_since`` is still the *previous* idle anchor, so
+        going through the property would double-apply recovery.
+        """
         if work_time < 0:
             msg = "Work time must be non-negative."
             raise ValueError(msg)
-        self.fatigue = self.fatigue + (1.0 - self.fatigue) * (
+        base = self._fatigue
+        base = base + (1.0 - base) * (
             1.0 - math.exp(-self.fatigue_lambda * work_time)
         )
-        self.fatigue = min(1.0, max(0.0, self.fatigue))
+        self._fatigue = min(1.0, max(0.0, base))
 
     def _recover_fatigue(self, idle_time: int) -> None:
-        """Recover fatigue during idle time."""
+        """Recover fatigue during idle time (event-driven snapshot)."""
         if idle_time < 0:
             msg = "Idle time must be non-negative."
             raise ValueError(msg)
-        self.fatigue = self.fatigue * math.exp(-self.fatigue_mu * idle_time)
-        self.fatigue = min(1.0, max(0.0, self.fatigue))
+        base = self._fatigue * math.exp(-self.fatigue_mu * idle_time)
+        self._fatigue = min(1.0, max(0.0, base))
 
     def start_repair(self, when: float) -> None:
         """Mark the technician as starting a repair at simulation time ``when``.

@@ -24,7 +24,7 @@ import os
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import (
     BaseSettings,
     JsonConfigSettingsSource,
@@ -57,21 +57,162 @@ from kata.features.breakdown.config import (  # noqa: F401
 # ---------------------------------------------------------------------------
 
 
-class DisruptionConfig(BaseModel):
-    """Configuration for stochastic technician disruptions (e.g. sick leave)."""
+class DisruptionTypeConfig(BaseModel):
+    """One named disruption type with its own trigger mechanism.
 
-    interrupt_on_disrupt: bool = Field(
-        default=True,
-        description="Whether an ongoing repair is pre-empted when a disruption starts.",
+    Three trigger families are supported:
+
+    * ``"random"`` --- a Poisson process with mean rate ``rate``.  Models
+      stochastic, memory-less events like injuries: inter-arrival times
+      are sampled from ``Exponential(1/rate)``.
+    * ``"fatigue"`` --- the technician is polled every
+      ``poll_interval`` sim time units, with per-poll firing probability
+      ``fatigue_coefficient * fatigue * poll_interval``.  Models
+      exhaustion-driven absences that scale with how worn out the
+      worker is.
+    * ``"periodic"`` --- fires every ``interval`` sim time units, with
+      optional ``jitter`` uniform offset.  Models scheduled events
+      such as vacations.
+
+    Duration of the absence is drawn from ``Normal(duration_mu,
+    duration_sig)`` regardless of trigger.
+
+    ``preemptive`` controls whether this disruption type can preempt
+    an ongoing repair: typical values are ``True`` for injury /
+    exhaustion (you simply can't keep working), ``False`` for vacation
+    (you would naturally postpone leaving rather than abandon a job).
+    """
+
+    trigger: Literal["random", "fatigue", "periodic"] = Field(
+        description="Mechanism that decides when this disruption fires."
     )
-    dis_dict: dict[str, dict[str, float]] = Field(
-        default={"sick_leave": {"mu": 480.0, "sig": 120.0, "prob": 1.0}},
+    duration_mu: float = Field(
+        gt=0.0,
+        description="Mean duration of an instance, in simulation time units.",
+    )
+    duration_sig: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Standard deviation of the instance duration.",
+    )
+    preemptive: bool = Field(
+        default=True,
         description=(
-            "Mapping of disruption type -> parameters. "
-            "Each entry must have 'mu' (mean duration), 'sig' (std dev), "
-            "and 'prob' (relative probability of that disruption type)."
+            "When True, this disruption preempts an ongoing repair "
+            "(the partially-completed ticket is re-queued).  When "
+            "False, the disruption waits for the current repair to "
+            "finish before claiming the technician."
         ),
     )
+
+    # Trigger-specific parameters.  Only the field matching ``trigger``
+    # is consulted at runtime; the validator below enforces presence.
+    rate: float | None = Field(
+        default=None,
+        description=(
+            "Expected events per simulation time unit for "
+            "``trigger='random'`` (Poisson rate)."
+        ),
+    )
+    fatigue_coefficient: float | None = Field(
+        default=None,
+        description=(
+            "Hazard multiplier for ``trigger='fatigue'``: the per-poll "
+            "probability is ``fatigue_coefficient * fatigue * "
+            "poll_interval``."
+        ),
+    )
+    poll_interval: float = Field(
+        default=60.0,
+        gt=0.0,
+        description=(
+            "Sim time between fatigue polls when ``trigger='fatigue'``."
+        ),
+    )
+    interval: float | None = Field(
+        default=None,
+        description=(
+            "Sim time between firings when ``trigger='periodic'``."
+        ),
+    )
+    jitter: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Uniform random offset added to each periodic firing time "
+            "(in sim time units).  Default 0 = strictly regular schedule."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_trigger_params(self) -> "DisruptionTypeConfig":
+        if self.trigger == "random":
+            if self.rate is None or self.rate <= 0.0:
+                msg = "trigger='random' requires a positive ``rate``"
+                raise ValueError(msg)
+        elif self.trigger == "fatigue":
+            if self.fatigue_coefficient is None or self.fatigue_coefficient <= 0.0:
+                msg = "trigger='fatigue' requires a positive ``fatigue_coefficient``"
+                raise ValueError(msg)
+        elif self.trigger == "periodic":
+            if self.interval is None or self.interval <= 0.0:
+                msg = "trigger='periodic' requires a positive ``interval``"
+                raise ValueError(msg)
+        return self
+
+
+def _default_disruption_pool() -> dict[str, DisruptionTypeConfig]:
+    return {
+        "injury": DisruptionTypeConfig(
+            trigger="random",
+            rate=1e-4,           # ~1 event per 10 000 sim time units
+            duration_mu=240.0,
+            duration_sig=60.0,
+            preemptive=True,
+        ),
+        "exhaustion": DisruptionTypeConfig(
+            trigger="fatigue",
+            fatigue_coefficient=1e-3,  # at fatigue=1 and poll=60s → p≈6% per poll
+            poll_interval=60.0,
+            duration_mu=120.0,
+            duration_sig=30.0,
+            preemptive=True,
+        ),
+        "vacation": DisruptionTypeConfig(
+            trigger="periodic",
+            interval=8000.0,
+            jitter=400.0,
+            duration_mu=480.0,
+            duration_sig=120.0,
+            preemptive=False,
+        ),
+    }
+
+
+class DisruptionConfig(BaseModel):
+    """Top-level disruption settings.
+
+    Each entry in ``dis_dict`` is a :class:`DisruptionTypeConfig` and
+    runs its own independent process on every technician for the
+    duration of the episode --- so a technician can experience an
+    arbitrary number of disruptions, of mixed types, over a long run.
+    """
+
+    dis_dict: dict[str, DisruptionTypeConfig] = Field(
+        default_factory=_default_disruption_pool,
+        description=(
+            "Mapping of disruption-type name -> per-type configuration "
+            "(trigger mechanism, duration distribution, preemption flag)."
+        ),
+    )
+
+    # Legacy / convenience alias retained so callers that previously
+    # read ``interrupt_on_disrupt`` still see *something*; the source of
+    # truth is now the per-type ``preemptive`` flag.  Reads as ``True``
+    # iff any configured type is preemptive.
+    @property
+    def interrupt_on_disrupt(self) -> bool:
+        return any(cfg.preemptive for cfg in self.dis_dict.values())
 
 
 class RepairConfig(BaseModel):
@@ -381,12 +522,19 @@ class GymEnvConfig(BaseModel):
         default_factory=GymRewardConfig,
         description="Composable reward settings with configurable sub-components.",
     )
-    observation_representation: Literal["structured", "tokens", "token_ids"] = Field(
+    observation_representation: Literal[
+        "structured", "tokens", "token_ids", "hybrid"
+    ] = Field(
         default="structured",
         description=(
-            "Observation payload format. 'structured' keeps numeric fields, "
+            "Observation payload format. "
+            "'structured' keeps numeric fields, "
             "'tokens' returns fixed-size textual token tuples, "
-            "'token_ids' returns integer ID sequences for Transformer input."
+            "'token_ids' returns integer ID sequences for Transformer input, "
+            "'hybrid' returns the same integer sequence (with a ``<NUM>`` "
+            "placeholder at numerical-value positions) PLUS parallel "
+            "``cont_values`` / ``cont_kinds`` channels that carry the raw "
+            "scalars and route them to PLE / Time2Vec / Fourier encoders."
         ),
     )
     observation_mode: Literal[

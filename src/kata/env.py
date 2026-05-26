@@ -6,6 +6,8 @@ from typing import Any
 
 import gymnasium as gym
 import numpy as np
+import simpy
+import simpy.exceptions
 
 from kata import get_config
 from kata.core.config import GymEnvConfig
@@ -144,6 +146,144 @@ def _bool_token(v: bool) -> str:
     return "TRUE" if v else "FALSE"
 
 
+# ---------------------------------------------------------------------------
+# Emitter pattern — single source of truth for the (key, value) stream
+# ---------------------------------------------------------------------------
+
+
+class _Emitter:
+    """Strategy interface for flattening the obs schema into a stream.
+
+    The env's ``_build_token_stream`` drives an ``_Emitter`` instance
+    through one ``emit`` call per piece of state.  Two concrete
+    flatteners exist: ``_StringEmitter`` produces the legacy bucket
+    tokens, ``_HybridEmitter`` produces ``(<NUM>, raw_value, kind)``
+    triples consumed by :class:`HybridTokenEncoder`.
+
+    Method semantics:
+
+    * ``bare(s)`` — append a raw categorical token with no key/value pair
+      (used for the ``TECH_{i}`` prefix between repeated triples).
+    * ``cat(key, value)`` — categorical key-value pair.
+    * ``bool(key, value)`` — boolean key-value pair.
+    * ``ratio(key, value)`` — scalar in [0, 1].
+    * ``count(key, value)`` — non-negative integer / float count.
+    * ``time(key, value)`` — recent event time / age (Time2Vec target).
+    * ``hazard(key, value)`` — long-horizon time (Fourier target).
+    """
+
+    def bare(self, token: str) -> None:
+        raise NotImplementedError
+
+    def cat(self, key: str, value: str) -> None:
+        raise NotImplementedError
+
+    def bool(self, key: str, value: bool) -> None:
+        raise NotImplementedError
+
+    def ratio(self, key: str, value: float) -> None:
+        raise NotImplementedError
+
+    def count(self, key: str, value: int) -> None:
+        raise NotImplementedError
+
+    def time(self, key: str, value: float) -> None:
+        raise NotImplementedError
+
+    def hazard(self, key: str, value: float) -> None:
+        raise NotImplementedError
+
+
+class _StringEmitter(_Emitter):
+    """Legacy bucket-string flattener.  Output: ``self.tokens: list[str]``."""
+
+    def __init__(self) -> None:
+        self.tokens: list[str] = []
+
+    def bare(self, token: str) -> None:
+        self.tokens.append(token)
+
+    def cat(self, key: str, value: str) -> None:
+        self.tokens.append(key)
+        self.tokens.append(value)
+
+    def bool(self, key: str, value: bool) -> None:
+        self.tokens.append(key)
+        self.tokens.append(_bool_token(value))
+
+    def ratio(self, key: str, value: float) -> None:
+        self.tokens.append(key)
+        self.tokens.append(_bucket_ratio(float(value)))
+
+    def count(self, key: str, value: int) -> None:
+        self.tokens.append(key)
+        self.tokens.append(_bucket_count(int(value)))
+
+    def time(self, key: str, value: float) -> None:
+        self.tokens.append(key)
+        self.tokens.append(_bucket_time(float(value)))
+
+    def hazard(self, key: str, value: float) -> None:
+        # Hazard times use the same bucket vocabulary as recent times
+        # in legacy mode — only hybrid mode routes them differently.
+        self.tokens.append(key)
+        self.tokens.append(_bucket_time(float(value)))
+
+
+class _HybridEmitter(_Emitter):
+    """Hybrid flattener producing aligned categorical + continuous channels."""
+
+    def __init__(self) -> None:
+        from agents.networks.continuous_features import ContKind
+
+        self._CAT = ContKind.CATEGORICAL
+        self._RATIO = ContKind.RATIO_PLE
+        self._COUNT = ContKind.COUNT_PLE
+        self._TIME = ContKind.TIME2VEC
+        self._HAZARD = ContKind.FOURIER
+        self.tokens: list[str] = []
+        self.cont_values: list[float] = []
+        self.cont_kinds: list[int] = []
+
+    def _emit(self, token: str, value: float, kind: int) -> None:
+        self.tokens.append(token)
+        self.cont_values.append(float(value))
+        self.cont_kinds.append(int(kind))
+
+    def bare(self, token: str) -> None:
+        self._emit(token, 0.0, self._CAT)
+
+    def cat(self, key: str, value: str) -> None:
+        self._emit(key, 0.0, self._CAT)
+        self._emit(value, 0.0, self._CAT)
+
+    def bool(self, key: str, value: bool) -> None:
+        self._emit(key, 0.0, self._CAT)
+        self._emit(_bool_token(value), 0.0, self._CAT)
+
+    def ratio(self, key: str, value: float) -> None:
+        self._emit(key, 0.0, self._CAT)
+        self._emit("<NUM>", float(value), self._RATIO)
+
+    def count(self, key: str, value: int) -> None:
+        self._emit(key, 0.0, self._CAT)
+        self._emit("<NUM>", float(value), self._COUNT)
+
+    def time(self, key: str, value: float) -> None:
+        self._emit(key, 0.0, self._CAT)
+        # Recent-time emissions use a negative sentinel ``-1`` for "no
+        # such event yet"; map those to ``0`` so PLE/Time2Vec see a
+        # well-defined input.  The categorical key alone disambiguates
+        # "missing" from "very recent" via the surrounding structure.
+        v = max(0.0, float(value))
+        self._emit("<NUM>", v, self._TIME)
+
+    def hazard(self, key: str, value: float) -> None:
+        self._emit(key, 0.0, self._CAT)
+        v = max(0.0, float(value))
+        self._emit("<NUM>", v, self._HAZARD)
+
+
 class KataEnv(gym.Env):
     """Event-driven Gym environment for technician assignment.
 
@@ -258,9 +398,35 @@ class KataEnv(gym.Env):
         self._tech_assignment_counts = [0] * n_techs
         self._tech_last_assignment_time = [-1.0] * n_techs
         self.action_space = gym.spaces.Discrete(n_techs)
-        if self.config.observation_representation == "token_ids":
+        if self.config.observation_representation == "hybrid":
             seq_len = self.config.tokenizer_seq_length
             space_dict: dict[str, gym.Space] = {
+                "token_ids": gym.spaces.Box(
+                    low=0,
+                    high=np.iinfo(np.int64).max,
+                    shape=(seq_len,),
+                    dtype=np.int64,
+                ),
+                "cont_values": gym.spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(seq_len,),
+                    dtype=np.float32,
+                ),
+                "cont_kinds": gym.spaces.Box(
+                    low=0,
+                    high=127,
+                    shape=(seq_len,),
+                    dtype=np.int8,
+                ),
+            }
+            if self.config.expose_action_mask:
+                space_dict["action_mask"] = gym.spaces.MultiBinary(n_techs)
+            self.observation_space = gym.spaces.Dict(space_dict)
+            return
+        if self.config.observation_representation == "token_ids":
+            seq_len = self.config.tokenizer_seq_length
+            space_dict = {
                 "token_ids": gym.spaces.Box(
                     low=0,
                     high=np.iinfo(np.int64).max,
@@ -409,9 +575,16 @@ class KataEnv(gym.Env):
                 return
             try:
                 self.sim_env.step()
-            except Exception:
-                # Unhandled SimPy event failure (e.g. breakdown interrupt
-                # propagating from a machine process). Safe to skip.
+            except (simpy.exceptions.Interrupt, simpy.exceptions.SimPyException):
+                # Expected SimPy control flow: a process was preempted
+                # (e.g. by a disruption) or the scheduler raised an
+                # internal/exhaustion condition.  Either way, this
+                # advance returns cleanly; the episode-end check
+                # downstream decides whether the episode is over.
+                # Note: we deliberately do *not* catch arbitrary
+                # ``Exception`` --- genuine bugs in machine processes,
+                # technicians, or breakdown models should surface
+                # instead of being silently swallowed.
                 return
 
     def _is_done(self) -> bool:
@@ -464,62 +637,44 @@ class KataEnv(gym.Env):
                     return float(np.asarray(value, dtype=np.float32).mean())
         return 0.0
 
-    def _token_obs(self) -> dict[str, tuple[str, ...]]:
-        """Build a key-value token sequence.
+    def _build_token_stream(self, emit: "_Emitter") -> None:
+        """Drive an :class:`_Emitter` through the obs schema.
 
-        Each observation field is emitted as a **key token** followed by one or
-        more **value tokens**.  Continuous values are bucketed into categorical
-        tokens so that the vocabulary stays bounded.  Categorical/boolean values
-        are emitted directly.
-
-        Token design principles:
-        - Keys are fixed strings (``SIM_TIME``, ``MACHINE_BROKEN``, …)
-        - Time values -> ``T_0_50``, ``T_50_200``, … (10 buckets, up to ``T_100K+``)
-        - Ratios [0, 1] -> ``R_0``, ``R_0_10``, … ``R_90_100`` (11 deciles)
-        - Counts -> ``C_0``, ``C_1``, ``C_2_3``, … ``C_100+`` (9 buckets)
-        - Booleans -> ``TRUE`` / ``FALSE``
-        - Machine types -> categorical string (``CNC``, ``Assembly``, …)
+        This is the single source of truth for the order and content of
+        the (key, value) stream that becomes either bucket-string tokens
+        (legacy ``tokens`` / ``token_ids`` modes) or
+        ``(token_id, cont_value, cont_kind)`` triples (new ``hybrid`` mode).
+        See ``_StringEmitter`` and ``_HybridEmitter`` for the two
+        flatteners.
         """
         ticket = self.current_request
         machine = getattr(ticket, "machine", None)
         machine_type = str(getattr(machine, "mtype", "NONE"))
 
-        tokens: list[str] = [
-            # -- header / context --
-            "OBS_MODE",
-            self.config.observation_mode,
-            # -- simulation time --
-            "SIM_TIME",
-            _bucket_time(self._sim_time()),
-            # -- current ticket --
-            "HAS_TICKET",
-            _bool_token(ticket is not None),
-            "TICKET_AGE",
-            _bucket_time(
-                self._sim_time() - self._request_created_at(ticket)
-                if ticket is not None
-                else -1
-            ),
-            "TICKET_MACHINE_TYPE",
-            machine_type,
-        ]
+        # -- header / context --
+        emit.cat("OBS_MODE", self.config.observation_mode)
+        emit.hazard("SIM_TIME", self._sim_time())
+        emit.bool("HAS_TICKET", ticket is not None)
+        ticket_age = (
+            self._sim_time() - self._request_created_at(ticket)
+            if ticket is not None
+            else -1.0
+        )
+        emit.time("TICKET_AGE", ticket_age)
+        emit.cat("TICKET_MACHINE_TYPE", machine_type)
 
         if self.config.observation_mode in {"broken_machine", "factory_level", "tech_aware"}:
-            tokens.extend(
-                [
-                    "MACHINE_TYPE",
-                    machine_type,
-                    "MACHINE_BROKEN",
-                    _bool_token(bool(getattr(machine, "broken", False))),
-                    "MACHINE_PROCESSING",
-                    _bool_token(bool(getattr(machine, "is_processing", False))),
-                    "MACHINE_TOTAL_PROCESSED",
-                    _bucket_count(int(getattr(machine, "total_processed", 0))),
-                    "MACHINE_INPUT_BUF",
-                    _bucket_count(self._machine_buffer_size(machine, "input_buffer")),
-                    "MACHINE_OUTPUT_BUF",
-                    _bucket_count(self._machine_buffer_size(machine, "output_buffer")),
-                ]
+            emit.cat("MACHINE_TYPE", machine_type)
+            emit.bool("MACHINE_BROKEN", bool(getattr(machine, "broken", False)))
+            emit.bool("MACHINE_PROCESSING", bool(getattr(machine, "is_processing", False)))
+            emit.count("MACHINE_TOTAL_PROCESSED", int(getattr(machine, "total_processed", 0)))
+            emit.count(
+                "MACHINE_INPUT_BUF",
+                self._machine_buffer_size(machine, "input_buffer"),
+            )
+            emit.count(
+                "MACHINE_OUTPUT_BUF",
+                self._machine_buffer_size(machine, "output_buffer"),
             )
 
         if self.config.observation_mode in {"factory_level", "tech_aware"}:
@@ -531,20 +686,11 @@ class KataEnv(gym.Env):
             total_processed = sum(
                 int(getattr(m, "total_processed", 0)) for m in machines
             )
-            tokens.extend(
-                [
-                    "FACTORY_MACHINES",
-                    _bucket_count(len(machines)),
-                    "FACTORY_BROKEN",
-                    _bucket_count(broken_count),
-                    "FACTORY_PROCESSING",
-                    _bucket_count(processing_count),
-                    "FACTORY_PRODUCED",
-                    _bucket_count(total_processed),
-                    "FACTORY_QUEUE",
-                    _bucket_count(self._queue_size()),
-                ]
-            )
+            emit.count("FACTORY_MACHINES", len(machines))
+            emit.count("FACTORY_BROKEN", broken_count)
+            emit.count("FACTORY_PROCESSING", processing_count)
+            emit.count("FACTORY_PRODUCED", total_processed)
+            emit.count("FACTORY_QUEUE", self._queue_size())
 
             if self.config.include_broken_by_type_tokens:
                 broken_by_type: dict[str, int] = {}
@@ -553,23 +699,18 @@ class KataEnv(gym.Env):
                         mt = str(getattr(m, "mtype", "NONE"))
                         broken_by_type[mt] = broken_by_type.get(mt, 0) + 1
                 for mt in sorted(broken_by_type):
-                    tokens.extend([f"BROKEN_{mt}", _bucket_count(broken_by_type[mt])])
+                    emit.count(f"BROKEN_{mt}", broken_by_type[mt])
 
         # -- tech_aware: ticket-specific extras --
         tech_aware = self.config.observation_mode == "tech_aware"
         if tech_aware:
-            # Failed component type of the current ticket
             comp_type = "NONE"
             if ticket is not None and hasattr(ticket, "get_failed_component_info"):
                 info = ticket.get_failed_component_info()
                 if info:
                     comp_type = str(info.get("component_type", "NONE"))
-            tokens.extend(["TICKET_COMPONENT_TYPE", comp_type])
+            emit.cat("TICKET_COMPONENT_TYPE", comp_type)
 
-            # Peek at the next ``next_ticket_lookahead`` queued tickets
-            # so the agent can plan ahead.  Lookahead defaults to 4 but
-            # is configurable; deeper lookahead trades sequence positions
-            # for richer scheduling context.
             queue = self._queue()
             items = getattr(queue, "items", queue) if queue is not None else []
             lookahead = int(self.config.next_ticket_lookahead)
@@ -586,18 +727,10 @@ class KataEnv(gym.Env):
                     nage = self._sim_time() - self._request_created_at(req)
                 else:
                     nmt, nct, nage = "NONE", "NONE", -1.0
-                tokens.extend(
-                    [
-                        f"{prefix}_MACHINE_TYPE",
-                        nmt,
-                        f"{prefix}_COMPONENT_TYPE",
-                        nct,
-                        f"{prefix}_AGE",
-                        _bucket_time(nage),
-                    ]
-                )
+                emit.cat(f"{prefix}_MACHINE_TYPE", nmt)
+                emit.cat(f"{prefix}_COMPONENT_TYPE", nct)
+                emit.time(f"{prefix}_AGE", nage)
 
-            # Whole-queue composition by failed component type.
             if self.config.include_queue_composition_tokens:
                 qc_by_type: dict[str, int] = {}
                 for req in items:
@@ -608,35 +741,29 @@ class KataEnv(gym.Env):
                             ct = str(info.get("component_type", "NONE"))
                     qc_by_type[ct] = qc_by_type.get(ct, 0) + 1
                 for ct in sorted(qc_by_type):
-                    tokens.extend([f"QC_{ct}", _bucket_count(qc_by_type[ct])])
+                    emit.count(f"QC_{ct}", qc_by_type[ct])
 
         # -- per-technician tokens --
         for idx, tech in enumerate(self.dispatcher.techs):
             tech_prefix = f"TECH_{idx}"
-            busy = bool(getattr(tech, "busy", False))
-            tokens.extend(
-                [
-                    tech_prefix,
-                    "BUSY",
-                    _bool_token(busy),
-                ]
-            )
+            emit.bare(tech_prefix)
+            emit.bool("BUSY", bool(getattr(tech, "busy", False)))
             if self.config.include_technician_fatigue_tokens:
-                fatigue = float(getattr(tech, "fatigue", 0.0))
-                tokens.extend([tech_prefix, "FATIGUE", _bucket_ratio(fatigue)])
+                emit.bare(tech_prefix)
+                emit.ratio("FATIGUE", float(getattr(tech, "fatigue", 0.0)))
             if self.config.include_technician_knowledge_tokens:
-                knowledge = self._technician_knowledge_value(tech)
-                tokens.extend([tech_prefix, "KNOWLEDGE", _bucket_ratio(knowledge)])
+                emit.bare(tech_prefix)
+                emit.ratio("KNOWLEDGE", self._technician_knowledge_value(tech))
             if self.config.include_technician_assignment_count_tokens:
                 ac = (
                     int(self._tech_assignment_counts[idx])
                     if idx < len(self._tech_assignment_counts)
                     else 0
                 )
-                tokens.extend([tech_prefix, "ASSIGN_COUNT", _bucket_count(ac)])
+                emit.bare(tech_prefix)
+                emit.count("ASSIGN_COUNT", ac)
 
             if tech_aware:
-                # Knowledge match for the current ticket (1 - mult, in [0, 1])
                 match_val = 0.0
                 if ticket is not None and hasattr(tech, "get_knowledge_multiplier"):
                     try:
@@ -644,9 +771,9 @@ class KataEnv(gym.Env):
                         match_val = max(0.0, min(1.0, 1.0 - mult))
                     except Exception:
                         match_val = 0.0
-                tokens.extend([tech_prefix, "MATCH", _bucket_ratio(match_val)])
+                emit.bare(tech_prefix)
+                emit.ratio("MATCH", match_val)
 
-                # Expected repair time for the current ticket
                 eta = -1.0
                 if ticket is not None and hasattr(tech, "compute_repair_time"):
                     base = (
@@ -658,23 +785,85 @@ class KataEnv(gym.Env):
                         eta = float(tech.compute_repair_time(base, ticket))
                     except Exception:
                         eta = base
-                tokens.extend([tech_prefix, "ETA", _bucket_time(eta)])
+                emit.bare(tech_prefix)
+                emit.time("ETA", eta)
 
-                # Age since last assignment ("T_NONE" if never assigned)
                 last = (
                     self._tech_last_assignment_time[idx]
                     if idx < len(self._tech_last_assignment_time)
                     else -1.0
                 )
                 last_age = -1.0 if last < 0 else max(0.0, self._sim_time() - last)
-                tokens.extend([tech_prefix, "LAST_AGE", _bucket_time(last_age)])
+                emit.bare(tech_prefix)
+                emit.time("LAST_AGE", last_age)
 
+    def _token_obs(self) -> dict[str, tuple[str, ...]]:
+        """Build a key-value token sequence (legacy bucket-string mode)."""
+        emitter = _StringEmitter()
+        self._build_token_stream(emitter)
+        tokens = emitter.tokens
         target_length = self.config.token_observation_length
         if len(tokens) < target_length:
             tokens.extend([self.config.token_pad_value] * (target_length - len(tokens)))
         else:
             tokens = tokens[:target_length]
         return {"tokens": tuple(tokens)}
+
+    def _hybrid_obs(self) -> dict[str, np.ndarray]:
+        """Build a hybrid observation: categorical token-ids + parallel continuous channels.
+
+        Returns three aligned ``(S,)`` arrays (after padding / truncation):
+
+        * ``token_ids`` — categorical IDs.  Continuous-value positions
+          carry the ``<NUM>`` placeholder id.
+        * ``cont_values`` — raw scalar values at continuous positions, 0
+          at categorical positions.
+        * ``cont_kinds`` — :class:`ContKind` code per position (0 =
+          categorical, 1 = ratio_PLE, 2 = count_PLE, 3 = time2vec,
+          4 = fourier).
+
+        Consumed by :class:`agents.networks.hybrid_encoder.HybridTokenEncoder`.
+        """
+        from kata.core.tokenizer import PAD_ID
+        from agents.networks.continuous_features import ContKind
+
+        emitter = _HybridEmitter()
+        self._build_token_stream(emitter)
+
+        tokens = emitter.tokens
+        cont_values = emitter.cont_values
+        cont_kinds = emitter.cont_kinds
+        target_length = self.config.tokenizer_seq_length
+
+        # Pad / truncate all three streams in lockstep so positions stay aligned.
+        if len(tokens) < target_length:
+            pad = target_length - len(tokens)
+            tokens = tokens + [self.config.token_pad_value] * pad
+            cont_values = cont_values + [0.0] * pad
+            cont_kinds = cont_kinds + [ContKind.CATEGORICAL] * pad
+        else:
+            tokens = tokens[:target_length]
+            cont_values = cont_values[:target_length]
+            cont_kinds = cont_kinds[:target_length]
+
+        if self._tokenizer is None:
+            self._tokenizer = StateTokenizer(seq_length=target_length)
+        token_ids = np.array(
+            [self._tokenizer.token_to_id(t) for t in tokens],
+            dtype=np.int64,
+        )
+        # Pad positions get PAD_ID through token_to_id but defensively
+        # enforce the contract — and zero out continuous channels at pads.
+        pad_positions = token_ids == PAD_ID
+        cont_values_arr = np.asarray(cont_values, dtype=np.float32)
+        cont_kinds_arr = np.asarray(cont_kinds, dtype=np.int8)
+        cont_values_arr[pad_positions] = 0.0
+        cont_kinds_arr[pad_positions] = ContKind.CATEGORICAL
+        return {
+            "token_ids": token_ids,
+            "cont_values": cont_values_arr,
+            "cont_kinds": cont_kinds_arr,
+        }
 
     def _structured_obs(self) -> dict[str, np.ndarray]:
         ticket = self.current_request
@@ -723,15 +912,31 @@ class KataEnv(gym.Env):
         return {"token_ids": self._tokenizer.encode(list(tokens))}
 
     def _action_mask(self) -> np.ndarray:
-        """Return a ``(n_techs,)`` ``int8`` mask, 1 = valid (not busy).
+        """Return a ``(n_techs,)`` ``int8`` mask, 1 = valid (available).
 
-        Falls back to all-1 when every technician is busy so that the
-        action space is never empty — the agent must still pick someone
-        to enqueue, even if the choice is forced.
+        A technician is *available* iff they are neither ``busy``
+        (currently performing a repair) nor ``_in_disruption``
+        (currently absorbed by an injury / vacation / exhaustion
+        hold).  Treating disrupted technicians as available would mis-
+        lead the policy into queuing assignments behind a long
+        absence; including them in the mask makes the action surface
+        honest.
+
+        Falls back to all-1 when every technician is unavailable so
+        that the action space is never empty --- the agent must still
+        pick someone to enqueue, even if the choice is forced.
         """
         techs = self.dispatcher.techs if self.dispatcher else []
         mask = np.asarray(
-            [0 if bool(getattr(t, "busy", False)) else 1 for t in techs],
+            [
+                0
+                if (
+                    bool(getattr(t, "busy", False))
+                    or bool(getattr(t, "_in_disruption", False))
+                )
+                else 1
+                for t in techs
+            ],
             dtype=np.int8,
         )
         if mask.size == 0 or int(mask.sum()) == 0:
@@ -739,7 +944,9 @@ class KataEnv(gym.Env):
         return mask
 
     def _obs(self) -> dict[str, Any]:
-        if self.config.observation_representation == "token_ids":
+        if self.config.observation_representation == "hybrid":
+            payload = self._hybrid_obs()
+        elif self.config.observation_representation == "token_ids":
             payload = self._token_id_obs()
         elif self.config.observation_representation == "tokens":
             payload = self._token_obs()
@@ -1211,6 +1418,14 @@ class KataEnv(gym.Env):
         if self._scenario_factory is not None:
             self._bootstrap_scenario()
 
+        # Seed the disruption RNG on each technician deterministically
+        # from the env-level seed.  Done *after* the scenario rebuild
+        # so the freshly-spawned technicians are the ones that get
+        # seeded.  Falls back to non-deterministic disruption timing
+        # when ``seed`` is None (Gymnasium contract).
+        if seed is not None and hasattr(self.dispatcher, "seed_disruptions"):
+            self.dispatcher.seed_disruptions(int(seed))
+
         # Run MCA warmup on first reset
         self._run_warmup()
 
@@ -1236,6 +1451,19 @@ class KataEnv(gym.Env):
         return self._obs(), self._info()
 
     def step(self, action: int):
+        """Apply the agent's technician choice to the current ticket.
+
+        ``action`` is the integer index of the chosen technician.  The
+        only validation performed here is the range check
+        ``0 <= action < n_techs``; in particular this method does
+        **not** consult the action mask.  Picking a technician who is
+        currently busy (in a repair) or absorbed by a disruption is
+        permitted --- the dispatcher's ``_repair_job`` queues the
+        request behind whatever the technician is doing, and it will
+        run when they next become available.  Agents that want to
+        avoid this behaviour should read ``obs['action_mask']`` and
+        sample only from positions where the mask is 1.
+        """
         if self.current_request is None:
             self._advance_until_next_ticket()
             if self.current_request is None:

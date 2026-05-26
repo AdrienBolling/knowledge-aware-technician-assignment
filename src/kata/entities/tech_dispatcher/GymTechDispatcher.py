@@ -50,14 +50,30 @@ class GymTechDispatcher:
         # durations.  Signature: ``(request, repair_duration)``.
         self.on_repair_completed: callable | None = None
 
-        # Start stochastic disruption processes
+        # Inject the env reference so each technician's time-aware
+        # ``fatigue`` property can resolve the current simulation clock
+        # without an extra plumbing layer.  Without this the property
+        # falls back to its raw event-driven base value, which is the
+        # right behaviour for unit-tested technicians but wrong inside
+        # a live simulation.
         for t in technicians:
-            _ = env.process(
-                generator=t.stochastic_disruptions_process(
-                    env,
-                    tech_resource=self._tech_resource[t.id],
+            t.env = env
+
+        # Start one long-running disruption process per (technician,
+        # disruption type) pair.  Each process runs for the entire
+        # episode and may fire its disruption many times, with
+        # inter-arrival behaviour governed by the type's trigger
+        # (random Poisson, fatigue-driven Bernoulli, or strict periodic).
+        for t in technicians:
+            for dis_name, dis_cfg in CONFIG.sim.disruptions.dis_dict.items():
+                _ = env.process(
+                    generator=t.run_disruption_process(
+                        env=env,
+                        tech_resource=self._tech_resource[t.id],
+                        dis_name=dis_name,
+                        dis_cfg=dis_cfg,
+                    )
                 )
-            )
 
     # -- External API used by machines ----------------------------------------
 
@@ -78,6 +94,22 @@ class GymTechDispatcher:
             self._repair_events[machine] = self.env.event()
         return self._repair_events[machine]
 
+    def seed_disruptions(self, root_seed: int) -> None:
+        """Seed each technician's disruption RNG from a single root seed.
+
+        Spawns one independent ``np.random.Generator`` per technician via
+        ``np.random.SeedSequence`` so that calling
+        ``env.reset(seed=seed)`` reproduces the same disruption timing
+        sequence across runs.  Without this, the disruption loops fall
+        back to a fresh non-seeded generator at technician
+        construction.
+        """
+        import numpy as _np
+
+        seed_seq = _np.random.SeedSequence(int(root_seed))
+        for tech, child in zip(self.techs, seed_seq.spawn(len(self.techs))):
+            tech._rng = _np.random.default_rng(child)
+
     # -- Internal helpers -----------------------------------------------------
 
     def _get_tech(self, tech_id: int) -> Technician:
@@ -88,43 +120,65 @@ class GymTechDispatcher:
         return tech
 
     def _repair_job(self, tech: Technician, request: RepairRequest):  # SimPy generator
-        """SimPy process: travel -> repair -> signal completion."""
+        """SimPy process: travel -> repair -> signal completion.
+
+        Holds the technician's resource at priority 1 (lower precedence
+        than disruptions at priority 0) with ``preempt=False`` so a
+        preempting disruption (one with ``preemptive=True``) can
+        interrupt this process mid-repair.  When that happens the
+        partially-completed ticket is restored to the dispatcher's
+        repair queue so the agent can re-assign it.
+        """
         machine = request.machine
         tech_res = self._tech_resource[tech.id]
         machine._log(f"Requesting repair by Tech {tech.id}")
-        with tech_res.request(priority=0, preempt=False) as req:
-            yield req  # Wait for technician to be available
-            # Hand off to the technician so it can recover fatigue based
-            # on the time elapsed since its previous ``repair_finished``
-            # before flipping ``busy = True``.
-            if hasattr(tech, "start_repair"):
-                tech.start_repair(self.env.now)
-            else:
-                tech.busy = True
+        with tech_res.request(priority=1, preempt=False) as req:
+            try:
+                yield req  # Wait for technician to be available
+                # Hand off to the technician so it can recover fatigue
+                # based on the time elapsed since its previous
+                # ``repair_finished`` before flipping ``busy = True``.
+                if hasattr(tech, "start_repair"):
+                    tech.start_repair(self.env.now)
+                else:
+                    tech.busy = True
 
-            # Travel time
-            t_travel = tech.travel_time(machine)
-            machine._log(f"Technician {tech.id} traveling for {t_travel}")
-            yield self.env.timeout(t_travel)
+                # Travel time
+                t_travel = tech.travel_time(machine)
+                machine._log(f"Technician {tech.id} traveling for {t_travel}")
+                yield self.env.timeout(t_travel)
 
-            # Repair time (knowledge + fatigue modulated)
-            base = request.get_repair_time()
-            final_repair_time = tech.compute_repair_time(base, request)
-            yield self.env.timeout(final_repair_time)
+                # Repair time (knowledge + fatigue modulated)
+                base = request.get_repair_time()
+                final_repair_time = tech.compute_repair_time(base, request)
+                yield self.env.timeout(final_repair_time)
 
-            # Update machine and technician states
-            machine.repair(request)
-            if machine in self._repair_events:
-                self._repair_events[machine].succeed()
-                del self._repair_events[machine]
-            machine._log(
-                f"Repaired by Tech {tech.id} in {final_repair_time} time units"
-            )
+                # Update machine and technician states
+                machine.repair(request)
+                if machine in self._repair_events:
+                    self._repair_events[machine].succeed()
+                    del self._repair_events[machine]
+                machine._log(
+                    f"Repaired by Tech {tech.id} in {final_repair_time} time units"
+                )
 
-            tech.repair_finished(request, self.env.now)
+                tech.repair_finished(request, self.env.now)
 
-            # Notify any listener (e.g. KataEnv) that a repair just
-            # completed.  ``final_repair_time`` excludes travel and
-            # queue waiting so it is exactly the repair duration.
-            if self.on_repair_completed is not None:
-                self.on_repair_completed(request, float(final_repair_time))
+                # Notify any listener (e.g. KataEnv) that a repair just
+                # completed.  ``final_repair_time`` excludes travel and
+                # queue waiting so it is exactly the repair duration.
+                if self.on_repair_completed is not None:
+                    self.on_repair_completed(request, float(final_repair_time))
+            except simpy.Interrupt:
+                # A higher-priority disruption preempted this repair.
+                # Restore technician state and re-queue the ticket; the
+                # agent will see it again on the next decision step.
+                machine._log(
+                    f"Repair by Tech {tech.id} preempted; re-queueing ticket"
+                )
+                tech.busy = False
+                # Fatigue is updated only at ``repair_finished``, so the
+                # partial work done here intentionally does not count
+                # against the technician.
+                request.chosen_technician_id = None
+                _ = self.repair_queue.put(request)

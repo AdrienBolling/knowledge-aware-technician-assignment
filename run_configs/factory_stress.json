@@ -1,47 +1,114 @@
 {
   "technicians": {
-    "expert_1":     { "template": "expert",     "name": "expert_1" },
-    "senior_1":     { "template": "senior",     "name": "senior_1" },
-    "generalist_1": { "template": "generalist", "name": "generalist_1" },
-    "junior_1":     { "template": "junior",     "name": "junior_1" }
+    "expert_1": {
+      "template": "expert",
+      "name": "expert_1"
+    },
+    "senior_1": {
+      "template": "senior",
+      "name": "senior_1"
+    },
+    "generalist_1": {
+      "template": "generalist",
+      "name": "generalist_1"
+    },
+    "junior_1": {
+      "template": "junior",
+      "name": "junior_1"
+    }
   },
-
   "machines": {
-    "cnc_1":   { "template": "cnc_weibull" },
-    "cnc_2":   { "template": "cnc_weibull" },
-    "cnc_3":   { "template": "cnc_weibull" },
-    "cnc_4":   { "template": "cnc_weibull" },
-    "cnc_5":   { "template": "cnc_weibull" },
-    "cnc_6":   { "template": "cnc_weibull" },
-    "asm_1":   { "template": "assembly_mixed" },
-    "asm_2":   { "template": "assembly_mixed" },
-    "asm_3":   { "template": "assembly_mixed" },
-    "asm_4":   { "template": "assembly_robot" },
-    "asm_5":   { "template": "assembly_robot" },
-    "asm_6":   { "template": "assembly_robot" },
-    "welder_1":{ "template": "welder" },
-    "welder_2":{ "template": "welder" },
-    "welder_3":{ "template": "welder" },
-    "welder_4":{ "template": "welder" },
-    "conv_1":  { "template": "conveyor" },
-    "conv_2":  { "template": "conveyor" },
-    "conv_3":  { "template": "conveyor" },
-    "conv_4":  { "template": "conveyor" },
-    "conv_5":  { "template": "conveyor" },
-    "conv_6":  { "template": "conveyor" },
-    "qc_1":    { "template": "inspection" },
-    "qc_2":    { "template": "inspection" },
-    "qc_3":    { "template": "inspection" },
-    "qc_4":    { "template": "inspection" }
+    "cnc_1": {
+      "template": "cnc_weibull"
+    },
+    "cnc_2": {
+      "template": "cnc_weibull"
+    },
+    "cnc_3": {
+      "template": "cnc_weibull"
+    },
+    "cnc_4": {
+      "template": "cnc_weibull"
+    },
+    "cnc_5": {
+      "template": "cnc_weibull"
+    },
+    "cnc_6": {
+      "template": "cnc_weibull"
+    },
+    "asm_1": {
+      "template": "assembly_mixed"
+    },
+    "asm_2": {
+      "template": "assembly_mixed"
+    },
+    "asm_3": {
+      "template": "assembly_mixed"
+    },
+    "asm_4": {
+      "template": "assembly_robot"
+    },
+    "asm_5": {
+      "template": "assembly_robot"
+    },
+    "asm_6": {
+      "template": "assembly_robot"
+    },
+    "welder_1": {
+      "template": "welder"
+    },
+    "welder_2": {
+      "template": "welder"
+    },
+    "welder_3": {
+      "template": "welder"
+    },
+    "welder_4": {
+      "template": "welder"
+    },
+    "conv_1": {
+      "template": "conveyor"
+    },
+    "conv_2": {
+      "template": "conveyor"
+    },
+    "conv_3": {
+      "template": "conveyor"
+    },
+    "conv_4": {
+      "template": "conveyor"
+    },
+    "conv_5": {
+      "template": "conveyor"
+    },
+    "conv_6": {
+      "template": "conveyor"
+    },
+    "qc_1": {
+      "template": "inspection"
+    },
+    "qc_2": {
+      "template": "inspection"
+    },
+    "qc_3": {
+      "template": "inspection"
+    },
+    "qc_4": {
+      "template": "inspection"
+    }
   },
-
   "products": {
     "widget": {
       "product_type": "widget",
-      "route": ["Conveyor", "CNC", "Welder", "Assembly", "Inspection"]
+      "route": [
+        "Conveyor",
+        "CNC",
+        "Welder",
+        "Assembly",
+        "Inspection"
+      ]
     }
   },
-
   "sim": {
     "technicians": {
       "travel_time": 20,
@@ -56,52 +123,115 @@
       "failure_wise_knowledge_parameters": true
     },
     "disruptions": {
-      "interrupt_on_disrupt": true,
       "dis_dict": {
-        "sick_leave": { "mu": 480.0, "sig": 120.0, "prob": 1.0 }
+        "injury": {
+          "trigger": "random",
+          "rate": 0.0001,
+          "duration_mu": 240.0,
+          "duration_sig": 60.0,
+          "preemptive": true
+        },
+        "exhaustion": {
+          "trigger": "fatigue",
+          "fatigue_coefficient": 0.001,
+          "poll_interval": 60.0,
+          "duration_mu": 120.0,
+          "duration_sig": 30.0,
+          "preemptive": true
+        },
+        "vacation": {
+          "trigger": "periodic",
+          "interval": 8000.0,
+          "jitter": 400.0,
+          "duration_mu": 480.0,
+          "duration_sig": 120.0,
+          "preemptive": false
+        }
       }
     }
   },
-
   "gym": {
     "max_episode_steps": 10000,
     "max_sim_time": 50000.0,
-
     "observation_representation": "token_ids",
     "observation_mode": "tech_aware",
     "include_technician_fatigue_tokens": true,
     "include_technician_knowledge_tokens": true,
-
     "use_mca_encoder": true,
     "warmup_steps": 400,
-    "mca_grid_shape": [10, 10],
+    "mca_grid_shape": [
+      10,
+      10
+    ],
     "mca_n_components": 2,
     "tokenizer_seq_length": 192,
-
     "assignment_reward": 0.1,
     "ticket_wait_time_penalty": 0.01,
     "fleet_knowledge_scale": 10.0,
     "expose_action_mask": true,
-
     "reward": {
-      "assignment":             { "enabled": true,  "coefficient": 1.0 },
-      "wait_time":              { "enabled": true,  "coefficient": 1.0 },
-      "queue_size":             { "enabled": true,  "coefficient": 0.5 },
-      "busy_technician":        { "enabled": true,  "coefficient": 1.0 },
-      "fleet_knowledge":        { "enabled": true,  "coefficient": 1.5 },
-      "fatigue_cost":           { "enabled": true,  "coefficient": 1.0 },
-      "estimated_repair_time":  { "enabled": true,  "coefficient": 0.5 },
-      "workload_balance":       { "enabled": false, "coefficient": 1.0 },
-      "machine_criticality":    { "enabled": false, "coefficient": 1.0 },
-      "fleet_availability":     { "enabled": true,  "coefficient": 1.0 },
-      "throughput_delta":       { "enabled": true,  "coefficient": 2.0 },
-      "repair_backlog_age":     { "enabled": true,  "coefficient": 0.5 },
-      "technician_utilization": { "enabled": true,  "coefficient": 0.5 },
-      "downtime_cost":          { "enabled": true,  "coefficient": 1.5 },
-      "selection_diversity":    { "enabled": true,  "coefficient": 1.0 }
+      "assignment": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "wait_time": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "queue_size": {
+        "enabled": true,
+        "coefficient": 0.5
+      },
+      "busy_technician": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "fleet_knowledge": {
+        "enabled": true,
+        "coefficient": 1.5
+      },
+      "fatigue_cost": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "estimated_repair_time": {
+        "enabled": true,
+        "coefficient": 0.5
+      },
+      "workload_balance": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "machine_criticality": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "fleet_availability": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "throughput_delta": {
+        "enabled": true,
+        "coefficient": 2.0
+      },
+      "repair_backlog_age": {
+        "enabled": true,
+        "coefficient": 0.5
+      },
+      "technician_utilization": {
+        "enabled": true,
+        "coefficient": 0.5
+      },
+      "downtime_cost": {
+        "enabled": true,
+        "coefficient": 1.5
+      },
+      "selection_diversity": {
+        "enabled": true,
+        "coefficient": 1.0
+      }
     }
   },
-
   "ticket_factory": {
     "priority_rules": {
       "motor": 10,

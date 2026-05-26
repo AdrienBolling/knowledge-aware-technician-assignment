@@ -281,17 +281,62 @@ class ModernTransformerEncoder(nn.Module):
         nn.init.normal_(self.cls_token, mean=0.0, std=std_base)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
-        b, s = token_ids.shape
-        if s > self.max_seq_len:
-            token_ids = token_ids[:, -self.max_seq_len :]
-            s = self.max_seq_len
-        pad_mask = token_ids == self.pad_token_id  # (B, S) — True == pad
+        """Encode and return the CLS-pooled summary ``(B, d_model)``."""
+        cls, _ = self.encode(token_ids)
+        return cls
 
-        x = self.token_embedding(token_ids)
-        # Prepend CLS — it is a non-pad real query, so its mask entry is False
+    def encode(
+        self,
+        token_ids: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run the encoder and return both pooled and per-token hidden states.
+
+        Returns
+        -------
+        (cls, tokens):
+            ``cls`` has shape ``(B, d_model)`` — the CLS pooled summary
+            used by RL heads.
+            ``tokens`` has shape ``(B, S, d_model)`` and contains the
+            final hidden state for each *real* input token (i.e. with
+            the CLS slot stripped).  Pad positions are present but were
+            masked out of attention.  Used by masked-token-modelling
+            heads for representation pretraining.
+        """
+        if token_ids.shape[1] > self.max_seq_len:
+            token_ids = token_ids[:, -self.max_seq_len :]
+        pad_mask = token_ids == self.pad_token_id  # (B, S) — True == pad
+        embeddings = self.token_embedding(token_ids)
+        return self.encode_from_embeddings(embeddings, pad_mask)
+
+    def encode_from_embeddings(
+        self,
+        embeddings: torch.Tensor,
+        pad_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run the transformer stack on *pre-built* token embeddings.
+
+        Used by :class:`agents.networks.hybrid_encoder.HybridTokenEncoder`
+        when the embedding sequence has been assembled from a mix of
+        categorical lookups and continuous-feature encoders (PLE /
+        Time2Vec / Fourier).  Same return contract as :meth:`encode`.
+
+        Parameters
+        ----------
+        embeddings:
+            ``(B, S, d_model)`` already-built per-token embeddings.  The
+            CLS token will be prepended internally.
+        pad_mask:
+            ``(B, S)`` bool tensor, ``True`` at padded positions (which
+            attention will ignore).
+        """
+        b = embeddings.size(0)
+        if embeddings.size(1) > self.max_seq_len:
+            embeddings = embeddings[:, -self.max_seq_len :]
+            pad_mask = pad_mask[:, -self.max_seq_len :]
+
         cls = self.cls_token.expand(b, -1, -1)
-        x = torch.cat([cls, x], dim=1)
-        cls_mask = torch.zeros(b, 1, dtype=torch.bool, device=token_ids.device)
+        x = torch.cat([cls, embeddings], dim=1)
+        cls_mask = torch.zeros(b, 1, dtype=torch.bool, device=embeddings.device)
         full_pad_mask = torch.cat([cls_mask, pad_mask], dim=1)
         x = self.embed_dropout(x)
 
@@ -299,8 +344,7 @@ class ModernTransformerEncoder(nn.Module):
             x = block(x, key_padding_mask=full_pad_mask)
 
         x = self.final_norm(x)
-        # Pool from the CLS slot
-        return x[:, 0]
+        return x[:, 0], x[:, 1:]
 
 
 __all__ = ["ModernTransformerEncoder", "RMSNorm", "SwiGLU", "TransformerBlock"]

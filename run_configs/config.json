@@ -1,18 +1,36 @@
 {
   "technicians": {
-    "tech_senior": { "template": "senior", "name": "senior_tech" },
-    "tech_junior_1": { "template": "junior", "name": "junior_tech_1" },
-    "tech_junior_2": { "template": "junior", "name": "junior_tech_2" }
+    "tech_senior": {
+      "template": "senior",
+      "name": "senior_tech"
+    },
+    "tech_junior_1": {
+      "template": "junior",
+      "name": "junior_tech_1"
+    },
+    "tech_junior_2": {
+      "template": "junior",
+      "name": "junior_tech_2"
+    }
   },
   "machines": {
-    "drill_1": { "template": "drill" },
-    "drill_2": { "template": "drill" },
-    "paint_1": { "template": "paint" }
+    "drill_1": {
+      "template": "drill"
+    },
+    "drill_2": {
+      "template": "drill"
+    },
+    "paint_1": {
+      "template": "paint"
+    }
   },
   "products": {
     "widget": {
       "product_type": "widget",
-      "route": ["Drill", "Paint"]
+      "route": [
+        "Drill",
+        "Paint"
+      ]
     }
   },
   "sim": {
@@ -27,9 +45,30 @@
       "failure_wise_knowledge_parameters": true
     },
     "disruptions": {
-      "interrupt_on_disrupt": true,
       "dis_dict": {
-        "sick_leave": { "mu": 480.0, "sig": 120.0, "prob": 1.0 }
+        "injury": {
+          "trigger": "random",
+          "rate": 0.0001,
+          "duration_mu": 240.0,
+          "duration_sig": 60.0,
+          "preemptive": true
+        },
+        "exhaustion": {
+          "trigger": "fatigue",
+          "fatigue_coefficient": 0.001,
+          "poll_interval": 60.0,
+          "duration_mu": 120.0,
+          "duration_sig": 30.0,
+          "preemptive": true
+        },
+        "vacation": {
+          "trigger": "periodic",
+          "interval": 8000.0,
+          "jitter": 400.0,
+          "duration_mu": 480.0,
+          "duration_sig": 120.0,
+          "preemptive": false
+        }
       }
     }
   },
@@ -45,10 +84,22 @@
     "include_fatigue_in_observation": true,
     "include_queue_size_in_observation": true,
     "reward": {
-      "assignment": { "enabled": true, "coefficient": 1.0 },
-      "wait_time": { "enabled": true, "coefficient": 1.0 },
-      "queue_size": { "enabled": false, "coefficient": 1.0 },
-      "busy_technician": { "enabled": true, "coefficient": 0.5 }
+      "assignment": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "wait_time": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "queue_size": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "busy_technician": {
+        "enabled": true,
+        "coefficient": 0.5
+      }
     }
   },
   "ticket_factory": {
