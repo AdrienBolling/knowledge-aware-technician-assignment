@@ -316,7 +316,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # ----- held-out evaluation -------------------------------------------
-    logger.info("Evaluating on held-out set (%d sequences)...", len(eval_seqs))
+    logger.info(
+        "Evaluating on held-out set (%d sequences)...", _seq_count(eval_seqs)
+    )
     report = trainer.evaluate(eval_seqs, n_passes=3)
     logger.info(
         "Held-out MLM accuracy: %.3f over %d predictions",
