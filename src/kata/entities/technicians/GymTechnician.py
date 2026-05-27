@@ -101,6 +101,68 @@ class GymTechnician(Technician):
             methods=self.k_methods,
         )
 
+        # Optionally seed the grid from a saved profile so the
+        # technician starts the episode with realistic career
+        # experience.  The legacy behaviour (empty grid) is preserved
+        # when ``initial_knowledge_grid_path`` is ``None`` or when the
+        # file does not exist --- we warn rather than crash so a
+        # missing artefact does not break training entirely.
+        init_path = getattr(tech_conf, "initial_knowledge_grid_path", None)
+        if init_path:
+            from pathlib import Path as _Path
+
+            resolved = _Path(init_path)
+            if resolved.is_file():
+                loaded = KnowledgeGrid.load(resolved)
+                # Sanity-check: the loaded grid must agree with the
+                # configured shape AND with the other knowledge
+                # hyperparameters --- otherwise future
+                # ``add_ticket_knowledge`` calls (which run with the
+                # *loaded* grid's parameters) would silently disagree
+                # with the technician config.  We fail loudly so a
+                # mismatch is caught at scenario-build time rather
+                # than producing subtly wrong dynamics throughout
+                # an episode.
+                checks = [
+                    ("shape", tuple(loaded._shape), tuple(self.k_shape)),
+                    (
+                        "propagation_sigma",
+                        float(loaded._propagation_sigma),
+                        float(self.k_propagation_sigma),
+                    ),
+                    (
+                        "transmission_factor",
+                        float(loaded._transmission_factor),
+                        float(self.k_transmission_factor),
+                    ),
+                    (
+                        "learning_rate",
+                        float(loaded._learning_rate),
+                        float(self.k_learning_rate),
+                    ),
+                ]
+                for label, file_val, cfg_val in checks:
+                    if file_val != cfg_val:
+                        msg = (
+                            f"initial_knowledge_grid_path {init_path!r} "
+                            f"has {label}={file_val} but technician is "
+                            f"configured for {label}={cfg_val}. "
+                            f"Rebuild the profile (see "
+                            f"``kata.EntityFactories.technician_profile_builder``) "
+                            f"or align the config."
+                        )
+                        raise ValueError(msg)
+                self.knowledge_grid = loaded
+            else:
+                import warnings as _warnings
+
+                _warnings.warn(
+                    f"initial_knowledge_grid_path={init_path!r} does not "
+                    f"exist; starting with an empty grid instead.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
         # Encoder (lazy import of default if not provided)
         if encoder is not None:
             self._encoder: RequestEncoder = encoder
