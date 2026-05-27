@@ -80,6 +80,27 @@ class TechnicianConfig(BaseModel):
         ),
     )
 
+    initial_knowledge_grid_path: str | None = Field(
+        default=None,
+        description=(
+            "Path to a saved ``ongoing.KnowledgeGrid`` (``.npz`` file) "
+            "used as the technician's *starting* knowledge at every "
+            "``env.reset()``.  When set, the grid is loaded after the "
+            "default empty grid is constructed and replaces it; the "
+            "loaded grid's shape and parameters must match the other "
+            "``knowledge_*`` fields above.  When ``None`` (or when the "
+            "file does not exist), the technician starts with an empty "
+            "grid --- the legacy behaviour.\n\n"
+            "Paths are resolved relative to the current working "
+            "directory.  The templates released with KATA reference "
+            "pre-built grids under "
+            "``src/kata/resources/technician_profiles/`` so by default "
+            "every templated technician (junior / senior / specialist "
+            "/ ...) starts the episode with a profile-appropriate "
+            "career history."
+        ),
+    )
+
     @model_validator(mode="before")
     @classmethod
     def _expand_template(cls, data: Any) -> Any:

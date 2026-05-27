@@ -15,7 +15,8 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 1.5,
     "knowledge_transmission_factor": 0.7,
-    "knowledge_learning_rate": 0.51
+    "knowledge_learning_rate": 0.51,
+    "initial_knowledge_grid_path": "src/kata/resources/technician_profiles/expert.npz"
   },
   "senior": {
     "name": "senior",
@@ -24,7 +25,8 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 1.5,
     "knowledge_transmission_factor": 0.7,
-    "knowledge_learning_rate": 0.6
+    "knowledge_learning_rate": 0.6,
+    "initial_knowledge_grid_path": "src/kata/resources/technician_profiles/senior.npz"
   },
   "generalist": {
     "name": "generalist",
@@ -33,7 +35,8 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 1.0,
     "knowledge_transmission_factor": 0.5,
-    "knowledge_learning_rate": 0.7
+    "knowledge_learning_rate": 0.7,
+    "initial_knowledge_grid_path": "src/kata/resources/technician_profiles/generalist.npz"
   },
   "junior": {
     "name": "junior",
@@ -42,7 +45,8 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 0.5,
     "knowledge_transmission_factor": 0.3,
-    "knowledge_learning_rate": 0.85
+    "knowledge_learning_rate": 0.85,
+    "initial_knowledge_grid_path": "src/kata/resources/technician_profiles/junior.npz"
   },
   "trainee": {
     "name": "trainee",
@@ -51,6 +55,27 @@
     "knowledge_k_shape": [10, 10],
     "knowledge_propagation_sigma": 0.3,
     "knowledge_transmission_factor": 0.2,
-    "knowledge_learning_rate": 0.95
+    "knowledge_learning_rate": 0.95,
+    "initial_knowledge_grid_path": "src/kata/resources/technician_profiles/trainee.npz"
+  },
+  "motor_specialist": {
+    "name": "motor_specialist",
+    "fatigue_lambda": 0.01,
+    "fatigue_mu": 0.05,
+    "knowledge_k_shape": [10, 10],
+    "knowledge_propagation_sigma": 1.0,
+    "knowledge_transmission_factor": 0.5,
+    "knowledge_learning_rate": 0.6,
+    "initial_knowledge_grid_path": "src/kata/resources/technician_profiles/motor_specialist.npz"
+  },
+  "electronics_specialist": {
+    "name": "electronics_specialist",
+    "fatigue_lambda": 0.01,
+    "fatigue_mu": 0.05,
+    "knowledge_k_shape": [10, 10],
+    "knowledge_propagation_sigma": 1.0,
+    "knowledge_transmission_factor": 0.5,
+    "knowledge_learning_rate": 0.6,
+    "initial_knowledge_grid_path": "src/kata/resources/technician_profiles/electronics_specialist.npz"
   }
 }
