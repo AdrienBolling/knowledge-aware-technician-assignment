@@ -1,0 +1,28 @@
+{
+  "_purpose": "Smoke / wiring check. Confirms the SetTransformer agent + env + runner all wire together end-to-end. Two short episodes, no eval, no checkpoints, no W&B, no reports — produces no artefacts. Use to validate code changes before launching real runs.",
+  "mode": "train",
+  "seed": 42,
+  "n_episodes": 2,
+  "log_interval": 1,
+  "eval": {
+    "enabled": false,
+    "interval": 1,
+    "n_episodes": 1,
+    "deterministic": true
+  },
+  "checkpoint": {
+    "enabled": false,
+    "interval": 1,
+    "dir": "checkpoints",
+    "save_best": false
+  },
+  "wandb": {
+    "enabled": false,
+    "project": "kata-set-transformer",
+    "log_interval": 1
+  },
+  "reports": {
+    "enabled": false,
+    "dir": "reports"
+  }
+}

@@ -1,0 +1,202 @@
+{
+  "technicians": {
+    "placeholder_0": {
+      "template": "expert",
+      "name": "placeholder_0"
+    },
+    "placeholder_1": {
+      "template": "senior",
+      "name": "placeholder_1"
+    },
+    "placeholder_2": {
+      "template": "generalist",
+      "name": "placeholder_2"
+    },
+    "placeholder_3": {
+      "template": "junior",
+      "name": "placeholder_3"
+    }
+  },
+  "machines": {
+    "placeholder_machine": {
+      "template": "cnc_weibull"
+    }
+  },
+  "products": {
+    "placeholder_product": {
+      "product_type": "widget",
+      "route": [
+        "CNC"
+      ]
+    }
+  },
+  "sim": {
+    "technicians": {
+      "travel_time": 15,
+      "fatigue_model": "exponential",
+      "fatigue_alpha": 1e-06
+    },
+    "repair": {
+      "knowledge_enabled": true,
+      "fatigue_enabled": false,
+      "min_repair_fraction": 0.3,
+      "knowledge_sensitivity": 0.1,
+      "failure_wise_knowledge_parameters": true
+    },
+    "disruptions": {
+      "dis_dict": {
+        "injury": {
+          "trigger": "random",
+          "rate": 0.0001,
+          "duration_mu": 240.0,
+          "duration_sig": 60.0,
+          "preemptive": true
+        },
+        "vacation": {
+          "trigger": "periodic",
+          "interval": 8000.0,
+          "jitter": 400.0,
+          "duration_mu": 480.0,
+          "duration_sig": 120.0,
+          "preemptive": false
+        }
+      }
+    }
+  },
+  "gym": {
+    "max_episode_steps": 20000,
+    "max_sim_time": 200000.0,
+    "observation_representation": "token_ids",
+    "observation_mode": "tech_aware",
+    "include_technician_fatigue_tokens": true,
+    "include_technician_knowledge_tokens": true,
+    "include_technician_assignment_count_tokens": true,
+    "include_queue_composition_tokens": true,
+    "include_broken_by_type_tokens": true,
+    "next_ticket_lookahead": 5,
+    "use_mca_encoder": false,
+    "tokenizer_seq_length": 256,
+    "token_observation_length": 256,
+    "assignment_reward": 0.0,
+    "ticket_wait_time_penalty": 0.0,
+    "fleet_knowledge_scale": 10.0,
+    "expose_action_mask": true,
+    "reward": {
+      "assignment": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "wait_time": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "queue_size": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "busy_technician": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "fatigue_cost": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "repair_quality": {
+        "enabled": true,
+        "coefficient": 1.5
+      },
+      "throughput_delta": {
+        "enabled": true,
+        "coefficient": 0.5
+      },
+      "fleet_knowledge": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "workload_balance": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "estimated_repair_time": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "machine_criticality": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "fleet_availability": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "repair_backlog_age": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "technician_utilization": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "downtime_cost": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "selection_diversity": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "terminal_finished_products": {
+        "enabled": true,
+        "coefficient": 0.2
+      },
+      "terminal_fleet_knowledge": {
+        "enabled": true,
+        "coefficient": 0.1
+      }
+    }
+  },
+  "randomized_scenario": {
+    "enabled": true,
+    "seed": 1234,
+    "n_technicians": 4,
+    "technician_templates": [
+      "expert",
+      "senior",
+      "generalist",
+      "junior",
+      "trainee"
+    ],
+    "n_machines_min": 12,
+    "n_machines_max": 22,
+    "machine_templates": [
+      "cnc_weibull",
+      "assembly_mixed",
+      "assembly_robot",
+      "conveyor",
+      "welder",
+      "inspection"
+    ],
+    "route_min_length": 3,
+    "route_max_length": 6,
+    "randomize_eval": false,
+    "eval_seed": 4321
+  },
+  "ticket_factory": {
+    "priority_rules": {
+      "motor": 10,
+      "spindle": 9,
+      "pump": 8,
+      "bearing": 6,
+      "torch": 7,
+      "drive": 9,
+      "electronics": 8,
+      "sensor": 5,
+      "mechanical": 4,
+      "end_effector": 5,
+      "general_failure": 5
+    },
+    "add_randomness": false,
+    "random_priority_variance": 0
+  }
+}

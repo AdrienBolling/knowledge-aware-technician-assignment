@@ -11,6 +11,7 @@ from agents.baselines.heuristics import (
 from agents.dqn.rainbow import RainbowDQNAgent
 from agents.grpo.grpo import GRPOAgent
 from agents.ppo.ppo_latent import PPOLatentAgent
+from agents.ppo.ppo_set_transformer import SetTransformerAgent
 from agents.ppo.ppo_transformer import PPOTransformerAgent
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "RainbowDQNAgent",
     "RandomAgent",
     "RoundRobinAgent",
+    "SetTransformerAgent",
     "ShortestQueueAgent",
 ]
