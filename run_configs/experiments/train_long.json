@@ -1,7 +1,8 @@
 {
-  "mode": "train",
+  "_purpose": "Full training run for the SetTransformer agent. 1500 episodes with periodic eval (every 50 episodes, 5 deterministic episodes) and checkpointing every 100 episodes with save_best. Long-episode env configs (e.g. baseline.json with 200k sim_time) make each episode worth many PPO updates, so 1500 is a substantial budget. W&B + reports + step-level logging on.",
+  "mode": "evaluated_training",
   "seed": 42,
-  "n_episodes": 1000,
+  "n_episodes": 1500,
   "log_interval": 25,
   "eval": {
     "enabled": true,
@@ -11,13 +12,19 @@
   },
   "checkpoint": {
     "enabled": true,
-    "interval": 50,
+    "interval": 100,
     "dir": "checkpoints",
     "save_best": true
   },
   "wandb": {
     "enabled": true,
-    "project": "kata-experiments",
-    "log_interval": 1
+    "project": "kata-set-transformer",
+    "log_interval": 1,
+    "tags": ["train-long", "set-transformer"]
+  },
+  "reports": {
+    "enabled": true,
+    "dir": "reports",
+    "log_steps": true
   }
 }

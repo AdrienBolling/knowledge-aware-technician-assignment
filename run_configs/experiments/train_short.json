@@ -1,0 +1,30 @@
+{
+  "_purpose": "Short training run for iteration / hyperparameter sweeps. ~100 episodes (typically <1 hour on a single GPU for the Default-sized SetTransformer). Eval every 20 episodes (3 deterministic episodes), checkpoint every 25 with save_best, full W&B + reports.",
+  "mode": "evaluated_training",
+  "seed": 42,
+  "n_episodes": 100,
+  "log_interval": 5,
+  "eval": {
+    "enabled": true,
+    "interval": 20,
+    "n_episodes": 3,
+    "deterministic": true
+  },
+  "checkpoint": {
+    "enabled": true,
+    "interval": 25,
+    "dir": "checkpoints",
+    "save_best": true
+  },
+  "wandb": {
+    "enabled": true,
+    "project": "kata-set-transformer",
+    "log_interval": 1,
+    "tags": ["train-short", "set-transformer"]
+  },
+  "reports": {
+    "enabled": true,
+    "dir": "reports",
+    "log_steps": true
+  }
+}

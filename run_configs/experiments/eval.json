@@ -1,0 +1,30 @@
+{
+  "_purpose": "Deterministic evaluation of a trained SetTransformer checkpoint. Requires the agent config to point at a checkpoint via 'checkpoint' field. Runs 20 deterministic eval episodes, writes a report, optionally logs to W&B.",
+  "mode": "eval",
+  "seed": 42,
+  "n_episodes": 1,
+  "log_interval": 1,
+  "eval": {
+    "enabled": true,
+    "interval": 1,
+    "n_episodes": 20,
+    "deterministic": true
+  },
+  "checkpoint": {
+    "enabled": false,
+    "interval": 1,
+    "dir": "checkpoints",
+    "save_best": false
+  },
+  "wandb": {
+    "enabled": true,
+    "project": "kata-set-transformer",
+    "log_interval": 1,
+    "tags": ["eval", "set-transformer"]
+  },
+  "reports": {
+    "enabled": true,
+    "dir": "reports",
+    "log_steps": true
+  }
+}

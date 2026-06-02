@@ -284,6 +284,81 @@ class _HybridEmitter(_Emitter):
         self._emit("<NUM>", v, self._HAZARD)
 
 
+class _SetEmitter(_Emitter):
+    """Per-slot hybrid emitter for the ``set`` observation mode.
+
+    Writes (token, cont_value, cont_kind) triples into the *currently
+    open slot* — a Python list owned by the caller, swapped in via
+    :meth:`open_slot`.  This lets the env's stream-construction code
+    fan out into many independent slot streams (one per technician,
+    one per machine, plus an env stream) using the same emit-API as
+    :class:`_HybridEmitter`.
+
+    The slot's owner is responsible for fixed-length padding /
+    truncation after emission completes.
+    """
+
+    def __init__(self) -> None:
+        from agents.networks.continuous_features import ContKind
+
+        self._CAT = ContKind.CATEGORICAL
+        self._RATIO = ContKind.RATIO_PLE
+        self._COUNT = ContKind.COUNT_PLE
+        self._TIME = ContKind.TIME2VEC
+        self._HAZARD = ContKind.FOURIER
+        # tuple of three parallel lists: (tokens, cont_values, cont_kinds)
+        self._slot: tuple[list[str], list[float], list[int]] | None = None
+
+    def open_slot(
+        self, slot: tuple[list[str], list[float], list[int]]
+    ) -> None:
+        self._slot = slot
+
+    def close_slot(self) -> None:
+        self._slot = None
+
+    def _emit(self, token: str, value: float, kind: int) -> None:
+        if self._slot is None:
+            msg = "_SetEmitter called without an open slot"
+            raise RuntimeError(msg)
+        toks, vals, kinds = self._slot
+        toks.append(token)
+        vals.append(float(value))
+        kinds.append(int(kind))
+
+    def bare(self, token: str) -> None:
+        self._emit(token, 0.0, self._CAT)
+
+    def cat(self, key: str, value: str) -> None:
+        # In the set mode each "slot position" is a single triple, so
+        # we collapse (key, value) into a single categorical token of
+        # the form "KEY=VALUE".  This avoids inflating the slot length
+        # for pairs that always co-occur.
+        self._emit(f"{key}={value}", 0.0, self._CAT)
+
+    def bool(self, key: str, value: bool) -> None:
+        self._emit(f"{key}={_bool_token(value)}", 0.0, self._CAT)
+
+    def ratio(self, key: str, value: float) -> None:
+        # The categorical key marks the *semantic role* of the
+        # following NUM slot; the NUM carries the raw scalar that
+        # PLE/Time2Vec/Fourier will route on.  Here we collapse to a
+        # single position by hashing the key into the token id (each
+        # role gets its own learnable embedding) and storing the value.
+        self._emit(f"<RATIO:{key}>", float(value), self._RATIO)
+
+    def count(self, key: str, value: int) -> None:
+        self._emit(f"<COUNT:{key}>", float(value), self._COUNT)
+
+    def time(self, key: str, value: float) -> None:
+        v = max(0.0, float(value))
+        self._emit(f"<TIME:{key}>", v, self._TIME)
+
+    def hazard(self, key: str, value: float) -> None:
+        v = max(0.0, float(value))
+        self._emit(f"<FOUR:{key}>", v, self._HAZARD)
+
+
 class KataEnv(gym.Env):
     """Event-driven Gym environment for technician assignment.
 
@@ -398,6 +473,52 @@ class KataEnv(gym.Env):
         self._tech_assignment_counts = [0] * n_techs
         self._tech_last_assignment_time = [-1.0] * n_techs
         self.action_space = gym.spaces.Discrete(n_techs)
+        if self.config.observation_representation == "set":
+            max_t = int(self.config.max_techs)
+            max_m = int(self.config.max_machines)
+            L_t = int(self.config.set_tech_slot_length)
+            L_m = int(self.config.set_machine_slot_length)
+            L_e = int(self.config.set_env_length)
+            space_dict: dict[str, gym.Space] = {
+                "tech_token_ids": gym.spaces.Box(
+                    low=0, high=np.iinfo(np.int64).max,
+                    shape=(max_t, L_t), dtype=np.int64,
+                ),
+                "tech_cont_values": gym.spaces.Box(
+                    low=-np.inf, high=np.inf,
+                    shape=(max_t, L_t), dtype=np.float32,
+                ),
+                "tech_cont_kinds": gym.spaces.Box(
+                    low=0, high=127, shape=(max_t, L_t), dtype=np.int8,
+                ),
+                "tech_mask": gym.spaces.MultiBinary(max_t),
+                "machine_token_ids": gym.spaces.Box(
+                    low=0, high=np.iinfo(np.int64).max,
+                    shape=(max_m, L_m), dtype=np.int64,
+                ),
+                "machine_cont_values": gym.spaces.Box(
+                    low=-np.inf, high=np.inf,
+                    shape=(max_m, L_m), dtype=np.float32,
+                ),
+                "machine_cont_kinds": gym.spaces.Box(
+                    low=0, high=127, shape=(max_m, L_m), dtype=np.int8,
+                ),
+                "machine_mask": gym.spaces.MultiBinary(max_m),
+                "env_token_ids": gym.spaces.Box(
+                    low=0, high=np.iinfo(np.int64).max,
+                    shape=(L_e,), dtype=np.int64,
+                ),
+                "env_cont_values": gym.spaces.Box(
+                    low=-np.inf, high=np.inf, shape=(L_e,), dtype=np.float32,
+                ),
+                "env_cont_kinds": gym.spaces.Box(
+                    low=0, high=127, shape=(L_e,), dtype=np.int8,
+                ),
+            }
+            if self.config.expose_action_mask:
+                space_dict["action_mask"] = gym.spaces.MultiBinary(max_t)
+            self.observation_space = gym.spaces.Dict(space_dict)
+            return
         if self.config.observation_representation == "hybrid":
             seq_len = self.config.tokenizer_seq_length
             space_dict: dict[str, gym.Space] = {
@@ -865,6 +986,384 @@ class KataEnv(gym.Env):
             "cont_kinds": cont_kinds_arr,
         }
 
+    def _set_obs(self) -> dict[str, np.ndarray]:
+        """Return the three-stream ``set`` observation.
+
+        Output keys
+        -----------
+        ``tech_token_ids``     ``(max_techs, L_TECH)``        int64
+        ``tech_cont_values``   ``(max_techs, L_TECH)``        float32
+        ``tech_cont_kinds``    ``(max_techs, L_TECH)``        int8
+        ``tech_mask``          ``(max_techs,)``               int8 (1 == valid slot)
+        ``machine_token_ids``  ``(max_machines, L_MACH)``     int64
+        ``machine_cont_values`` ``(max_machines, L_MACH)``    float32
+        ``machine_cont_kinds`` ``(max_machines, L_MACH)``     int8
+        ``machine_mask``       ``(max_machines,)``            int8
+        ``env_token_ids``      ``(L_ENV,)``                   int64
+        ``env_cont_values``    ``(L_ENV,)``                   float32
+        ``env_cont_kinds``     ``(L_ENV,)``                   int8
+
+        Each (tech / machine / env) slot is a fixed-length sub-sequence
+        of hybrid triples emitted by :class:`_SetEmitter`.  Real fleets
+        smaller than ``max_techs`` / ``max_machines`` are zero-padded
+        with the mask flagging which slots are real.  Real fleets that
+        exceed the caps are truncated and a ``RuntimeWarning`` is
+        raised — pick caps larger than any expected scenario.
+        """
+        from agents.networks.continuous_features import ContKind
+        from kata.core.tokenizer import PAD_ID
+
+        max_t = int(self.config.max_techs)
+        max_m = int(self.config.max_machines)
+        L_t = int(self.config.set_tech_slot_length)
+        L_m = int(self.config.set_machine_slot_length)
+        L_e = int(self.config.set_env_length)
+
+        emitter = _SetEmitter()
+        ticket = self.current_request
+        ticket_machine = getattr(ticket, "machine", None)
+        ticket_machine_id = (
+            self._machine_id_from_machine(ticket_machine)
+            if ticket_machine is not None
+            else None
+        )
+        # Component type of the currently-broken machine — repeated on
+        # the machine slot so the cross-attention can match tech
+        # expertise to broken-machine context locally.
+        cur_comp_type = "NONE"
+        if ticket is not None and hasattr(ticket, "get_failed_component_info"):
+            info = ticket.get_failed_component_info()
+            if info:
+                cur_comp_type = str(info.get("component_type", "NONE"))
+
+        # Peek at the next two queued requests for tech-side
+        # MATCH lookahead and env-side NEXT_K tokens.
+        queue = self._queue()
+        q_items = getattr(queue, "items", queue) if queue is not None else []
+        next_requests: list[Any] = list(q_items)[:2] if q_items else []
+
+        # ----- TECHNICIAN STREAM ------------------------------------------
+        tech_tokens: list[list[str]] = []
+        tech_vals: list[list[float]] = []
+        tech_kinds: list[list[int]] = []
+        techs = self.dispatcher.techs if self.dispatcher else []
+        if len(techs) > max_t:
+            import warnings as _w
+            _w.warn(
+                f"set obs: {len(techs)} techs exceeds max_techs={max_t}; "
+                "extra slots truncated.",
+                RuntimeWarning,
+            )
+            techs = list(techs)[:max_t]
+
+        for idx, tech in enumerate(techs):
+            slot = ([], [], [])
+            emitter.open_slot(slot)
+            # --- profile / template ----------------------------------
+            emitter.cat("TEMPLATE", self._technician_template(tech))
+            # --- state flags -----------------------------------------
+            emitter.bool("BUSY", bool(getattr(tech, "busy", False)))
+            emitter.bool("DISRUPT", bool(getattr(tech, "_in_disruption", False)))
+            emitter.ratio("FATIGUE", float(getattr(tech, "fatigue", 0.0)))
+            ac = (
+                int(self._tech_assignment_counts[idx])
+                if idx < len(self._tech_assignment_counts)
+                else 0
+            )
+            emitter.count("ASSIGNS", ac)
+            # --- knowledge-space features (six scalars) --------------
+            kf = self._tech_knowledge_features(tech)
+            emitter.count("KNOW_VOL", kf["volume"])
+            emitter.count("KNOW_MAX", kf["max_k"])
+            emitter.ratio("KNOW_SPEC", kf["spec_idx"])
+            emitter.count("KNOW_ENT", kf["entropy"])
+            # --- per-ticket expertise (current + 2 queued) ----------
+            emitter.ratio("MATCH", self._tech_match(tech, ticket))
+            emitter.ratio(
+                "MATCH_N1",
+                self._tech_match(
+                    tech, next_requests[0] if len(next_requests) > 0 else None
+                ),
+            )
+            emitter.ratio(
+                "MATCH_N2",
+                self._tech_match(
+                    tech, next_requests[1] if len(next_requests) > 1 else None
+                ),
+            )
+            # --- timing ----------------------------------------------
+            eta = -1.0
+            if ticket is not None and hasattr(tech, "compute_repair_time"):
+                base = (
+                    float(ticket.get_repair_time())
+                    if hasattr(ticket, "get_repair_time")
+                    else 10.0
+                )
+                try:
+                    eta = float(tech.compute_repair_time(base, ticket))
+                except Exception:
+                    eta = base
+            emitter.time("ETA", eta)
+            last = (
+                self._tech_last_assignment_time[idx]
+                if idx < len(self._tech_last_assignment_time)
+                else -1.0
+            )
+            last_age = -1.0 if last < 0 else max(0.0, self._sim_time() - last)
+            emitter.time("LAST_AGE", last_age)
+            emitter.close_slot()
+            tech_tokens.append(slot[0])
+            tech_vals.append(slot[1])
+            tech_kinds.append(slot[2])
+
+        # ----- MACHINE STREAM ---------------------------------------------
+        machine_tokens: list[list[str]] = []
+        machine_vals: list[list[float]] = []
+        machine_kinds: list[list[int]] = []
+        machines = self._factory_machines()
+        if len(machines) > max_m:
+            import warnings as _w
+            _w.warn(
+                f"set obs: {len(machines)} machines exceeds max_machines="
+                f"{max_m}; extra slots truncated.",
+                RuntimeWarning,
+            )
+            machines = machines[:max_m]
+        sim_time_now = self._sim_time()
+        for m in machines:
+            slot = ([], [], [])
+            emitter.open_slot(slot)
+            mt = str(getattr(m, "mtype", "NONE"))
+            emitter.cat("M_TYPE", mt)
+            emitter.bool("BROKEN", bool(getattr(m, "broken", False)))
+            emitter.bool("PROC", bool(getattr(m, "is_processing", False)))
+            mid = self._machine_id_from_machine(m)
+            # IS_CURRENT_TICKET: explicit signal that this is the
+            # broken machine the agent is being asked about NOW.
+            is_current = (
+                ticket_machine_id is not None and mid == ticket_machine_id
+            )
+            emitter.bool("IS_CURRENT", is_current)
+            # CUR_COMP: the failed component type of the current
+            # ticket, repeated on the broken machine slot so the
+            # cross-attention can match local-to-local.  For non-
+            # current machines we emit "NONE" — the model learns to
+            # gate on IS_CURRENT.
+            emitter.cat(
+                "CUR_COMP", cur_comp_type if is_current else "NONE"
+            )
+            emitter.count("PROC_TOT", int(getattr(m, "total_processed", 0)))
+            emitter.count("IN_BUF", self._machine_buffer_size(m, "input_buffer"))
+            emitter.count("OUT_BUF", self._machine_buffer_size(m, "output_buffer"))
+            bd_count = int(self._machine_breakdown_counts.get(mid, 0))
+            emitter.count("BD_COUNT", bd_count)
+            emitter.time(
+                "DOWNTIME", float(self._machine_total_downtime.get(mid, 0.0))
+            )
+            # MEAN_TBF: rough mean-time-between-failures proxy.  Long-
+            # horizon recent time signal — route through Time2Vec.  A
+            # machine that has never broken returns sim_time_now (so
+            # "very long" → "highly reliable").
+            mean_tbf = (
+                sim_time_now / max(1.0, float(bd_count))
+                if sim_time_now > 0
+                else 0.0
+            )
+            emitter.time("MEAN_TBF", mean_tbf)
+            emitter.close_slot()
+            machine_tokens.append(slot[0])
+            machine_vals.append(slot[1])
+            machine_kinds.append(slot[2])
+
+        # ----- ENV STREAM -------------------------------------------------
+        env_slot = ([], [], [])
+        emitter.open_slot(env_slot)
+        emitter.bool("HAS_T", ticket is not None)
+        emitter.cat(
+            "T_M_TYPE", str(getattr(ticket_machine, "mtype", "NONE"))
+        )
+        emitter.cat("T_C_TYPE", cur_comp_type)
+        emitter.hazard("SIM_T", self._sim_time())
+        t_age = (
+            self._sim_time() - self._request_created_at(ticket)
+            if ticket is not None
+            else -1.0
+        )
+        emitter.time("T_AGE", t_age)
+        emitter.count("Q_SIZE", self._queue_size())
+        all_machines = self._factory_machines()
+        broken_n = sum(1 for m in all_machines if bool(getattr(m, "broken", False)))
+        proc_n = sum(
+            1 for m in all_machines if bool(getattr(m, "is_processing", False))
+        )
+        emitter.count("BROKEN_N", broken_n)
+        emitter.count("PROC_N", proc_n)
+        # --- lookahead: next two queued tickets ------------------------
+        for slot_idx in range(2):
+            prefix = f"N{slot_idx + 1}"
+            if slot_idx < len(next_requests):
+                nreq = next_requests[slot_idx]
+                nm = str(getattr(getattr(nreq, "machine", None), "mtype", "NONE"))
+                nc = "NONE"
+                if hasattr(nreq, "get_failed_component_info"):
+                    info = nreq.get_failed_component_info()
+                    if info:
+                        nc = str(info.get("component_type", "NONE"))
+                nage = self._sim_time() - self._request_created_at(nreq)
+            else:
+                nm, nc, nage = "NONE", "NONE", -1.0
+            emitter.cat(f"{prefix}_M_TYPE", nm)
+            emitter.cat(f"{prefix}_C_TYPE", nc)
+            emitter.time(f"{prefix}_AGE", nage)
+        emitter.close_slot()
+
+        # ----- TOKENIZE + PAD ---------------------------------------------
+        if self._tokenizer is None:
+            self._tokenizer = StateTokenizer(
+                seq_length=self.config.tokenizer_seq_length
+            )
+
+        def _pack_slot(
+            toks: list[str],
+            vals: list[float],
+            kinds: list[int],
+            L: int,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            ids = np.full(L, PAD_ID, dtype=np.int64)
+            cv = np.zeros(L, dtype=np.float32)
+            ck = np.full(L, int(ContKind.CATEGORICAL), dtype=np.int8)
+            n = min(len(toks), L)
+            for i in range(n):
+                ids[i] = self._tokenizer.token_to_id(toks[i])
+                cv[i] = float(vals[i])
+                ck[i] = int(kinds[i])
+            # Pad positions: zero out continuous channel (already 0) and
+            # force kind CATEGORICAL so they route through the pad-id
+            # embedding rather than a continuous encoder.
+            return ids, cv, ck
+
+        tech_ids = np.full((max_t, L_t), PAD_ID, dtype=np.int64)
+        tech_cv = np.zeros((max_t, L_t), dtype=np.float32)
+        tech_ck = np.full((max_t, L_t), int(ContKind.CATEGORICAL), dtype=np.int8)
+        tech_mask = np.zeros(max_t, dtype=np.int8)
+        for i in range(len(techs)):
+            ids, cv, ck = _pack_slot(
+                tech_tokens[i], tech_vals[i], tech_kinds[i], L_t
+            )
+            tech_ids[i] = ids
+            tech_cv[i] = cv
+            tech_ck[i] = ck
+            tech_mask[i] = 1
+
+        mach_ids = np.full((max_m, L_m), PAD_ID, dtype=np.int64)
+        mach_cv = np.zeros((max_m, L_m), dtype=np.float32)
+        mach_ck = np.full((max_m, L_m), int(ContKind.CATEGORICAL), dtype=np.int8)
+        mach_mask = np.zeros(max_m, dtype=np.int8)
+        for i in range(len(machines)):
+            ids, cv, ck = _pack_slot(
+                machine_tokens[i], machine_vals[i], machine_kinds[i], L_m
+            )
+            mach_ids[i] = ids
+            mach_cv[i] = cv
+            mach_ck[i] = ck
+            mach_mask[i] = 1
+
+        env_ids, env_cv, env_ck = _pack_slot(
+            env_slot[0], env_slot[1], env_slot[2], L_e
+        )
+
+        return {
+            "tech_token_ids": tech_ids,
+            "tech_cont_values": tech_cv,
+            "tech_cont_kinds": tech_ck,
+            "tech_mask": tech_mask,
+            "machine_token_ids": mach_ids,
+            "machine_cont_values": mach_cv,
+            "machine_cont_kinds": mach_ck,
+            "machine_mask": mach_mask,
+            "env_token_ids": env_ids,
+            "env_cont_values": env_cv,
+            "env_cont_kinds": env_ck,
+        }
+
+    def _machine_id_from_machine(self, machine: Any) -> int:
+        """Return a stable machine identifier, defaulting to ``id()``."""
+        mid = getattr(machine, "id", None)
+        if mid is None:
+            mid = id(machine)
+        try:
+            return int(mid)
+        except (TypeError, ValueError):
+            return int(hash(mid))
+
+    # ------------------------------------------------------------------
+    # Helpers for the ``set`` observation mode
+    # ------------------------------------------------------------------
+
+    _TECH_NAME_SUFFIX_RE = __import__("re").compile(r"^(.*?)_\d+$")
+
+    def _technician_template(self, tech: Any) -> str:
+        """Best-effort extraction of the template name from ``tech.name``.
+
+        Scenario builders name technicians ``<template>_<index>``
+        (e.g. ``junior_0``, ``motor_specialist_3``).  This helper
+        strips the trailing ``_<digits>`` so the cross-attention sees
+        the bare template token (``junior``, ``motor_specialist``).
+        Falls back to the raw name when the pattern doesn't match.
+        """
+        name = str(getattr(tech, "name", ""))
+        m = self._TECH_NAME_SUFFIX_RE.match(name)
+        return m.group(1) if m else (name or "unknown")
+
+    def _tech_knowledge_features(self, tech: Any) -> dict[str, float]:
+        """Aggregate knowledge-grid scalars used as per-tech features.
+
+        Returns four scalars derived from the technician's knowledge
+        grid: total ``volume``, peak ``max_k``, ``spec_idx`` (in [0, 1])
+        and ``entropy``.  Missing methods return ``0.0`` so test fakes
+        without a full ``ongoing.KnowledgeGrid`` keep working.
+        """
+        grid = getattr(tech, "knowledge_grid", None)
+
+        def _safe(method_name: str, default: float = 0.0) -> float:
+            if grid is None:
+                return default
+            fn = getattr(grid, method_name, None)
+            if not callable(fn):
+                return default
+            try:
+                v = float(fn())
+            except Exception:
+                return default
+            return v if math.isfinite(v) else default
+
+        return {
+            "volume": _safe("knowledge_volume"),
+            "max_k": _safe("get_max_knowledge"),
+            # specialisation_index is in [0, 1] so cap defensively.
+            "spec_idx": max(0.0, min(1.0, _safe("specialisation_index"))),
+            "entropy": _safe("knowledge_entropy"),
+        }
+
+    def _tech_match(self, tech: Any, request: Any) -> float:
+        """Return the knowledge match score ``1 - m_k`` for ``request``.
+
+        Score in ``[0, 1]``: 1 = full expertise, 0 = no expertise (or
+        no ticket / fake tech).  Identical to the ``RepairQuality``
+        step metric so the reward and the observation see the same
+        signal.
+        """
+        if request is None:
+            return 0.0
+        get_km = getattr(tech, "get_knowledge_multiplier", None)
+        if not callable(get_km):
+            return 0.0
+        try:
+            mult = float(get_km(request))
+        except Exception:
+            return 0.0
+        return max(0.0, min(1.0, 1.0 - mult))
+
     def _structured_obs(self) -> dict[str, np.ndarray]:
         ticket = self.current_request
         busy = np.asarray(
@@ -944,7 +1443,9 @@ class KataEnv(gym.Env):
         return mask
 
     def _obs(self) -> dict[str, Any]:
-        if self.config.observation_representation == "hybrid":
+        if self.config.observation_representation == "set":
+            payload = self._set_obs()
+        elif self.config.observation_representation == "hybrid":
             payload = self._hybrid_obs()
         elif self.config.observation_representation == "token_ids":
             payload = self._token_id_obs()
@@ -953,7 +1454,16 @@ class KataEnv(gym.Env):
         else:
             payload = self._structured_obs()
         if self.config.expose_action_mask:
-            payload["action_mask"] = self._action_mask()
+            mask = self._action_mask()
+            if self.config.observation_representation == "set":
+                # Pad / truncate the action mask to ``max_techs`` so the
+                # agent's pointer head can consume a fixed-size logit
+                # vector regardless of fleet size.
+                max_t = int(self.config.max_techs)
+                padded = np.zeros(max_t, dtype=np.int8)
+                padded[: min(len(mask), max_t)] = mask[:max_t]
+                mask = padded
+            payload["action_mask"] = mask
         return payload
 
     def _info(self) -> dict[str, Any]:
@@ -1077,6 +1587,18 @@ class KataEnv(gym.Env):
                 "selection_diversity", self._selection_diversity_raw(tech_id)
             )
 
+        # --- repair_quality: knowledge-matched assignment ---
+        if self.config.reward.repair_quality.enabled:
+            get_km = getattr(tech, "get_knowledge_multiplier", None)
+            if callable(get_km):
+                multiplier = float(get_km(request))
+                quality = max(0.0, min(1.0, 1.0 - multiplier))
+            else:
+                quality = 0.0
+            breakdown["repair_quality"] = self._reward_component(
+                "repair_quality", quality
+            )
+
         self._last_reward_breakdown = breakdown
         return float(sum(breakdown.values()))
 
@@ -1105,10 +1627,22 @@ class KataEnv(gym.Env):
         the rest of the reward stack — its scale is fully controlled
         by ``RewardComponentConfig.coefficient``.
         """
+        mean_volume = self._fleet_mean_knowledge_volume()
+        scale = float(getattr(self.config, "fleet_knowledge_scale", 10.0))
+        if scale <= 0.0:
+            return 0.0
+        return float(math.tanh(mean_volume / scale))
+
+    def _fleet_mean_knowledge_volume(self) -> float:
+        """Return the fleet's current mean per-technician knowledge volume.
+
+        Robust to several ``KnowledgeGrid`` API shapes and test fakes
+        (see ``_fleet_knowledge_raw`` for the fallback chain).  Returns
+        ``0.0`` if the fleet is empty.
+        """
         techs = getattr(self.dispatcher, "techs", None) or []
         if not techs:
             return 0.0
-
         total = 0.0
         for tech in techs:
             grid = getattr(tech, "knowledge_grid", None)
@@ -1121,12 +1655,7 @@ class KataEnv(gym.Env):
             if not math.isfinite(value):
                 value = 0.0
             total += max(0.0, value)
-        mean_volume = total / len(techs)
-
-        scale = float(getattr(self.config, "fleet_knowledge_scale", 10.0))
-        if scale <= 0.0:
-            return 0.0
-        return float(math.tanh(mean_volume / scale))
+        return total / len(techs)
 
     def _estimated_repair_time_raw(self, tech: Any, request: Any) -> float:
         """Return negative log-ratio of estimated vs base repair time.
@@ -1447,6 +1976,7 @@ class KataEnv(gym.Env):
         self._machine_labels = {}
         self._tech_assignment_counts = [0] * len(self.dispatcher.techs)
         self._tech_last_assignment_time = [-1.0] * len(self.dispatcher.techs)
+        self._initial_mean_knowledge_volume = self._fleet_mean_knowledge_volume()
         self._advance_until_next_ticket()
         return self._obs(), self._info()
 
@@ -1533,6 +2063,27 @@ class KataEnv(gym.Env):
                     "terminal_finished_products", float(n_finished)
                 )
                 self._last_reward_breakdown["terminal_finished_products"] = bonus
+                reward += bonus
+
+            # Terminal reward — fires once, proportional to the fleet's
+            # knowledge *growth* during the episode (final minus initial
+            # mean per-technician volume).  The raw is scaled by
+            # ``fleet_knowledge_scale`` for unit-consistency with the
+            # per-step ``fleet_knowledge`` component but is *not*
+            # saturated — over long episodes the growth genuinely
+            # accumulates, and clipping it would kill the gradient.
+            # Pre-loaded profile grids are subtracted out by design, so
+            # the agent is credited only for what *it* added.
+            if self.config.reward.terminal_fleet_knowledge.enabled:
+                final_vol = self._fleet_mean_knowledge_volume()
+                initial_vol = float(
+                    getattr(self, "_initial_mean_knowledge_volume", 0.0)
+                )
+                growth = max(0.0, final_vol - initial_vol)
+                scale = float(getattr(self.config, "fleet_knowledge_scale", 10.0))
+                raw = growth / scale if scale > 0.0 else 0.0
+                bonus = self._reward_component("terminal_fleet_knowledge", raw)
+                self._last_reward_breakdown["terminal_fleet_knowledge"] = bonus
                 reward += bonus
 
         return self._obs(), reward, terminated, False, self._info()

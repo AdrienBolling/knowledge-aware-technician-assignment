@@ -460,6 +460,32 @@ class GymRewardConfig(BaseModel):
             "``coefficient × n_finished``."
         ),
     )
+    terminal_fleet_knowledge: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Terminal bonus paid once on the episode's last step, "
+            "proportional to the fleet's knowledge *growth* during the "
+            "episode (final minus initial mean per-tech volume), scaled "
+            "by ``fleet_knowledge_scale``.  Pre-loaded profile grids "
+            "are subtracted out by design, so the agent is credited "
+            "only for knowledge it accumulated.  Raw value is "
+            "``growth / fleet_knowledge_scale``; final contribution is "
+            "``coefficient × raw``."
+        ),
+    )
+    repair_quality: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Per-assignment reward for picking a technician whose "
+            "accumulated expertise matches the failed component family.  "
+            "Raw value is ``1 - m_k`` in [0, 1], where ``m_k`` is the "
+            "knowledge multiplier the chosen technician would apply to "
+            "this repair (1 = no expertise, near 0 = full expertise).  "
+            "This is the reward counterpart of the ``repair_quality`` "
+            "step metric and is the load-bearing signal for "
+            "knowledge-matched assignment."
+        ),
+    )
     downtime_cost: RewardComponentConfig = Field(
         default_factory=_disabled_reward_component,
         description=(
@@ -523,7 +549,7 @@ class GymEnvConfig(BaseModel):
         description="Composable reward settings with configurable sub-components.",
     )
     observation_representation: Literal[
-        "structured", "tokens", "token_ids", "hybrid"
+        "structured", "tokens", "token_ids", "hybrid", "set"
     ] = Field(
         default="structured",
         description=(
@@ -534,7 +560,64 @@ class GymEnvConfig(BaseModel):
             "'hybrid' returns the same integer sequence (with a ``<NUM>`` "
             "placeholder at numerical-value positions) PLUS parallel "
             "``cont_values`` / ``cont_kinds`` channels that carry the raw "
-            "scalars and route them to PLE / Time2Vec / Fourier encoders."
+            "scalars and route them to PLE / Time2Vec / Fourier encoders, "
+            "'set' emits THREE grouped streams (technicians, machines, env) "
+            "where each per-entity slot is a fixed-length hybrid triple "
+            "sub-sequence padded out to ``max_techs`` / ``max_machines`` "
+            "slots, with companion masks identifying valid slots."
+        ),
+    )
+    max_techs: int = Field(
+        default=30,
+        gt=0,
+        description=(
+            "Hard cap on the technician slot count exposed by the 'set' "
+            "observation mode.  Real fleets smaller than this are padded "
+            "(with ``tech_mask`` indicating valid slots); larger fleets "
+            "fail at env init.  Set to the largest fleet the agent will "
+            "encounter across scenarios so the network can be reused."
+        ),
+    )
+    max_machines: int = Field(
+        default=100,
+        gt=0,
+        description=(
+            "Hard cap on the machine slot count exposed by the 'set' "
+            "observation mode.  Padding/mask semantics mirror ``max_techs``."
+        ),
+    )
+    set_tech_slot_length: int = Field(
+        default=16,
+        gt=0,
+        description=(
+            "Number of (token_id, cont_value, cont_kind) triples emitted "
+            "per technician slot in 'set' observation mode.  Within-slot "
+            "padding fills shorter feature streams.  Default 16 leaves "
+            "headroom over the 14 features currently emitted (template "
+            "+ 6 knowledge-derived features + 7 state features)."
+        ),
+    )
+    set_machine_slot_length: int = Field(
+        default=12,
+        gt=0,
+        description=(
+            "Per-machine slot length in 'set' observation mode.  Default "
+            "12 holds the 11 features emitted: machine type, broken / "
+            "processing flags, is-current-ticket flag, current ticket "
+            "component type, total processed, in/out buffer sizes, "
+            "breakdown count, downtime, mean time between failures."
+        ),
+    )
+    set_env_length: int = Field(
+        default=16,
+        gt=0,
+        description=(
+            "Length of the global env-token stream in 'set' mode.  "
+            "Default 16 holds the 14 features emitted: ticket info "
+            "(has-ticket, machine type, component type), simulation "
+            "time, ticket age, queue size, broken count, processing "
+            "count, plus 2 × 3 = 6 lookahead tokens for the next two "
+            "queued tickets (machine type / component type / age)."
         ),
     )
     observation_mode: Literal[

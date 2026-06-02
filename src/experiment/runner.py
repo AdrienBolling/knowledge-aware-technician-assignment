@@ -43,6 +43,7 @@ from agents import (
     RainbowDQNAgent,
     RandomAgent,
     RoundRobinAgent,
+    SetTransformerAgent,
     ShortestQueueAgent,
 )
 from experiment.config import (
@@ -70,10 +71,19 @@ _AGENT_REGISTRY: dict[str, type[Agent]] = {
     "grpo": GRPOAgent,
     "ppo_transformer": PPOTransformerAgent,
     "ppo_latent": PPOLatentAgent,
+    "set_transformer": SetTransformerAgent,
 }
 
-_LEARNING_AGENTS = {"rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent"}
-_TOKEN_AGENTS = {"rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent"}
+_LEARNING_AGENTS = {
+    "rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent", "set_transformer",
+}
+_TOKEN_AGENTS = {
+    "rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent", "set_transformer",
+}
+# Agents that consume the grouped ``set`` observation rather than the
+# flat token stream — their n_actions is the *padded* max_techs cap,
+# not the real fleet size, and the encoder needs max-slot sizes.
+_SET_OBS_AGENTS = {"set_transformer"}
 
 
 def _ticket_context(ticket: Any, sim_time: float) -> dict[str, Any]:
@@ -280,13 +290,32 @@ class Experiment:
         cls = _AGENT_REGISTRY[agent_type]
         params = dict(self.agent_cfg.params)
 
-        n_actions = self.env.action_space.n
-        params["n_actions"] = n_actions
+        if agent_type in _SET_OBS_AGENTS:
+            # Set-mode agents act on a padded ``max_techs`` slot vector
+            # rather than the real fleet size — the action mask filters
+            # absent slots down to real techs.  Inject the slot caps
+            # and the env-derived sim_time_scale so the user's agent
+            # JSON only has to carry the *learning* hyperparameters.
+            params["n_actions"] = int(self.env_cfg.gym.max_techs)
+            params.setdefault("max_techs", int(self.env_cfg.gym.max_techs))
+            params.setdefault("max_machines", int(self.env_cfg.gym.max_machines))
+            params.setdefault("env_length", int(self.env_cfg.gym.set_env_length))
+            params.setdefault(
+                "sim_time_scale", float(self.env_cfg.gym.max_sim_time)
+            )
+        else:
+            params["n_actions"] = self.env.action_space.n
 
         # Inject vocab_size for token-based agents
         if agent_type in _TOKEN_AGENTS and self.tokenizer is not None:
             params.setdefault("vocab_size", self.tokenizer.vocab_size)
-            params.setdefault("max_seq_len", self.env_cfg.gym.tokenizer_seq_length)
+            # ``max_seq_len`` only makes sense for the flat-stream
+            # encoders; set-mode agents size their inputs via the
+            # per-slot caps injected above.
+            if agent_type not in _SET_OBS_AGENTS:
+                params.setdefault(
+                    "max_seq_len", self.env_cfg.gym.tokenizer_seq_length
+                )
             # Auto-propagate the hybrid-obs flag so the agent builds the
             # right encoder type.  Each agent class is free to ignore the
             # kwarg (handled by setdefault, not by force-overwriting).
