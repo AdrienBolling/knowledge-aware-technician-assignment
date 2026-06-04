@@ -278,3 +278,106 @@ class StateTokenizer:
 
         tok.freeze()
         return tok
+
+    @classmethod
+    def build_set_vocab(
+        cls,
+        machine_types: list[str],
+        component_types: list[str],
+        technician_templates: list[str],
+        *,
+        seq_length: int = 64,
+    ) -> StateTokenizer:
+        """Create a *frozen* tokenizer for the ``set`` observation mode.
+
+        Equivalent to :meth:`build_vocab` for the flat-stream modes:
+        deterministically enumerates every token string the
+        :class:`kata.env._SetEmitter` can produce.  Token IDs are
+        assigned in a fixed order driven by the input lists, so
+        training and eval calls with the same ``machine_types`` /
+        ``component_types`` / ``technician_templates`` lists produce
+        identical id mappings — that's what makes the agent's
+        embedding table portable across runs.
+
+        Parameters
+        ----------
+        machine_types:
+            Every machine type string the scenario sampler can emit
+            (typically ``sampler.all_machine_types()``).
+        component_types:
+            Every component type string (typically
+            ``sampler.all_component_types()``).
+        technician_templates:
+            Every technician template name in the scenario pool
+            (typically ``rcfg.technician_templates``).
+        seq_length:
+            Carried forward to the returned tokenizer; the set mode
+            does not consume it for sequence length but the field is
+            kept consistent with the flat-stream tokenizer's API.
+        """
+        tok = cls(seq_length=seq_length)
+
+        # -- fixed continuous-feature tokens (one per emitter call,
+        #    regardless of the scalar value) --------------------------
+        fixed_continuous = [
+            # tech slot
+            "<RATIO:FATIGUE>",
+            "<COUNT:ASSIGNS>",
+            "<COUNT:KNOW_VOL>",
+            "<COUNT:KNOW_MAX>",
+            "<RATIO:KNOW_SPEC>",
+            "<COUNT:KNOW_ENT>",
+            "<RATIO:MATCH>",
+            "<RATIO:MATCH_N1>",
+            "<RATIO:MATCH_N2>",
+            "<TIME:ETA>",
+            "<TIME:LAST_AGE>",
+            # machine slot
+            "<COUNT:PROC_TOT>",
+            "<COUNT:IN_BUF>",
+            "<COUNT:OUT_BUF>",
+            "<COUNT:BD_COUNT>",
+            "<TIME:DOWNTIME>",
+            "<TIME:MEAN_TBF>",
+            # env slot
+            "<FOUR:SIM_T>",
+            "<TIME:T_AGE>",
+            "<COUNT:Q_SIZE>",
+            "<COUNT:BROKEN_N>",
+            "<COUNT:PROC_N>",
+            "<TIME:N1_AGE>",
+            "<TIME:N2_AGE>",
+        ]
+        for t in fixed_continuous:
+            tok._add_token(t)
+
+        # -- boolean cat tokens --------------------------------------
+        for key in ("BUSY", "DISRUPT", "BROKEN", "PROC", "IS_CURRENT", "HAS_T"):
+            tok._add_token(f"{key}=T")
+            tok._add_token(f"{key}=F")
+
+        # -- per-template tokens -------------------------------------
+        for t in technician_templates:
+            tok._add_token(f"TEMPLATE={t}")
+
+        # -- per-machine-type tokens (M_TYPE on machine slot;
+        #    T_M_TYPE / N1_M_TYPE / N2_M_TYPE on env slot) -----------
+        machine_keys = ("M_TYPE", "T_M_TYPE", "N1_M_TYPE", "N2_M_TYPE")
+        for k in machine_keys:
+            for mt in machine_types:
+                tok._add_token(f"{k}={mt}")
+        # NONE sentinel for env-side keys when no ticket / no lookahead
+        for k in ("T_M_TYPE", "N1_M_TYPE", "N2_M_TYPE"):
+            tok._add_token(f"{k}=NONE")
+
+        # -- per-component-type tokens (CUR_COMP on machine slot;
+        #    T_C_TYPE / N1_C_TYPE / N2_C_TYPE on env slot) -----------
+        comp_keys = ("CUR_COMP", "T_C_TYPE", "N1_C_TYPE", "N2_C_TYPE")
+        for k in comp_keys:
+            for ct in component_types:
+                tok._add_token(f"{k}={ct}")
+        for k in comp_keys:
+            tok._add_token(f"{k}=NONE")
+
+        tok.freeze()
+        return tok

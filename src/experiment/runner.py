@@ -268,15 +268,36 @@ class Experiment:
 
         # Build a tokenizer covering ALL machine + component types that
         # could ever appear, so randomised episodes don't surface UNK
-        # tokens.
-        if self.agent_cfg.agent_type in _TOKEN_AGENTS and self.tokenizer is None:
-            self.tokenizer = StateTokenizer.build_vocab(
-                machine_types=machine_types,
-                n_technicians=n_techs,
-                seq_length=gym_cfg.tokenizer_seq_length,
-                component_types=component_types,
-                next_ticket_lookahead=gym_cfg.next_ticket_lookahead,
-            )
+        # tokens.  Set-mode agents use a *different* token alphabet
+        # (``<RATIO:KEY>`` triples instead of bucketed values) so they
+        # take a separate deterministic builder.  Both builders freeze
+        # the tokenizer up-front — eval-time loads are then portable
+        # because token IDs are a pure function of the input pools.
+        if self.tokenizer is None:
+            if self.agent_cfg.agent_type in _SET_OBS_AGENTS:
+                templates = list(
+                    rcfg.technician_templates
+                    if rcfg.enabled and rcfg.technician_templates
+                    else sorted({
+                        t.template
+                        for t in cfg.technicians.values()
+                        if getattr(t, "template", None) is not None
+                    })
+                )
+                self.tokenizer = StateTokenizer.build_set_vocab(
+                    machine_types=machine_types,
+                    component_types=component_types,
+                    technician_templates=templates,
+                    seq_length=gym_cfg.tokenizer_seq_length,
+                )
+            elif self.agent_cfg.agent_type in _TOKEN_AGENTS:
+                self.tokenizer = StateTokenizer.build_vocab(
+                    machine_types=machine_types,
+                    n_technicians=n_techs,
+                    seq_length=gym_cfg.tokenizer_seq_length,
+                    component_types=component_types,
+                    next_ticket_lookahead=gym_cfg.next_ticket_lookahead,
+                )
 
         return KataEnv(
             scenario_factory=factory,
