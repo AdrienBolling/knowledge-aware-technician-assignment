@@ -620,6 +620,20 @@ class GymEnvConfig(BaseModel):
             "queued tickets (machine type / component type / age)."
         ),
     )
+    set_vocab_path: str | None = Field(
+        default="run_configs/vocab/set_vocab.json",
+        description=(
+            "Path to a canonical set-mode vocabulary JSON file "
+            "(produced by ``scripts/build_set_vocab.py``).  When set "
+            "and the file exists, training and eval runs load it and "
+            "freeze the tokenizer against it — token IDs are then "
+            "stable across machines, runs, and seeds.  Set to ``null`` "
+            "to fall back to deterministic enumeration from the env "
+            "config (still reproducible run-to-run, but only if the "
+            "machine_templates / component_types / technician_templates "
+            "pools are identical between training and eval)."
+        ),
+    )
     observation_mode: Literal[
         "ticket_only",
         "broken_machine",

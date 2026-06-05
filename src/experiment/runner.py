@@ -275,21 +275,44 @@ class Experiment:
         # because token IDs are a pure function of the input pools.
         if self.tokenizer is None:
             if self.agent_cfg.agent_type in _SET_OBS_AGENTS:
-                templates = list(
-                    rcfg.technician_templates
-                    if rcfg.enabled and rcfg.technician_templates
-                    else sorted({
-                        t.template
-                        for t in cfg.technicians.values()
-                        if getattr(t, "template", None) is not None
-                    })
-                )
-                self.tokenizer = StateTokenizer.build_set_vocab(
-                    machine_types=machine_types,
-                    component_types=component_types,
-                    technician_templates=templates,
-                    seq_length=gym_cfg.tokenizer_seq_length,
-                )
+                # Set-mode load order:
+                #   1. canonical vocab JSON if configured + exists
+                #      (single source of truth across all runs)
+                #   2. deterministic rebuild from the env's template pools
+                vocab_path_str = getattr(gym_cfg, "set_vocab_path", None)
+                vocab_path = Path(vocab_path_str) if vocab_path_str else None
+                if vocab_path is not None and vocab_path.is_file():
+                    self.tokenizer = StateTokenizer.from_json(
+                        vocab_path, seq_length=gym_cfg.tokenizer_seq_length
+                    )
+                    logger.info(
+                        "Loaded canonical set vocab from %s (%d tokens)",
+                        vocab_path, self.tokenizer.vocab_size,
+                    )
+                else:
+                    templates = list(
+                        rcfg.technician_templates
+                        if rcfg.enabled and rcfg.technician_templates
+                        else sorted({
+                            t.template
+                            for t in cfg.technicians.values()
+                            if getattr(t, "template", None) is not None
+                        })
+                    )
+                    self.tokenizer = StateTokenizer.build_set_vocab(
+                        machine_types=machine_types,
+                        component_types=component_types,
+                        technician_templates=templates,
+                        seq_length=gym_cfg.tokenizer_seq_length,
+                    )
+                    if vocab_path is not None:
+                        logger.warning(
+                            "set_vocab_path=%s not found — rebuilt %d-token "
+                            "vocab from env config.  Run "
+                            "`python scripts/build_set_vocab.py` to create "
+                            "the canonical artefact.",
+                            vocab_path, self.tokenizer.vocab_size,
+                        )
             elif self.agent_cfg.agent_type in _TOKEN_AGENTS:
                 self.tokenizer = StateTokenizer.build_vocab(
                     machine_types=machine_types,
@@ -346,7 +369,20 @@ class Experiment:
                     "sim_time_scale", float(self.env_cfg.gym.max_sim_time)
                 )
 
-        return cls(**params)
+        agent = cls(**params)
+
+        # Attach the tokenizer's vocab to set-mode agents so the
+        # token-id mapping is saved alongside the weights.  Without
+        # this, eval-time loads have to rebuild the vocab from the
+        # env config and any pool drift produces a mismatch.
+        if (
+            agent_type in _SET_OBS_AGENTS
+            and self.tokenizer is not None
+            and hasattr(agent, "attach_vocab")
+        ):
+            agent.attach_vocab(self.tokenizer.get_vocab())
+
+        return agent
 
     # ------------------------------------------------------------------
     # Report writer

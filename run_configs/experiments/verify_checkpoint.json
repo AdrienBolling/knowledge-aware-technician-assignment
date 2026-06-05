@@ -1,0 +1,28 @@
+{
+  "_purpose": "Quick training run (3 episodes) with checkpointing enabled. Used to produce a SetTransformer checkpoint for the benchmark notebook to load, so the vocab-loading pipeline can be exercised end-to-end without paying the cost of a real training budget. Reports off (the artefacts here are for pipeline verification, not analysis).",
+  "mode": "train",
+  "seed": 42,
+  "n_episodes": 3,
+  "log_interval": 1,
+  "eval": {
+    "enabled": false,
+    "interval": 1,
+    "n_episodes": 1,
+    "deterministic": true
+  },
+  "checkpoint": {
+    "enabled": true,
+    "interval": 1,
+    "dir": "checkpoints",
+    "save_best": false
+  },
+  "wandb": {
+    "enabled": false,
+    "project": "kata-set-transformer",
+    "log_interval": 1
+  },
+  "reports": {
+    "enabled": false,
+    "dir": "reports"
+  }
+}
