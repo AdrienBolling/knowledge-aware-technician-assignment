@@ -513,22 +513,55 @@ class SetTransformerAgent(Agent):
     # ------------------------------------------------------------------
 
     def save(self, path: str | Path) -> None:
-        torch.save(
-            {
-                "net": self.net.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-                "lr_scheduler": self.lr_scheduler.state_dict(),
-                "return_rms": self._return_rms.state_dict(),
-                "max_techs": self.max_techs,
-                "max_machines": self.max_machines,
-                "vocab_size": self.vocab_size,
-            },
-            path,
-        )
+        """Persist the agent.
+
+        Also persists the tokenizer's vocabulary (if attached via
+        :meth:`attach_vocab`) so eval-time loads do not depend on
+        rebuilding the same vocab from configs on a different machine.
+        The vocab is the source of truth for token IDs — without it,
+        the embedding rows have no portable meaning.
+        """
+        ckpt = {
+            "net": self.net.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "lr_scheduler": self.lr_scheduler.state_dict(),
+            "return_rms": self._return_rms.state_dict(),
+            "max_techs": self.max_techs,
+            "max_machines": self.max_machines,
+            "vocab_size": self.vocab_size,
+        }
+        vocab = getattr(self, "_vocab", None)
+        if vocab is not None:
+            ckpt["vocab"] = dict(vocab)
+        torch.save(ckpt, path)
+
+    def attach_vocab(self, vocab: dict[str, int]) -> None:
+        """Attach a tokenizer vocabulary so it is saved with the checkpoint.
+
+        Called by the experiment runner immediately after agent
+        construction — passes ``self.tokenizer.get_vocab()`` so the
+        token-id mapping travels with the weights.
+        """
+        self._vocab = dict(vocab)
 
     def load(self, path: str | Path) -> None:
+        """Restore agent state from a checkpoint.
+
+        Supports **append-only vocabulary growth**: if the agent's
+        embedding table is larger than the checkpoint's (e.g. the
+        canonical vocab grew between training runs), the checkpoint's
+        rows are copied into the first ``ckpt_vocab`` positions of the
+        live embedding and the trailing positions retain their
+        fresh-init values.  The reverse — checkpoint larger than the
+        live embedding — is rejected, since silently dropping rows
+        could discard learned representations the policy depends on.
+        """
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
-        self.net.load_state_dict(ckpt["net"])
+        state = ckpt["net"]
+        # Detect and reconcile a row-count mismatch on the token
+        # embedding before delegating to load_state_dict.
+        state = self._resize_token_embedding(state)
+        self.net.load_state_dict(state)
         if "optimizer" in ckpt:
             try:
                 self.optimizer.load_state_dict(ckpt["optimizer"])
@@ -544,6 +577,70 @@ class SetTransformerAgent(Agent):
                 self._return_rms.load_state_dict(ckpt["return_rms"])
             except (KeyError, TypeError):
                 pass
+        if "vocab" in ckpt:
+            self._vocab = dict(ckpt["vocab"])
+
+    def _resize_token_embedding(self, state: dict) -> dict:
+        """Pad or refuse to load the token-embedding row count.
+
+        Looks up every state-dict key whose tail matches
+        ``token_embedding.weight``.  If the checkpoint's row count is
+        smaller than the live embedding's, copies the checkpoint rows
+        into the leading positions of the live tensor and uses that as
+        the replacement state-dict entry.  Larger-than-live mismatches
+        raise — silently dropping trained rows is the kind of behaviour
+        you want to know about, not paper over.
+        """
+        live = self.net.state_dict()
+        out = dict(state)
+        for k in list(out.keys()):
+            if not k.endswith("token_embedding.weight"):
+                continue
+            ckpt_w = out[k]
+            live_w = live.get(k)
+            if live_w is None or ckpt_w.shape == live_w.shape:
+                continue
+            n_ckpt, d_ckpt = int(ckpt_w.shape[0]), int(ckpt_w.shape[1])
+            n_live, d_live = int(live_w.shape[0]), int(live_w.shape[1])
+            if d_ckpt != d_live:
+                msg = (
+                    f"Cannot load checkpoint: token_embedding d_model "
+                    f"differs ({d_ckpt} vs {d_live}).  This is a hard "
+                    f"architecture mismatch — re-instantiate the agent "
+                    f"with the checkpoint's d_model."
+                )
+                raise RuntimeError(msg)
+            if n_ckpt > n_live:
+                msg = (
+                    f"Cannot load checkpoint: it has {n_ckpt} vocab "
+                    f"rows but the live agent has only {n_live}.  The "
+                    f"canonical vocab appears to have shrunk; refusing "
+                    f"to drop learned rows."
+                )
+                raise RuntimeError(msg)
+            # n_ckpt < n_live → pad with the live fresh-init rows.
+            merged = live_w.clone()
+            merged[:n_ckpt] = ckpt_w.to(merged.device, dtype=merged.dtype)
+            out[k] = merged
+            import logging as _logging
+            _logging.getLogger(__name__).info(
+                "Token embedding resized at load: %d (ckpt) → %d (live); "
+                "trailing %d rows fresh-init.",
+                n_ckpt, n_live, n_live - n_ckpt,
+            )
+        return out
+
+    @staticmethod
+    def peek_vocab(path: str | Path) -> dict[str, int] | None:
+        """Return the vocabulary stored alongside a checkpoint, if any.
+
+        Eval-time callers can use this to build a tokenizer that
+        matches the training-time id mapping exactly — see the
+        ``benchmark_agent.ipynb`` setup for a usage example.
+        """
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        v = ckpt.get("vocab") if isinstance(ckpt, dict) else None
+        return dict(v) if isinstance(v, dict) else None
 
 
 __all__ = ["SetTransformerAgent"]

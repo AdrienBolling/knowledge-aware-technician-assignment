@@ -156,6 +156,56 @@ class StateTokenizer:
             self._id_to_token[idx] = tok
             self._token_to_id[tok] = idx
 
+    def to_json(self, path: str | Path) -> None:
+        """Persist the vocabulary as a JSON file.
+
+        Writes ``{"version": 1, "n_tokens": N, "vocab": {token: id, ...}}``
+        — small, human-readable, git-friendly.  Used by the canonical
+        vocab workflow: a single committed file
+        (typically ``run_configs/vocab/set_vocab.json``) is the source
+        of truth for all training and eval runs.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+        p = _Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_json.dumps(
+            {
+                "version": 1,
+                "n_tokens": self.vocab_size,
+                "vocab": self.get_vocab(),
+            },
+            indent=2,
+            sort_keys=False,
+        ) + "\n")
+
+    @classmethod
+    def from_json(
+        cls,
+        path: str | Path,
+        *,
+        seq_length: int = 64,
+        freeze: bool = True,
+    ) -> "StateTokenizer":
+        """Load a frozen tokenizer from a JSON vocab file produced by :meth:`to_json`."""
+        import json as _json
+        from pathlib import Path as _Path
+        data = _json.loads(_Path(path).read_text())
+        if "vocab" not in data or not isinstance(data["vocab"], dict):
+            msg = (
+                f"Invalid vocab JSON at {path}: missing 'vocab' dict.  "
+                "Expected the shape produced by StateTokenizer.to_json."
+            )
+            raise ValueError(msg)
+        tok = cls(seq_length=seq_length)
+        # JSON stores ints as JSON numbers, but JSON object keys are
+        # always strings — coerce the values back to int.
+        vocab = {k: int(v) for k, v in data["vocab"].items()}
+        tok.load_vocab(vocab)
+        if freeze:
+            tok.freeze()
+        return tok
+
     # ------------------------------------------------------------------
     # Full-vocabulary construction
     # ------------------------------------------------------------------
