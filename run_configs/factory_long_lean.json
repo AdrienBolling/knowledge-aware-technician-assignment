@@ -90,24 +90,78 @@
     "fleet_knowledge_scale": 10.0,
     "expose_action_mask": true,
     "reward": {
-      "assignment": {"enabled": false, "coefficient": 1.0},
-      "wait_time": {"enabled": false, "coefficient": 1.0},
-      "queue_size": {"enabled": false, "coefficient": 1.0},
-      "busy_technician": {"enabled": true, "coefficient": 1.0},
-      "fatigue_cost": {"enabled": true, "coefficient": 1.0},
-      "repair_quality": {"enabled": true, "coefficient": 1.5},
-      "throughput_delta": {"enabled": true, "coefficient": 0.5},
-      "fleet_knowledge": {"enabled": false, "coefficient": 1.0},
-      "workload_balance": {"enabled": false, "coefficient": 1.0},
-      "estimated_repair_time": {"enabled": false, "coefficient": 1.0},
-      "machine_criticality": {"enabled": false, "coefficient": 1.0},
-      "fleet_availability": {"enabled": false, "coefficient": 1.0},
-      "repair_backlog_age": {"enabled": false, "coefficient": 1.0},
-      "technician_utilization": {"enabled": false, "coefficient": 1.0},
-      "downtime_cost": {"enabled": false, "coefficient": 1.0},
-      "selection_diversity": {"enabled": false, "coefficient": 1.0},
-      "terminal_finished_products": {"enabled": true, "coefficient": 0.2},
-      "terminal_fleet_knowledge": {"enabled": true, "coefficient": 0.1}
+      "assignment": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "wait_time": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "queue_size": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "busy_technician": {
+        "enabled": true,
+        "coefficient": 0.4
+      },
+      "fatigue_cost": {
+        "enabled": true,
+        "coefficient": 0.6
+      },
+      "repair_quality": {
+        "enabled": true,
+        "coefficient": 1.5
+      },
+      "throughput_delta": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "fleet_knowledge": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "workload_balance": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "estimated_repair_time": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "machine_criticality": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "fleet_availability": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "repair_backlog_age": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "technician_utilization": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "downtime_cost": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "selection_diversity": {
+        "enabled": false,
+        "coefficient": 1.0
+      },
+      "terminal_finished_products": {
+        "enabled": true,
+        "coefficient": 0.5
+      },
+      "terminal_fleet_knowledge": {
+        "enabled": true,
+        "coefficient": 0.1
+      }
     }
   },
   "randomized_scenario": {
