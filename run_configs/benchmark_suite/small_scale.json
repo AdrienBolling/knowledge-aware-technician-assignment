@@ -96,11 +96,11 @@
       },
       "busy_technician": {
         "enabled": true,
-        "coefficient": 1.0
+        "coefficient": 0.4
       },
       "fatigue_cost": {
         "enabled": true,
-        "coefficient": 1.0
+        "coefficient": 0.6
       },
       "repair_quality": {
         "enabled": true,
@@ -108,7 +108,7 @@
       },
       "throughput_delta": {
         "enabled": true,
-        "coefficient": 0.5
+        "coefficient": 1.0
       },
       "fleet_knowledge": {
         "enabled": false,
@@ -148,7 +148,7 @@
       },
       "terminal_finished_products": {
         "enabled": true,
-        "coefficient": 0.2
+        "coefficient": 0.5
       },
       "terminal_fleet_knowledge": {
         "enabled": true,
