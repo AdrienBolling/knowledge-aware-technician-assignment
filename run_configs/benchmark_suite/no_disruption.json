@@ -80,15 +80,15 @@
       },
       "busy_technician": {
         "enabled": true,
-        "coefficient": 0.4
+        "coefficient": 1.0
       },
       "fatigue_cost": {
         "enabled": true,
-        "coefficient": 0.6
+        "coefficient": 1.0
       },
       "repair_quality": {
         "enabled": true,
-        "coefficient": 1.5
+        "coefficient": 1.0
       },
       "throughput_delta": {
         "enabled": true,
@@ -132,12 +132,18 @@
       },
       "terminal_finished_products": {
         "enabled": true,
-        "coefficient": 0.5
+        "coefficient": 1.0
       },
       "terminal_fleet_knowledge": {
         "enabled": true,
-        "coefficient": 0.1
-      }
+        "coefficient": 1.0
+      },
+      "knowledge_increment": {
+        "enabled": true,
+        "coefficient": 1.0
+      },
+      "normalize_components": true,
+      "normalize_components_eps": 0.0001
     }
   },
   "randomized_scenario": {

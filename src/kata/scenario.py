@@ -97,13 +97,22 @@ class ScenarioBuilder:
             all_output_buffers.append((mtype, out_buf))
 
         # -- Routing infrastructure -------------------------------------------
-        route_buffer = Buffer(env, "BUF_ROUTE", capacity=200)
-        sink_buffer = Buffer(env, "BUF_SINK", capacity=200)
+        # Route / type / sink buffers are intentionally unbounded.  The
+        # router and the per-type feeders are single-process serial pipes,
+        # so any bounded capacity on these buffers creates a hard deadlock
+        # the moment one stage runs slower than upstream: the router blocks
+        # on a full type queue, back-pressure cascades to the conveyors,
+        # and the whole factory grinds to a halt with zero products
+        # finishing.  Per-machine input / output buffers stay bounded
+        # because they model real WIP capacity and machines genuinely
+        # idle when their output is full.
+        route_buffer = Buffer(env, "BUF_ROUTE")
+        sink_buffer = Buffer(env, "BUF_SINK")
 
         # Type-specific queues for feeders
         type_queues: dict[str, Buffer] = {}
         for mtype in machines_by_type:
-            type_queues[mtype] = Buffer(env, f"BUF_{mtype}_Q", capacity=100)
+            type_queues[mtype] = Buffer(env, f"BUF_{mtype}_Q")
 
         # Router: route_buffer -> type queues (and sink)
         type_to_buffer: dict[str, Buffer] = {**type_queues, "__SINK__": sink_buffer}
@@ -111,7 +120,14 @@ class ScenarioBuilder:
 
         # Feeders: type queue -> machine input buffers
         for mtype, bufs in machine_input_buffers.items():
-            MachineFeeder(env, f"{mtype}Feeder", mtype, type_queues[mtype], bufs)
+            MachineFeeder(
+                env,
+                f"{mtype}Feeder",
+                mtype,
+                type_queues[mtype],
+                bufs,
+                machines=machines_by_type[mtype],
+            )
 
         # Conveyors: machine output -> route buffer (for multi-step routes)
         for mtype, out_buf in all_output_buffers:
