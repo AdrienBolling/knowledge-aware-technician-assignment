@@ -473,6 +473,23 @@ class GymRewardConfig(BaseModel):
             "``coefficient × raw``."
         ),
     )
+    knowledge_increment: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Per-step reward for fleet-wide knowledge growth.  Raw "
+            "value is the change in mean per-technician knowledge "
+            "volume between two consecutive decision steps "
+            "(``volume(t) - volume(t-1)``, floored at 0).  This is the "
+            "*dense* counterpart of ``terminal_fleet_knowledge``: it "
+            "fires every step instead of once, so credit assignment "
+            "for knowledge-investment actions can propagate over a "
+            "much shorter horizon.  Note: between decision steps the "
+            "simulator may complete several queued repairs, so the "
+            "increment reflects the sum of all knowledge gains "
+            "between the two decisions, not just the chosen tech's "
+            "current repair."
+        ),
+    )
     repair_quality: RewardComponentConfig = Field(
         default_factory=_disabled_reward_component,
         description=(
@@ -492,6 +509,31 @@ class GymRewardConfig(BaseModel):
             "Penalizes accumulated machine downtime.  Raw value is "
             "the negative fraction of total machine-time lost to "
             "breakdowns since episode start, in [-1, 0]."
+        ),
+    )
+
+    # -- Rolling per-component normalisation --------------------------------
+    normalize_components: bool = Field(
+        default=False,
+        description=(
+            "When True, every per-step reward component is divided by "
+            "its own running standard deviation (Welford / "
+            "VecNormalize-style) before being multiplied by its "
+            "coefficient and summed.  This puts heterogeneously-scaled "
+            "components on a comparable footing so coefficients act as "
+            "*relative* weights rather than absolute magnitudes.  "
+            "Stats accumulate across episodes within a single env "
+            "instance; eval-time freezing is the consumer's "
+            "responsibility (call ``env.freeze_reward_normalizer()``)."
+        ),
+    )
+    normalize_components_eps: float = Field(
+        default=1e-4,
+        gt=0.0,
+        description=(
+            "Initial sample count seeded into each component's "
+            "RunningMeanStd, biasing variance toward 1 in the first "
+            "few hundred steps so divisions are stable from step 1."
         ),
     )
 

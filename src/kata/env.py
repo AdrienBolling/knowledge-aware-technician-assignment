@@ -11,6 +11,7 @@ import simpy.exceptions
 
 from kata import get_config
 from kata.core.config import GymEnvConfig
+from kata.core.reward_normalizer import RewardNormalizer
 from kata.core.tokenizer import StateTokenizer
 from kata.metrics import EPISODE_METRICS, STEP_METRICS
 
@@ -390,6 +391,21 @@ class KataEnv(gym.Env):
         self.current_request: Any | None = None
         self.episode_step = 0
         self._last_reward_breakdown: dict[str, float] = {}
+
+        # Per-component reward normaliser — persists across episodes
+        # within this env instance.  Active only when
+        # ``GymRewardConfig.normalize_components`` is set; otherwise
+        # ``normalize()`` calls are skipped.
+        self._reward_normalizer: RewardNormalizer = RewardNormalizer(
+            epsilon=float(
+                getattr(
+                    self.config.reward, "normalize_components_eps", 1e-4
+                )
+            )
+        )
+        # Fleet knowledge volume sampled at the previous decision step,
+        # used to compute the ``knowledge_increment`` per-step reward.
+        self._prev_fleet_knowledge: float = 0.0
 
         # Tokenizer & MCA state (populated by warmup or passed in)
         self._tokenizer: StateTokenizer | None = tokenizer
@@ -1493,11 +1509,31 @@ class KataEnv(gym.Env):
         }
 
     def _reward_component(self, name: str, raw: float) -> float:
-        """Apply coefficient and enabled flag for a named reward component."""
+        """Apply coefficient and enabled flag for a named reward component.
+
+        When ``GymRewardConfig.normalize_components`` is True the raw
+        value is first divided by its running standard deviation —
+        the per-component :class:`RewardNormalizer` accumulates stats
+        across episodes and across calls.  This keeps heterogeneously
+        scaled signals (e.g. a ``[-1, 0]`` busy penalty vs. a
+        ``[0, 100]`` knowledge-increment delta) comparable so the
+        coefficients act as *relative* weights.
+        """
         comp = getattr(self.config.reward, name, None)
         if comp is None or not comp.enabled:
             return 0.0
-        return comp.coefficient * raw
+        value = float(raw)
+        if getattr(self.config.reward, "normalize_components", False):
+            value = self._reward_normalizer.normalize(name, value)
+        return comp.coefficient * value
+
+    def freeze_reward_normalizer(self) -> None:
+        """Stop updating per-component reward stats — call at eval time."""
+        self._reward_normalizer.freeze()
+
+    def unfreeze_reward_normalizer(self) -> None:
+        """Resume updating per-component reward stats."""
+        self._reward_normalizer.unfreeze()
 
     def _reward_for_assignment(self, request: Any, tech_id: int) -> float:
         created_at = float(getattr(request, "created_at", self._sim_time()))
@@ -1597,6 +1633,23 @@ class KataEnv(gym.Env):
                 quality = 0.0
             breakdown["repair_quality"] = self._reward_component(
                 "repair_quality", quality
+            )
+
+        # --- knowledge_increment: dense fleet-knowledge growth ---
+        # Computed as the delta in mean per-tech knowledge volume
+        # since the previous decision step.  Between two consecutive
+        # decisions the simulator may have completed several queued
+        # repairs, so this signal captures the *aggregate* knowledge
+        # gain in that window (not strictly attributable to the
+        # current action — see the config docstring).  Floored at 0
+        # so the agent is never penalised for a stale (or pre-loaded)
+        # snapshot drifting downward.
+        if self.config.reward.knowledge_increment.enabled:
+            current_volume = self._fleet_mean_knowledge_volume()
+            increment = max(0.0, current_volume - self._prev_fleet_knowledge)
+            self._prev_fleet_knowledge = current_volume
+            breakdown["knowledge_increment"] = self._reward_component(
+                "knowledge_increment", increment
             )
 
         self._last_reward_breakdown = breakdown
@@ -1977,6 +2030,12 @@ class KataEnv(gym.Env):
         self._tech_assignment_counts = [0] * len(self.dispatcher.techs)
         self._tech_last_assignment_time = [-1.0] * len(self.dispatcher.techs)
         self._initial_mean_knowledge_volume = self._fleet_mean_knowledge_volume()
+        # Seed the per-step knowledge_increment baseline at the same
+        # value so the first decision's increment is computed against
+        # the genuine episode-start knowledge.  The normaliser's
+        # running stats are *not* reset — they accumulate across
+        # episodes within this env instance.
+        self._prev_fleet_knowledge = self._initial_mean_knowledge_volume
         self._advance_until_next_ticket()
         return self._obs(), self._info()
 
