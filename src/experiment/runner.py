@@ -603,13 +603,21 @@ class Experiment:
             "rolling_window": 25,
         },
         "repair_time_delta_per": {
-            "ylabel": "% time saved vs base",
-            "ylim": (0.0, 100.0),
+            "ylabel": "% time saved vs base (signed)",
+            # Auto-scale: the metric is signed (positive = speed-up,
+            # negative = fatigue-driven slowdown).  Upper bound is
+            # ``(1 - min_repair_fraction) * 100`` (~70 % at the default
+            # floor), lower bound is unbounded by the fatigue
+            # multiplier — fixed limits would cut off real signal.
             "rolling_window": 25,
         },
         "repair_quality": {
             "ylabel": "knowledge match",
             "ylim": (0.0, 1.0),
+        },
+        "mttr_rolling": {
+            "ylabel": "rolling MTTR (sim units)",
+            "rolling_window": 25,
         },
         "tech_knowledge": {
             "ylabel": "knowledge volume",

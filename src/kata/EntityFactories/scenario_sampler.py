@@ -1,16 +1,17 @@
-"""Per-episode random scenario sampler.
+"""Random scenario sampler with optional multi-episode reuse.
 
 Plugged into :class:`kata.env.KataEnv` in place of the static
-``ScenarioBuilder(cfg).build()`` factory.  On every call (= every
-``env.reset()``) it draws a fresh ``KATAConfig`` from the configured
-template pools and hands back a SimPy environment + dispatcher.
+``ScenarioBuilder(cfg).build()`` factory.  On each call (= each
+``env.reset()``) it returns a SimPy environment + dispatcher built
+from a ``KATAConfig`` sampled from the configured template pools.
 
-What varies per episode
------------------------
+What varies between sampled scenarios
+-------------------------------------
 * **Technician profiles** — drawn from
-  ``RandomizedScenarioConfig.technician_templates``.  The *number* of
-  technicians stays fixed so the action space (``Discrete(n_techs)``)
-  is stable across episodes.
+  ``RandomizedScenarioConfig.technician_templates``.
+* **Technician count** — fixed (``n_technicians``), or sampled in a
+  range, or derived from ``n_machines`` via a coherence ratio.  See
+  ``RandomizedScenarioConfig`` for which mode applies.
 * **Machine count + templates** — drawn from
   ``RandomizedScenarioConfig.machine_templates``.  The count is
   sampled in ``[n_machines_min, n_machines_max]``.
@@ -18,6 +19,22 @@ What varies per episode
   machine types actually present in the sampled machines, length
   sampled in ``[route_min_length, route_max_length]`` and clamped by
   the number of distinct types available.
+
+Episodes per scenario
+---------------------
+``RandomizedScenarioConfig.episodes_per_scenario`` (``k``) controls
+how often a fresh scenario is drawn:
+
+* ``k = 1`` (default) — every ``env.reset()`` draws a fresh scenario,
+  matching the original behaviour.
+* ``k > 1``           — the same sampled scenario is reused for ``k``
+  consecutive resets, then a new one is drawn.  Useful for letting an
+  agent settle on a single layout for several episodes while still
+  training across many layouts overall.
+
+Each reuse still builds a *fresh* SimPy environment — only the
+structural ``KATAConfig`` (machines, technicians, routes) is held
+constant inside one ``k``-block.
 """
 
 from __future__ import annotations
@@ -57,7 +74,14 @@ class RandomScenarioSampler:
         self._base = base_cfg
         self._cfg = rcfg
         self._rng = random.Random(seed if seed is not None else rcfg.seed)
+        # ``_call_count`` counts ``sample_config()`` invocations
+        # (= scenario re-samples).  ``_cached_config`` holds the most
+        # recently sampled ``KATAConfig`` and ``_scenario_age`` counts
+        # ``__call__`` invocations since that sample so the cache can
+        # be reused for ``episodes_per_scenario`` consecutive builds.
         self._call_count = 0
+        self._cached_config: KATAConfig | None = None
+        self._scenario_age = 0
 
         # Validate template pools at construction time so misconfigured
         # runs fail loudly before training starts.
@@ -92,6 +116,40 @@ class RandomScenarioSampler:
             )
             raise ValueError(msg)
 
+        # -- Variable-fleet validation -----------------------------------
+        # Both bounds must be set together — half-set range is ambiguous.
+        if (rcfg.n_technicians_min is None) ^ (rcfg.n_technicians_max is None):
+            msg = (
+                "randomized_scenario.n_technicians_min and "
+                "n_technicians_max must be set together (or both left "
+                "unset to keep the fixed-fleet behaviour)"
+            )
+            raise ValueError(msg)
+        if (rcfg.n_technicians_min is not None
+                and rcfg.n_technicians_max is not None
+                and rcfg.n_technicians_max < rcfg.n_technicians_min):
+            msg = (
+                f"randomized_scenario.n_technicians_max ({rcfg.n_technicians_max}) "
+                f"must be >= n_technicians_min ({rcfg.n_technicians_min})"
+            )
+            raise ValueError(msg)
+
+        if (rcfg.techs_per_machine_min is None) ^ (rcfg.techs_per_machine_max is None):
+            msg = (
+                "randomized_scenario.techs_per_machine_min and "
+                "techs_per_machine_max must be set together"
+            )
+            raise ValueError(msg)
+        if (rcfg.techs_per_machine_min is not None
+                and rcfg.techs_per_machine_max is not None
+                and rcfg.techs_per_machine_max < rcfg.techs_per_machine_min):
+            msg = (
+                f"randomized_scenario.techs_per_machine_max "
+                f"({rcfg.techs_per_machine_max}) must be >= "
+                f"techs_per_machine_min ({rcfg.techs_per_machine_min})"
+            )
+            raise ValueError(msg)
+
     # ------------------------------------------------------------------
     # Helpers used by the runner to pre-populate vocabularies
     # ------------------------------------------------------------------
@@ -118,20 +176,21 @@ class RandomScenarioSampler:
         rng = self._rng
         cfg = self._cfg
 
-        # -- Technicians --------------------------------------------------
-        technicians = {}
-        for i in range(cfg.n_technicians):
-            template = rng.choice(cfg.technician_templates)
-            name = f"{template}_{i}"
-            technicians[name] = _tech_from_template(template, name=name)
-
-        # -- Machines -----------------------------------------------------
+        # -- Machines (sampled first so the tech count can scale with them) -
         n_machines = rng.randint(cfg.n_machines_min, cfg.n_machines_max)
         machines = {}
         for i in range(n_machines):
             template = rng.choice(cfg.machine_templates)
             # Build a stable, unique key — ``<idx>_<template>``
             machines[f"m{i:02d}_{template}"] = _machine_from_template(template)
+
+        # -- Technicians (count via ratio / range / fixed, in that order) ---
+        n_techs = self._sample_n_technicians(n_machines)
+        technicians = {}
+        for i in range(n_techs):
+            template = rng.choice(cfg.technician_templates)
+            name = f"{template}_{i}"
+            technicians[name] = _tech_from_template(template, name=name)
 
         # -- Product route ------------------------------------------------
         types_present = sorted({m.machine_type for m in machines.values()})
@@ -159,6 +218,54 @@ class RandomScenarioSampler:
         return new_cfg
 
     # ------------------------------------------------------------------
+    # Internal: technician-count sampling
+    # ------------------------------------------------------------------
+
+    def _sample_n_technicians(self, n_machines: int) -> int:
+        """Pick the number of technicians for the current scenario.
+
+        Precedence (highest first):
+
+        * **coherence-ratio** — both ``techs_per_machine_min/max`` set.
+          ``round(n_machines * uniform(min, max))``.  Result is clamped
+          to ``[n_technicians_min, n_technicians_max]`` when those
+          bounds are also set, and to ``>= 1`` so an empty fleet is
+          impossible.
+        * **range** — both ``n_technicians_min/max`` set.  Uniform
+          random integer in the closed range.
+        * **fixed** (default) — ``cfg.n_technicians``.
+        """
+        cfg = self._cfg
+        rng = self._rng
+
+        if cfg.techs_per_machine_min is not None and cfg.techs_per_machine_max is not None:
+            ratio = rng.uniform(
+                float(cfg.techs_per_machine_min),
+                float(cfg.techs_per_machine_max),
+            )
+            n_techs = int(round(n_machines * ratio))
+            lo = cfg.n_technicians_min if cfg.n_technicians_min is not None else 1
+            hi = cfg.n_technicians_max  # may be None — only upper-clamp when set
+            n_techs = max(int(lo), n_techs)
+            if hi is not None:
+                n_techs = min(int(hi), n_techs)
+            return max(1, n_techs)
+
+        if cfg.n_technicians_min is not None and cfg.n_technicians_max is not None:
+            return rng.randint(int(cfg.n_technicians_min), int(cfg.n_technicians_max))
+
+        return int(cfg.n_technicians)
+
+    # ------------------------------------------------------------------
+    # Cache control (used by callable + tests)
+    # ------------------------------------------------------------------
+
+    def reset_scenario_cache(self) -> None:
+        """Forget the cached scenario so the next ``__call__`` re-samples."""
+        self._cached_config = None
+        self._scenario_age = 0
+
+    # ------------------------------------------------------------------
     # Callable: matches the scenario_factory contract of KataEnv
     # ------------------------------------------------------------------
 
@@ -166,8 +273,16 @@ class RandomScenarioSampler:
         # Local import to keep the heavy SimPy import out of module load.
         from kata.scenario import ScenarioBuilder
 
-        cfg = self.sample_config()
-        return ScenarioBuilder(cfg).build()
+        # Reuse the cached config for ``episodes_per_scenario`` consecutive
+        # builds before drawing a fresh one.  Each build still produces a
+        # brand-new SimPy environment — only the structural config (fleet,
+        # routes) is held constant inside one ``k``-block.
+        k = max(1, int(self._cfg.episodes_per_scenario))
+        if self._cached_config is None or self._scenario_age >= k:
+            self._cached_config = self.sample_config()
+            self._scenario_age = 0
+        self._scenario_age += 1
+        return ScenarioBuilder(self._cached_config).build()
 
 
 __all__ = ["RandomScenarioSampler"]

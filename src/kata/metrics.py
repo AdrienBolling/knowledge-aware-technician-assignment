@@ -77,17 +77,24 @@ class EpisodeMetric(ABC):
 
 
 class RepairTimeDelta(StepMetric):
-    """Time saved by the chosen technician versus the base repair time.
+    """Signed time delta of the chosen technician versus the base repair time.
 
-    Computed as ``base - effective`` (in simulation time units): the
-    knowledge multiplier and the fatigue multiplier are both in
-    ``(0, 1]`` so ``effective <= base`` and the metric is non-negative.
-    Higher is better — the chosen technician is faster than a baseline
-    one with no knowledge and no fatigue would be.
+    Computed as ``base - effective`` (in simulation time units):
 
-    The raw value (rather than a ratio) is reported so it is directly
-    interpretable in time units; divide by the request's base repair
-    time if a normalised speed-up is needed.
+    * **positive** — chosen technician is faster than a baseline tech
+      with no knowledge and no fatigue would be (a speed-up);
+    * **negative** — chosen technician is slower (a fatigue-dominated
+      slowdown).
+
+    The knowledge multiplier sits in ``[min_repair_fraction, 1]`` so it
+    can only speed up the repair; the fatigue multiplier sits in
+    ``[1, +∞)`` and can push ``effective`` above ``base``.  The signed
+    delta is reported so the episode-mean is unbiased — clamping at 0
+    would hide slowdowns and inflate the apparent benefit of the chosen
+    tech.
+
+    Divide by ``request.get_repair_time()`` if you need a normalised
+    speed-up; see :class:`RepairTimeDeltaPercent`.
     """
 
     name = "repair_time_delta"
@@ -103,21 +110,34 @@ class RepairTimeDelta(StepMetric):
             effective = float(compute_fn(base, request))
         else:
             effective = base
-        return max(0.0, base - effective)
+        return base - effective
 
 
 class RepairTimeDeltaPercent(StepMetric):
-    """Time saved by the chosen technician as a percentage of the base.
+    """Signed time delta as a percentage of the request's base repair time.
 
-    Same idea as :class:`RepairTimeDelta` but normalised by the
-    request's base repair time so values are comparable across
-    components with different absolute repair durations:
+    Same idea as :class:`RepairTimeDelta` but normalised so values are
+    comparable across components with different absolute durations:
 
-    ``(base - effective) / base * 100`` clipped to ``[0, 100]``.
+    ``(base - effective) / base * 100``.
 
-    A value of ``0`` means no speed-up over a fresh, no-knowledge
-    technician; ``100`` means the chosen technician would resolve the
-    repair instantaneously.
+    * ``0``        — chosen technician matches the no-knowledge,
+                     no-fatigue baseline.
+    * **positive** — a speed-up.  Bounded above by
+                     ``(1 - min_repair_fraction) * 100`` because the
+                     knowledge multiplier cannot drop below
+                     ``min_repair_fraction`` (the per-component or
+                     global floor).  With the default floor of 0.3 the
+                     practical maximum is ~70%, NOT 100% — 100% would
+                     require an instantaneous repair, which the floor
+                     forbids.
+    * **negative** — a slowdown, driven by the fatigue multiplier
+                     (which is unbounded above) overpowering whatever
+                     knowledge speed-up was available.
+
+    Reported as a signed value (no lower clamp).  Clamping slowdowns to
+    0 would silently hide them and bias the episode-mean upward — making
+    speedup-poor agents look better than they are.
     """
 
     name = "repair_time_delta_per"
@@ -135,8 +155,7 @@ class RepairTimeDeltaPercent(StepMetric):
             effective = float(compute_fn(base, request))
         else:
             effective = base
-        pct = (base - effective) / base * 100.0
-        return max(0.0, min(100.0, pct))
+        return (base - effective) / base * 100.0
 
 
 def _fleet_labels(techs: list[Any]) -> dict[Any, str]:
@@ -239,16 +258,62 @@ class TechnicianFatigue(StepMetric):
         return {labels[t]: float(getattr(t, "fatigue", 0.0)) for t in techs}
 
 
+class MeanTimeToRepairRolling(StepMetric):
+    """Rolling MTTR over the most recent completed repairs (per assignment step).
+
+    Mean of ``env._recent_repair_durations`` — a deque bounded by
+    ``GymEnvConfig.mttr_rolling_window`` and appended to by
+    :meth:`KataEnv._on_repair_completed`.  At each assignment step this
+    returns the average repair duration over the last ``window`` (or
+    fewer, before the window is full) completed repairs, so the runner
+    plots a within-episode trend of how repair speed evolves.
+
+    Lower is better — a fleet that's getting better at its repairs
+    drives this down.  Returns ``0.0`` until the first repair completes.
+
+    Distinct from :class:`MeanTimeToRepair` (the cumulative episode-end
+    metric).  The two agree by construction at the very start
+    (single sample) and drift apart as the window slides.
+    """
+
+    name = "mttr_rolling"
+
+    def compute(self, tech: Any, request: Any, env: Any) -> float:
+        _ = tech, request
+        deque_ = getattr(env, "_recent_repair_durations", None)
+        if deque_ is None or len(deque_) == 0:
+            return 0.0
+        return float(sum(deque_)) / len(deque_)
+
+
 class RepairQuality(StepMetric):
     """Skill-based repair quality of the chosen technician.
 
-    Returns a score in ``[0, 1]`` where 1.0 means the technician has
-    full expertise for this repair type and 0.0 means none.
+    Defined as ``1 - knowledge_multiplier`` where the multiplier sits in
+    ``[min_repair_fraction, 1]``.  Reported range is therefore
+    ``[0, 1 - min_repair_fraction]``:
+
+    * ``0``                       — chosen technician has no knowledge
+                                    of this failure type.
+    * ``1 - min_repair_fraction`` — chosen technician has saturated
+                                    knowledge (e.g. ~0.7 at the default
+                                    floor of 0.3).  This is the
+                                    practical maximum; a value of 1.0
+                                    would mean an instantaneous repair,
+                                    which the floor forbids.
+
+    Uses :meth:`GymTechnician.get_knowledge_multiplier`, so per-component
+    overrides of ``min_repair_fraction`` and ``knowledge_sensitivity``
+    are honoured when
+    ``sim.repair.failure_wise_knowledge_parameters=True``.
+
+    Fatigue is intentionally *not* in this metric — quality measures
+    competence (knowledge-failure match), not speed; the speed cost of
+    fatigue is captured by :class:`RepairTimeDelta(Percent)` instead.
 
     In the current simulation all repairs restore the component to full
-    health ("perfect repair"), so this metric captures the *competence*
-    dimension of quality — how well the tech's knowledge matches the
-    failure — rather than a partial-health outcome.
+    health, so this metric captures the *competence* dimension of
+    quality rather than a partial-health outcome.
     """
 
     name = "repair_quality"
@@ -257,7 +322,7 @@ class RepairQuality(StepMetric):
         get_km = getattr(tech, "get_knowledge_multiplier", None)
         if get_km is None or not callable(get_km):
             return 0.0
-        # multiplier ∈ (0, 1]: 1 = no knowledge, near 0 = full expertise
+        # multiplier ∈ [min_floor, 1]: 1 = no knowledge, min_floor = saturated.
         multiplier = float(get_km(request))
         return max(0.0, min(1.0, 1.0 - multiplier))
 
@@ -365,6 +430,36 @@ class MeanTimeToRepair(EpisodeMetric):
         return total / repairs
 
 
+class MeanTimeBetweenFailures(EpisodeMetric):
+    """Mean fleet uptime per breakdown (MTBF).
+
+    Computed as ``total_uptime / total_breakdowns`` where
+    ``total_uptime = sim_time * n_machines - total_downtime`` aggregates
+    the operational machine-time across the fleet, and
+    ``total_breakdowns`` sums per-machine breakdown counts captured at
+    the moment each machine transitions to broken (so pending tickets
+    still queued at the agent are included).  Higher is better — a
+    well-maintained fleet sees longer stretches between failures.
+    Returns 0 when no breakdown has occurred yet.
+    """
+
+    name = "mtbf"
+
+    def compute(self, env: Any) -> float:
+        counts = getattr(env, "_machine_breakdown_counts", {})
+        total_breakdowns = float(sum(counts.values()))
+        if total_breakdowns <= 0.0:
+            return 0.0
+        machines = env._factory_machines()
+        now = float(getattr(env.sim_env, "now", 0.0))
+        total_machine_time = now * len(machines)
+        total_down = float(getattr(env, "_total_downtime", 0.0))
+        down_since = getattr(env, "_machine_down_since", {})
+        active_down = sum(now - t0 for t0 in down_since.values())
+        uptime = max(0.0, total_machine_time - total_down - active_down)
+        return uptime / total_breakdowns
+
+
 class FleetAvailabilityRate(EpisodeMetric):
     """Fraction of machine-time spent operational (OEE availability).
 
@@ -384,6 +479,36 @@ class FleetAvailabilityRate(EpisodeMetric):
         down_since = getattr(env, "_machine_down_since", {})
         active_down = sum(now - t0 for t0 in down_since.values())
         return max(0.0, 1.0 - (total_down + active_down) / total_available)
+
+
+class WorkloadBalance(EpisodeMetric):
+    """How evenly assignments were spread across the technician fleet.
+
+    Reports Jain's fairness index on ``env._tech_assignment_counts``:
+
+    ``J(x) = (sum x)^2 / (n * sum x^2)``
+
+    Returns a value in ``[1/n, 1]``: ``1.0`` when every technician got
+    the same number of assignments, ``1/n`` when one technician got
+    them all.  Returns ``1.0`` when no assignment has been made yet
+    (vacuously balanced).  Independent of total assignment volume so
+    it is comparable across episodes of different lengths.
+    """
+
+    name = "workload_balance"
+
+    def compute(self, env: Any) -> float:
+        counts = list(getattr(env, "_tech_assignment_counts", []))
+        n = len(counts)
+        if n == 0:
+            return 1.0
+        total = float(sum(counts))
+        if total <= 0.0:
+            return 1.0
+        sq = float(sum(c * c for c in counts))
+        if sq <= 0.0:
+            return 1.0
+        return (total * total) / (n * sq)
 
 
 class ThroughputRate(EpisodeMetric):
@@ -412,6 +537,7 @@ STEP_METRICS: list[StepMetric] = [
     RepairTimeDelta(),
     RepairTimeDeltaPercent(),
     RepairQuality(),
+    MeanTimeToRepairRolling(),
     TechnicianKnowledge(),
     TechnicianFatigue(),
     TechnicianSpecializationIndex(),
@@ -424,6 +550,8 @@ EPISODE_METRICS: list[EpisodeMetric] = [
     IllTechnicianCount(),
     FinishedProducts(),
     MeanTimeToRepair(),
+    MeanTimeBetweenFailures(),
     FleetAvailabilityRate(),
+    WorkloadBalance(),
     ThroughputRate(),
 ]
