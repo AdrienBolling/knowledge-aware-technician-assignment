@@ -250,15 +250,18 @@ class RepairConfig(BaseModel):
         ),
     )
     knowledge_sensitivity: float = Field(
-        default=0.002,
+        default=0.15,
         gt=0.0,
         description=(
             "Decay rate ``alpha`` of the saturating-exponential knowledge "
             "response.  Larger values produce a steeper speed-up at low "
             "knowledge; smaller values give a more gradual descent.  "
-            "With the default knowledge-grid settings (learning_rate=0.1, "
-            "propagation_sigma=1.0) ``alpha=0.002`` saturates the "
-            "multiplier at the floor after ~60–70 similar repairs."
+            "With the default knowledge-grid settings (learning_rate≈0.7, "
+            "propagation_sigma=1.5) ``alpha=0.15`` gives ~37 % speed-up "
+            "at k≈5 (a moderately-trained tech) and approaches the floor "
+            "by k≈20.  The previous default of 0.002 was an unintended "
+            "legacy value that left the curve essentially flat — pinning "
+            "``m_k≈1`` even after dozens of similar repairs."
         ),
     )
     failure_wise_knowledge_parameters: bool = Field(
@@ -586,6 +589,18 @@ class GymEnvConfig(BaseModel):
             "informative for longer-horizon training runs."
         ),
     )
+    mttr_rolling_window: int = Field(
+        default=50,
+        gt=0,
+        description=(
+            "Window size for the per-step ``mttr_rolling`` metric.  The "
+            "environment keeps a deque of the last ``mttr_rolling_window`` "
+            "completed repair durations and the metric reports their mean "
+            "at every assignment step.  Smaller windows surface recent "
+            "fluctuations; larger windows smooth them out.  The cumulative "
+            "episode-level ``mttr`` metric is unaffected."
+        ),
+    )
     reward: GymRewardConfig = Field(
         default_factory=GymRewardConfig,
         description="Composable reward settings with configurable sub-components.",
@@ -815,12 +830,25 @@ class RandomizedScenarioConfig(BaseModel):
     pools.  Used during training to prevent the agent from overfitting
     to a single factory layout.
 
-    The number of technicians is kept FIXED across episodes so the
-    action space (``Discrete(n_techs)``) stays stable; their *profiles*
-    are sampled from ``technician_templates``.  Machines vary in count
-    (``n_machines_min``..``n_machines_max``) and templates.  The route
-    is sampled from the set of machine types actually present in the
-    drawn machines, so products always have somewhere to go.
+    Technician sampling has three modes (precedence top → bottom):
+
+    * **coherence-ratio mode** — both ``techs_per_machine_min`` and
+      ``techs_per_machine_max`` set.  ``n_techs`` is derived from the
+      sampled ``n_machines`` via a per-scenario uniform ratio so the
+      fleet size scales with the factory size.
+    * **range mode** — both ``n_technicians_min`` and
+      ``n_technicians_max`` set.  ``n_techs`` is drawn uniformly in
+      that range (independent of ``n_machines``).
+    * **fixed mode** (the default) — uses ``n_technicians``.  The
+      action space ``Discrete(n_techs)`` stays stable across episodes.
+
+    The route is always sampled from the set of machine types actually
+    present in the drawn machines, so products always have somewhere
+    to go even when ``machine_templates`` changes meaning across
+    runs.  ``episodes_per_scenario`` controls how often a new factory
+    is drawn — ``1`` (default) reproduces the original "fresh env per
+    episode" behaviour; ``k > 1`` reuses the same scenario for ``k``
+    consecutive resets before re-sampling.
     """
 
     enabled: bool = Field(
@@ -838,7 +866,63 @@ class RandomizedScenarioConfig(BaseModel):
     n_technicians: int = Field(
         default=4,
         gt=0,
-        description="Fixed number of technicians (action space size).",
+        description=(
+            "Number of technicians when neither variable-tech mode "
+            "(``n_technicians_min/max``) nor the coherence-ratio mode "
+            "(``techs_per_machine_min/max``) is set.  Acts as the fixed "
+            "action-space size in the default per-episode randomisation "
+            "regime."
+        ),
+    )
+    n_technicians_min: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Lower bound on the number of technicians.  When both "
+            "``n_technicians_min`` and ``n_technicians_max`` are set, the "
+            "sampler draws ``n_techs`` uniformly in that closed range and "
+            "the action-space size varies across scenarios.  Leave ``None`` "
+            "to keep the fixed-fleet behaviour."
+        ),
+    )
+    n_technicians_max: int | None = Field(
+        default=None,
+        gt=0,
+        description="Upper bound on the number of technicians (see ``n_technicians_min``).",
+    )
+    techs_per_machine_min: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Lower bound on the technicians-per-machine ratio.  When both "
+            "``techs_per_machine_min`` and ``techs_per_machine_max`` are "
+            "set, the sampler first draws ``n_machines`` and then derives "
+            "``n_techs = round(n_machines * uniform(min, max))`` so the "
+            "fleet stays *coherent* with the factory size.  Result is "
+            "clamped to at least 1 and to ``[n_technicians_min, "
+            "n_technicians_max]`` when those bounds are also set.  Takes "
+            "precedence over the plain ``n_technicians_min/max`` range "
+            "when both are configured."
+        ),
+    )
+    techs_per_machine_max: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Upper bound on the technicians-per-machine ratio (see ``techs_per_machine_min``).",
+    )
+    episodes_per_scenario: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of consecutive episodes that reuse the same sampled "
+            "scenario before a fresh one is drawn.  Default 1 keeps the "
+            "original 'change the env every episode' behaviour.  Set to "
+            "``k > 1`` to keep the factory fixed for ``k`` resets — useful "
+            "for letting an agent settle on the same layout while still "
+            "training across many layouts overall.  Routes and "
+            "technicians are resampled together with machines at each "
+            "switch, so they always remain mutually coherent."
+        ),
     )
     technician_templates: list[str] = Field(
         default_factory=lambda: ["expert", "senior", "generalist", "junior", "trainee"],

@@ -40,7 +40,7 @@
       "knowledge_enabled": true,
       "fatigue_enabled": true,
       "min_repair_fraction": 0.3,
-      "knowledge_sensitivity": 0.1,
+      "knowledge_sensitivity": 0.15,
       "failure_wise_knowledge_parameters": true
     },
     "disruptions": {

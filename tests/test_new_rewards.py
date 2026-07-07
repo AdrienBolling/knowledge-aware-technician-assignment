@@ -833,3 +833,167 @@ class TestNewEpisodeMetrics:
         assert "throughput_rate" in metrics
         # 10 products / 1000 time * 1000 = 10.0
         assert metrics["throughput_rate"] == 10.0
+
+
+# ======================================================================
+# Step metric: repair_time_delta(_per) signed semantics
+# ======================================================================
+
+
+class _FakeTechForDelta:
+    """Tech stub with knobs to dial knowledge / fatigue multipliers."""
+
+    def __init__(self, knowledge_mult: float, fatigue_mult: float = 1.0):
+        self._km = float(knowledge_mult)
+        self._fm = float(fatigue_mult)
+
+    def compute_repair_time(self, base: float, request) -> float:
+        return float(base) * self._km * self._fm
+
+    def get_knowledge_multiplier(self, request) -> float:
+        return self._km
+
+
+class _FakeRepairRequest:
+    def __init__(self, base_repair_time: float = 100.0):
+        self._base = float(base_repair_time)
+
+    def get_repair_time(self) -> float:
+        return self._base
+
+
+class TestRepairTimeDeltaSignedSemantics:
+    """``RepairTimeDelta`` / ``RepairTimeDeltaPercent`` must report slowdowns
+    as *negative* values, not silently clip them to 0 — otherwise the
+    episode mean is biased upward.
+    """
+
+    def test_speedup_is_positive(self):
+        from kata.metrics import RepairTimeDelta, RepairTimeDeltaPercent
+
+        tech = _FakeTechForDelta(knowledge_mult=0.5, fatigue_mult=1.0)
+        req = _FakeRepairRequest(base_repair_time=100.0)
+        # effective = 100 * 0.5 * 1.0 = 50  →  delta = 50, pct = 50 %
+        assert RepairTimeDelta().compute(tech, req, env=None) == 50.0
+        assert RepairTimeDeltaPercent().compute(tech, req, env=None) == 50.0
+
+    def test_baseline_is_zero(self):
+        from kata.metrics import RepairTimeDelta, RepairTimeDeltaPercent
+
+        tech = _FakeTechForDelta(knowledge_mult=1.0, fatigue_mult=1.0)
+        req = _FakeRepairRequest(base_repair_time=100.0)
+        assert RepairTimeDelta().compute(tech, req, env=None) == 0.0
+        assert RepairTimeDeltaPercent().compute(tech, req, env=None) == 0.0
+
+    def test_fatigue_slowdown_is_negative(self):
+        """Fatigue mult > 1 drives effective above base → signed-negative delta."""
+        from kata.metrics import RepairTimeDelta, RepairTimeDeltaPercent
+
+        tech = _FakeTechForDelta(knowledge_mult=1.0, fatigue_mult=1.5)
+        req = _FakeRepairRequest(base_repair_time=100.0)
+        # effective = 100 * 1.0 * 1.5 = 150 → delta = -50, pct = -50 %
+        assert RepairTimeDelta().compute(tech, req, env=None) == -50.0
+        assert RepairTimeDeltaPercent().compute(tech, req, env=None) == -50.0
+
+    def test_knowledge_swamped_by_fatigue_is_negative(self):
+        """Mild knowledge speedup overwhelmed by heavy fatigue → still negative."""
+        from kata.metrics import RepairTimeDelta, RepairTimeDeltaPercent
+
+        tech = _FakeTechForDelta(knowledge_mult=0.8, fatigue_mult=2.0)
+        req = _FakeRepairRequest(base_repair_time=100.0)
+        # effective = 100 * 0.8 * 2.0 = 160 → delta = -60, pct = -60 %
+        assert RepairTimeDelta().compute(tech, req, env=None) == -60.0
+        assert RepairTimeDeltaPercent().compute(tech, req, env=None) == -60.0
+
+    def test_percent_zero_when_base_is_zero(self):
+        from kata.metrics import RepairTimeDeltaPercent
+
+        tech = _FakeTechForDelta(knowledge_mult=0.5)
+        req = _FakeRepairRequest(base_repair_time=0.0)
+        assert RepairTimeDeltaPercent().compute(tech, req, env=None) == 0.0
+
+
+# ======================================================================
+# Step metric: rolling MTTR over the episode
+# ======================================================================
+
+
+class TestMTTRRolling:
+    """``mttr_rolling`` averages the last ``mttr_rolling_window`` completed
+    repair durations and is emitted at every assignment step."""
+
+    def test_zero_until_first_repair_completes(self):
+        from kata.metrics import MeanTimeToRepairRolling
+        sim_env = FakeSimEnv()
+        sim_env.now = 100.0
+        dispatcher = FakeDispatcher(tech_count=1)
+        dispatcher.repair_queue.items.append(FakeRequest(machine_id=1, created_at=0.0))
+
+        env = _make_env(sim_env=sim_env, dispatcher=dispatcher)
+        env.reset()
+        # No repairs completed → deque empty → metric returns 0.
+        assert MeanTimeToRepairRolling().compute(None, None, env) == 0.0
+
+    def test_single_sample_equals_that_duration(self):
+        from kata.metrics import MeanTimeToRepairRolling
+        sim_env = FakeSimEnv()
+        sim_env.now = 100.0
+        dispatcher = FakeDispatcher(tech_count=1)
+        dispatcher.repair_queue.items.append(FakeRequest(machine_id=1, created_at=0.0))
+
+        env = _make_env(sim_env=sim_env, dispatcher=dispatcher)
+        env.reset()
+        env._on_repair_completed(FakeRequest(), 42.0)
+        assert MeanTimeToRepairRolling().compute(None, None, env) == 42.0
+
+    def test_average_over_completed_repairs(self):
+        from kata.metrics import MeanTimeToRepairRolling
+        sim_env = FakeSimEnv()
+        sim_env.now = 200.0
+        dispatcher = FakeDispatcher(tech_count=1)
+        dispatcher.repair_queue.items.append(FakeRequest(machine_id=1, created_at=0.0))
+
+        env = _make_env(sim_env=sim_env, dispatcher=dispatcher)
+        env.reset()
+        for d in (10.0, 20.0, 30.0):
+            env._on_repair_completed(FakeRequest(), d)
+        # Mean of all three (window has not slid yet).
+        assert MeanTimeToRepairRolling().compute(None, None, env) == 20.0
+
+    def test_window_bounds_keep_only_most_recent(self):
+        """Once the window is full, older samples are dropped."""
+        from kata.metrics import MeanTimeToRepairRolling
+        sim_env = FakeSimEnv()
+        sim_env.now = 500.0
+        dispatcher = FakeDispatcher(tech_count=1)
+        dispatcher.repair_queue.items.append(FakeRequest(machine_id=1, created_at=0.0))
+
+        env = _make_env(
+            sim_env=sim_env,
+            dispatcher=dispatcher,
+            mttr_rolling_window=3,
+        )
+        env.reset()
+        # Push 5 durations; only the last 3 should count.
+        for d in (1.0, 2.0, 3.0, 100.0, 200.0):
+            env._on_repair_completed(FakeRequest(), d)
+        # Mean of (3, 100, 200) == 101.0
+        assert MeanTimeToRepairRolling().compute(None, None, env) == 101.0
+
+    def test_reset_clears_window(self):
+        from kata.metrics import MeanTimeToRepairRolling
+        sim_env = FakeSimEnv()
+        sim_env.now = 100.0
+        dispatcher = FakeDispatcher(tech_count=1)
+        dispatcher.repair_queue.items.append(FakeRequest(machine_id=1, created_at=0.0))
+
+        env = _make_env(sim_env=sim_env, dispatcher=dispatcher)
+        env.reset()
+        for d in (10.0, 20.0):
+            env._on_repair_completed(FakeRequest(), d)
+        assert MeanTimeToRepairRolling().compute(None, None, env) == 15.0
+
+        # Re-queue so reset doesn't short-circuit, then re-reset.
+        dispatcher.repair_queue.items.append(FakeRequest(machine_id=1, created_at=0.0))
+        env.reset()
+        assert MeanTimeToRepairRolling().compute(None, None, env) == 0.0

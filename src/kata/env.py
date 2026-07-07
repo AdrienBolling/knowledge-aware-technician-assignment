@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import math
 from collections.abc import Callable
 from typing import Any
@@ -425,6 +426,14 @@ class KataEnv(gym.Env):
         # the MTTR metric so it reflects mean repair *duration*, not the
         # mean time between repairs.
         self._total_repair_time: float = 0.0
+        # Sliding window of the most recent completed repair durations.
+        # Drives the per-step ``mttr_rolling`` metric so the runner can
+        # plot how MTTR evolves within an episode.  Window size comes
+        # from ``GymEnvConfig.mttr_rolling_window``; a deque with maxlen
+        # discards the oldest sample as new ones arrive.
+        self._recent_repair_durations: collections.deque[float] = collections.deque(
+            maxlen=int(self.config.mttr_rolling_window)
+        )
 
         # State tracking for delta-based rewards.  These are updated on
         # every step (regardless of which reward components are enabled)
@@ -1909,7 +1918,10 @@ class KataEnv(gym.Env):
         """Dispatcher callback invoked when a repair finishes."""
         _ = request
         self._completed_repair_counter += 1
-        self._total_repair_time += float(repair_duration)
+        duration = float(repair_duration)
+        self._total_repair_time += duration
+        # Feed the sliding window backing the ``mttr_rolling`` step metric.
+        self._recent_repair_durations.append(duration)
 
     def _selection_diversity_raw(self, action: int) -> float:
         """Reward for spreading assignments across the fleet.
@@ -2019,6 +2031,7 @@ class KataEnv(gym.Env):
         self._repair_counter = 0
         self._completed_repair_counter = 0
         self._total_repair_time = 0.0
+        self._recent_repair_durations.clear()
         self._prev_finished_products = 0
         self._machine_down_since = {}
         self._total_downtime = 0.0
