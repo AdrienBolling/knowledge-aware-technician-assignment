@@ -1,0 +1,31 @@
+{
+  "agent_type": "set_transformer",
+  "params": {
+    "d_model": 128,
+    "n_heads": 4,
+    "n_layers": 3,
+    "dropout": 0.1,
+    "value_hidden": 256,
+    "pointer_d_attn": 64,
+    "gamma": 0.997,
+    "gae_lambda": 0.97,
+    "clip_eps": 0.2,
+    "clip_eps_vf": 0.2,
+    "entropy_coef": 0.01,
+    "value_coef": 0.5,
+    "target_kl": 0.02,
+    "normalize_advantages": true,
+    "lr": 0.0003,
+    "weight_decay": 0.0,
+    "max_grad_norm": 1.0,
+    "rollout_steps": 2048,
+    "n_epochs": 4,
+    "minibatch_size": 256,
+    "total_updates": 1500,
+    "warmup_updates": 50,
+    "use_action_mask": true,
+    "normalize_rewards": true,
+    "use_amp": false,
+    "device": "auto"
+  }
+}

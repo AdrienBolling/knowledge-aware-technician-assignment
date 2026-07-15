@@ -198,6 +198,25 @@ class ExperimentConfig(BaseModel):
         gt=0,
         description="Print training progress every N episodes to stdout.",
     )
+    parallel_envs: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of parallel training environments.  1 keeps the "
+            "classic single-env episode loop (fully backward "
+            "compatible).  >1 switches training to vectorised, "
+            "step-based PPO rounds over independent simulator workers "
+            "(see experiment.vec_env); evaluation is unaffected."
+        ),
+    )
+    vec_async: bool = Field(
+        default=True,
+        description=(
+            "With parallel_envs > 1: run workers in subprocesses "
+            "(true parallelism) rather than stepping them in-process "
+            "(useful only for debugging determinism)."
+        ),
+    )
 
     eval: EvalConfig = Field(default_factory=EvalConfig)
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)

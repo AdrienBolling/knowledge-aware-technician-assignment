@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import sys
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -1015,6 +1016,8 @@ class Experiment:
     def _train_loop(self) -> dict[str, list[float]]:
         """Run the training loop with optional inline eval."""
         cfg = self.exp_cfg
+        if getattr(cfg, "parallel_envs", 1) > 1:
+            return self._train_loop_vec()
         is_learning = self.agent_cfg.agent_type in _LEARNING_AGENTS
 
         history: dict[str, list[float]] = {
@@ -1161,6 +1164,144 @@ class Experiment:
     # ------------------------------------------------------------------
     # Episode runner
     # ------------------------------------------------------------------
+
+    def _train_loop_vec(self) -> dict[str, list[float]]:
+        """Vectorised training: step-based PPO rounds over parallel envs.
+
+        Semantics differ from the episode-based loop in one way only:
+        the agent updates every ``rollout_steps`` decisions per worker
+        (with per-stream GAE bootstrapping at the round boundary)
+        instead of at each episode end.  Episode accounting, periodic
+        deterministic evaluation, checkpointing, and W&B logging are
+        preserved.  Per-step report rows are not written in this mode.
+
+        Requires an agent exposing ``select_actions`` /
+        ``observe_transition(..., env_id=)`` / ``reset_stream`` —
+        currently the SetTransformer PPO agent.
+        """
+        import numpy as _np
+
+        from experiment.vec_env import build_vector_env, unbatch_obs
+
+        cfg = self.exp_cfg
+        n = int(cfg.parallel_envs)
+        agent = self.agent
+        if not hasattr(agent, "select_actions"):
+            msg = (
+                f"parallel_envs={n} requires a vector-capable agent; "
+                f"{self.agent_cfg.agent_type} has no select_actions()."
+            )
+            raise NotImplementedError(msg)
+
+        vocab = getattr(agent, "_vocab", None) or (
+            self.tokenizer.get_vocab() if self.tokenizer is not None else None
+        )
+        venv = build_vector_env(
+            self.env_cfg,
+            self.agent_cfg.agent_type,
+            n,
+            base_seed=cfg.seed,
+            vocab=vocab,
+            use_async=bool(getattr(cfg, "vec_async", True)),
+        )
+        rollout_steps = int(getattr(agent, "rollout_steps", 2048))
+
+        history: dict[str, list[float]] = {
+            "return": [], "length": [], "loss": [], "entropy": [],
+        }
+        progress = tqdm(
+            total=cfg.n_episodes,
+            desc=f"Training {self.agent_cfg.agent_type} (x{n} envs)",
+            unit="ep",
+            dynamic_ncols=True,
+            leave=True,
+            file=sys.stderr,
+        )
+        try:
+            obs, _ = venv.reset(seed=[cfg.seed * 100 + i for i in range(n)])
+            prev_done = _np.zeros(n, dtype=bool)
+            ep_return = _np.zeros(n, dtype=_np.float64)
+            ep_len = _np.zeros(n, dtype=_np.int64)
+            episodes_done = 0
+            round_idx = 0
+            best_eval = float("-inf")
+            while episodes_done < cfg.n_episodes:
+                for _step in range(rollout_steps):
+                    obs_list = unbatch_obs(obs, n)
+                    actions = agent.select_actions(obs_list, env_ids=list(range(n)))
+                    next_obs, rewards, terms, truncs, _infos = venv.step(actions)
+                    next_obs_list = unbatch_obs(next_obs, n)
+                    for i in range(n):
+                        if prev_done[i]:
+                            # Autoreset step: the env ignored our action and
+                            # returned the first obs of a new episode — do
+                            # not record, just clear per-episode state.
+                            agent.reset_stream(i)
+                            continue
+                        agent.observe_transition(
+                            obs_list[i],
+                            actions[i],
+                            float(rewards[i]),
+                            next_obs_list[i],
+                            bool(terms[i]),
+                            bool(truncs[i]),
+                            {},
+                            env_id=i,
+                        )
+                        ep_return[i] += float(rewards[i])
+                        ep_len[i] += 1
+                        if terms[i] or truncs[i]:
+                            episodes_done += 1
+                            history["return"].append(float(ep_return[i]))
+                            history["length"].append(float(ep_len[i]))
+                            self._log_wandb(
+                                {
+                                    "train/return": float(ep_return[i]),
+                                    "train/length": float(ep_len[i]),
+                                    "train/episodes": episodes_done,
+                                },
+                                episodes_done,
+                            )
+                            ep_return[i] = 0.0
+                            ep_len[i] = 0
+                            progress.update(1)
+                    prev_done = _np.asarray(terms) | _np.asarray(truncs)
+                    obs = next_obs
+                update_metrics = agent.update() or {}
+                round_idx += 1
+                history["loss"].append(update_metrics.get("loss", float("nan")))
+                history["entropy"].append(
+                    update_metrics.get("entropy", float("nan"))
+                )
+                self._log_wandb(
+                    {f"update/{k}": v for k, v in update_metrics.items()},
+                    episodes_done,
+                )
+                # Periodic deterministic eval on the fixed eval scenario —
+                # metric-based monitoring (finished products, MTTR, ...)
+                # lives here, not in the training reward.
+                if (
+                    cfg.eval.enabled
+                    and round_idx % max(1, cfg.eval.interval) == 0
+                ):
+                    eval_stats = self._inline_eval(episodes_done)
+                    mean_ret = float(eval_stats.get("eval/return_mean", float("nan")))
+                    if (
+                        cfg.checkpoint.enabled
+                        and cfg.checkpoint.save_best
+                        and mean_ret > best_eval
+                    ):
+                        best_eval = mean_ret
+                        self._save_checkpoint("best")
+                if (
+                    cfg.checkpoint.enabled
+                    and round_idx % max(1, cfg.checkpoint.interval) == 0
+                ):
+                    self._save_checkpoint(f"round{round_idx:05d}")
+        finally:
+            progress.close()
+            venv.close()
+        return history
 
     def _run_episode(
         self,

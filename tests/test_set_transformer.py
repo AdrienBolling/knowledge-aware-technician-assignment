@@ -172,7 +172,8 @@ class TestSetTransformerEncoder:
         # Make a few tech slots valid so attention has something to do
         obs["tech_mask"][:, :3] = 1
         obs["machine_mask"][:, :10] = 1
-        logits, value = ac(obs)
+        logits, value, hidden = ac(obs)
+        assert hidden is None  # no RNN configured -> hidden passes through
         assert logits.shape == (b, 30)
         assert value.shape == (b,)
 
