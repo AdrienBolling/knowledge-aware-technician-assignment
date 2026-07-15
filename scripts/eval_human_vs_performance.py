@@ -257,6 +257,15 @@ def main() -> int:
     ap.add_argument("--n-eps", type=int, default=None)
     ap.add_argument("--sim", type=float, default=None)
     ap.add_argument("--steps", type=int, default=None)
+    ap.add_argument("--agents", default="all",
+                    help="comma-separated agent keys to run "
+                         "(human,performance,random,round_robin,least_busy,"
+                         "least_fatigued,shortest_queue), 'trained', "
+                         "'heuristics', or 'all'")
+    ap.add_argument("--merge", action="store_true",
+                    help="merge results into existing artifacts in the "
+                         "output dir: rows of the re-run agents are "
+                         "replaced, all other agents' rows are kept")
     ap.add_argument("--record-every", type=int, default=1)
     ap.add_argument("--out-root", default="reports/hvp_eval")
     args = ap.parse_args()
@@ -270,6 +279,17 @@ def main() -> int:
             sim_override=args.sim, steps_override=args.steps,
         )
         agents = build_agents(env_cfg, factory, n_techs)
+        if args.agents != "all":
+            if args.agents == "trained":
+                keep = set(CHECKPOINTS)
+            elif args.agents == "heuristics":
+                keep = set(HEURISTICS)
+            else:
+                keep = {k.strip() for k in args.agents.split(",")}
+            unknown = keep - set(agents)
+            if unknown:
+                raise SystemExit(f"unknown agent keys: {sorted(unknown)}")
+            agents = {k: v for k, v in agents.items() if k in keep}
         print(f"agents: {list(agents)} | n_techs={n_techs} "
               f"| horizon sim={env_cfg.gym.max_sim_time:.0f} "
               f"steps={env_cfg.gym.max_episode_steps} | episodes={n_eps}",
@@ -297,8 +317,24 @@ def main() -> int:
                       f"avail={kpis.get('fleet_availability_rate', float('nan')):.3f}  "
                       f"[{dt:.1f}s]", flush=True)
 
-        pd.DataFrame(ep_rows).to_csv(out_dir / "episodes.csv", index=False)
-        pd.concat(step_frames, ignore_index=True).to_csv(
+        ep_df = pd.DataFrame(ep_rows)
+        steps_df = pd.concat(step_frames, ignore_index=True)
+        if args.merge and (out_dir / "episodes.csv").is_file():
+            rerun = set(ep_df["agent"])
+            old_ep = pd.read_csv(out_dir / "episodes.csv")
+            ep_df = pd.concat(
+                [old_ep[~old_ep["agent"].isin(rerun)], ep_df],
+                ignore_index=True,
+            )
+            old_steps = pd.read_csv(out_dir / "steps.csv.gz")
+            steps_df = pd.concat(
+                [old_steps[~old_steps["agent"].isin(rerun)], steps_df],
+                ignore_index=True,
+            )
+            print(f"  [merge] replaced rows for {sorted(rerun)}; "
+                  f"kept {sorted(set(ep_df['agent']) - rerun)}", flush=True)
+        ep_df.to_csv(out_dir / "episodes.csv", index=False)
+        steps_df.to_csv(
             out_dir / "steps.csv.gz", index=False, compression="gzip"
         )
         manifest = {
@@ -312,6 +348,8 @@ def main() -> int:
             "max_eval_steps": env_cfg.gym.max_episode_steps,
             "eval_seed": EVAL_SEED,
             "deterministic": True,
+            "agents_run": list(agents),
+            "merged": bool(args.merge),
             "record_every": args.record_every,
             "n_techs": n_techs,
             "machine_types": mtypes,
