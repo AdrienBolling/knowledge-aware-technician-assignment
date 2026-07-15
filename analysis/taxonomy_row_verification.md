@@ -199,3 +199,63 @@ Each surveyed paper was checked against its title/abstract (web search where mis
 
 ## `wasiHRGraphLeveragingLLMs2024`
 - note: No abstract in bib, verified from knowledge of the paper: LLMs extract HR entities (skills, jobs, employees) from CVs/job descriptions into knowledge graphs, then GNN-style information propagation over node embeddings yields job and employee recommendations. Skills appear as multi-skill entity profiles (MSK) embedded in graph space (LAT); no skill dynamics (STATIC). HIST was considered (CV/experience documents) but the data is static-document rather than longitudinal history, so not proposed.
+
+---
+
+# 2026-07-15 — Strict-Grillo common-parameters block
+
+Table 1's common parameters were realigned to use *strictly* the classic
+Grillo et al. (2022) categories, per author request.
+
+## Structural changes
+
+- **Objectives**: the six classic categories are now all tabulated in Grillo's
+  order — `PROF COST EXE RAT PERM QUAL` — restoring `PROF` (profit) and
+  `PERM` (permutation), previously omitted. Both columns are empty across the
+  43 surveyed works (verified during the 2026-07-06 row audit); the empty
+  columns are kept deliberately and read as a finding (drift of the dispatching
+  literature away from classic assignment-problem objectives). 4.0 (`BAL WELL`)
+  and ours (`TARDY AVAIL FLEX RISK MOD`) unchanged.
+- **Constraints**: the three classic families are now tabulated — `TPP`
+  (tasks per person), `PPT` (persons per task), `RES` (balance constraints,
+  code kept to avoid collision with the `BAL` objective). `ELIG` was
+  **dropped**: in Grillo's Table 5 the qualified-assignment variants are rows
+  *inside* the two cardinality families, so a separate eligibility column
+  duplicated categories now tabulated. The qualification aspect remains visible
+  through the `QUAL` objective and the Skill-state block. 4.0 (`DISR REC`)
+  unchanged.
+- Legend descriptions for all classic categories replaced with shortened
+  quotes from Grillo Tables 4/5 and §2.2.2.
+
+## TPP/PPT marking rule
+
+Marked for every work whose model takes an explicit task–person assignment
+decision (any ≤/≥/= or qualified variant, optimized or rule-driven); works
+that only model, predict, or analyse the human state carry neither. Grillo
+§3.2 justifies the near-uniform columns: these families are "mandatory as a
+minimum to consider the model to be an HRAP one".
+
+**Unmarked (11)**: `xuSequencingLearningForgetting2025`,
+`heuserSinglemachineSchedulingProduct2023` (single-machine sequencing — no
+person-assignment dimension); `ranasingheEffectsStochasticHeterogeneous2024`,
+`denuHumanCentricDigitalSimulation2024` (system-analysis simulations, no
+assignment decision); `alvarezHumanProfessionalSkills2025` (skill assessment);
+`long-feiModelingUserBehaviors2020` (knowledge modelling);
+`liuEKTExerciseawareKnowledge2019`, `liangHELPDKTInterpretableCognitive2022`,
+`hashemifarPersonalizedStudentKnowledge2025` (knowledge tracing);
+`wasiHRGraphLeveragingLLMs2024` (recommendation only);
+`zhangGraphNeuralNetworks2022` (citation mismatch, coded model-only).
+
+**Marked (32 + This work)**: all remaining rows, including
+`tienModelingInfluenceTechnician2018` (simulation, but repair jobs are
+explicitly dispatched to technicians — ROUT already coded),
+`lvTeamFormationLarge2024` (team formation: persons-per-task = group size),
+`leeIndustrialHumanResource2020` (person–job matching outputs assignments),
+and the nurse-rostering/allocation works. "This work": one technician per
+ticket (PPT = 1) and one active repair per technician (TPP ≤ 1).
+
+## Totals
+
+Grand total 385 → **434** (−15 ELIG, +32 TPP, +32 PPT); "This work" row
+17 → **19** marks. Every row's printed total re-verified against its mark
+count during the mechanical transform (all 43 passed).
