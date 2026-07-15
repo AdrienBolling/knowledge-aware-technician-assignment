@@ -28,8 +28,8 @@ Thesis: RL dispatching with human-centric reward (fleet knowledge growth + fatig
 
 | Decision | Rationale |
 |---|---|
-| Table 1 codes follow Grillo denominations: `COST EXE RAT QUAL` (classic) / `BAL WELL` (4.0) / `TARDY AVAIL FLEX RISK MOD` (ours); constraints `ELIG RES` / `DISR REC`; Scope + Method blocks marked "ours" | "Go back to Grillo denomination when possible"; fine columns kept because C1–C4/H1–H5 cluster analysis depends on them |
-| `PROF`/`PERM` omitted from Table 1; cardinality families untabulated | No surveyed work uses them; dispatching trivially assigns one worker per task (said in legend) |
+| Table 1 common block (2026-07-15, strict-Grillo rework): objectives `PROF COST EXE RAT PERM QUAL` (classic, Grillo order) / `BAL WELL` (4.0) / `TARDY AVAIL FLEX RISK MOD` (ours); constraints `TPP PPT RES` (classic) / `DISR REC` (4.0); Scope + Method "ours" | User: use strictly Grillo's classic categories; legend descriptions are shortened Grillo quotes |
+| `PROF`/`PERM` columns kept **empty** (0 marks); `ELIG` dropped; `TPP`/`PPT` marked for the 32 works with an explicit assignment decision (11 model/predict-only rows unmarked — list in audit trail) | Empty columns = a finding (drift from classic objectives); ELIG duplicated Grillo's qualified variants inside the cardinality families; Grillo §3.2: TPP/PPT/RES "mandatory" for an HRAP model. Grand total 385→434, This-work row 17→19 |
 | Row corrections applied conservatively (43 adds, 11 removals; felberbauer B→A, goncalves C→A) | Only abstract-verifiable changes; judgment calls flagged in `analysis/taxonomy_row_verification.md` |
 | §5 documents the MDP **implementation** (state schema, event loop, action semantics, reward table `tab:reward_components`); §6 Method covers the learned encoders | §5 written from actual code (`env.py::_build_token_stream/_set_obs/_action_mask/_reward_for_assignment`) — keep in sync if obs schema or reward stack changes |
 | §5 framing: event-driven POMDP with semi-MDP remark; γ discounts decision steps, not sim time | Matches implementation; soften if reviewers balk |
