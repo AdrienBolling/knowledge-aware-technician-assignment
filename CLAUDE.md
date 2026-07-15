@@ -38,11 +38,11 @@ Thesis: RL dispatching with human-centric reward (fleet knowledge growth + fatig
 ## Blockers / Warnings
 
 - `zhangGraphNeuralNetworks2022` **citation mismatch**: bib entry is a GNN-book chapter, row is coded as crowdsourcing assignment paper — needs the intended reference.
-- Placeholder cites still unresolved (intentional): `ref`, `ref2`, `Marcelo`, `MarceloESWA`, `Chica2017` (intro).
-- Legacy ECAI tail (appendix, marked "remove before submission"): 4 missing `ecai-template/fig/*.png`, stray `\\` after itemize (~l.1878), refs to `Sec:Exp:*` — the 5 remaining build errors are all from this; PDF still builds.
-- `refcheck` package prints label names in margins — drop before submission.
-- Method figure caption is placeholder "Overview of the proposed method" (`fig:method_overview`).
-- Notation audit done, **fixes not yet applied**: broken Acronyms block in `tab:hrap` (copy-paste of POMDP rows), table vs body conflicts (`t^c_base` vs `c_time(τ)`, `\star` vs `*`, `m_F` vs `m_f`, `m_k` arg order, `Q_t` vs `\mathcal{Q}(t)`, `\mathcal{T}` kernel-vs-ticket-space collision), collisions λ_c/λ_i, β (3 uses), s (scale vs state).
+- ~~Placeholder cites~~ RESOLVED 2026-07-07: `ref`→bouajaja2017survey, `Marcelo,ref2`→ruizrodriguez2022a+joo+calzavara, `MarceloESWA`→ruiz-rodriguez_dynamic_2024, `Chica2017`→chica2017simheuristics (new entry). **Author check**: intended self-cites for `Marcelo/ref2`? (`bollingKnowledgeawareLearningfocusedMultiObjective` exists in bib but lacks year/venue.)
+- ~~Legacy ECAI tail~~ RESOLVED 2026-07-07: `refcheck.sty` defines `\comment`, so `\begin{comment}` blocks were silently RENDERING (6pp of legacy in every PDF + the 5 build errors). Both legacy blocks **deleted** (recoverable from git, commit 50c180d). Build now 0 errors / 0 undefined / 0 multiply-defined, 27pp.
+- `refcheck` package prints label names in margins — drop before submission (also the \comment definition source).
+- Masked-heuristics re-run pending (`scripts/rerun_masked_heuristics.sh`); §6 prose to update after (esp. 6.2.1 "fatigue–exhaustion spiral" — wrong mechanism, it's disruption-blindness).
+- Notation audit **mostly applied 2026-07-07**: Acronyms block rebuilt (15 real acronyms), `t^c_base`→`c_time(τ)`, `c^⋆`→`c^*`, `m_F`+wrong formula→`m_f` (lin/exp), `m_k(k_i,τ)`→`m_k(τ,i)`, `φ:𝒯→[0,S]²` collision removed (φ prose + grid shape G), disruption-cell comma typo, ρ_i added (lr renamed — "diminishing-returns", lower ρ = faster learner). **Still open**: λ_c (reward coeff) vs λ_i (Jaber), β triple-use (Weibull/disruptions), `s` saturation scale vs state in §5 reward caption, `Q_t` vs `\mathcal{Q}(t)`.
 - Full-text double-checks pending on Table 1: ali TEMP, alvarez SIM/ML, caricato MKS/CMP/TEMP, suer MKS, mcdonald FORG, staruch CAP; henao is a retail case study kept in block A.
 
 ## Next steps
@@ -51,6 +51,10 @@ Thesis: RL dispatching with human-centric reward (fleet knowledge growth + fatig
 2. Rework the **human-factors block** of Table 1 (Skill representation / Skill dynamics) — agreed next task; same verification pipeline reusable.
 3. Write §3 formalization body (currently just the notation table).
 4. Method §6, Setup §7, Results §8 remain to be written; abstract numbers pending benchmarks.
+
+## Session notes (2026-07-07, part 2)
+
+- Manuscript builds **0 errors / 0 warnings** (28pp). §4 reworked (agent-vs-dispatcher fix, design-properties paragraph, rich figure caption); Appendix A: six-entity fix, φ hash-encoder explanation, ρ semantics + archetype-axis rationale + specialists documented, disruption trigger taxonomy + fatigue→exhaustion loop, defaults (f=0.3, α=0.15, Δ_travel=15), reward-stack paragraph replaced by pointer to §5.4, sampler paragraph updated to 3-mode + episodes_per_scenario, Bernoulli per-cycle clarification, eval-protocol cross-ref. §6.1 now states unit coefficients + normalization.
 
 ## Session notes (2026-07-06)
 
