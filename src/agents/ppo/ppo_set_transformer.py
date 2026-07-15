@@ -24,7 +24,9 @@ scenarios.
 
 from __future__ import annotations
 
+import logging
 import math
+from collections import defaultdict
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -109,6 +111,21 @@ class SetTransformerAgent(Agent):
         use_action_mask: bool = True,
         # Mixed precision (CUDA only)
         use_amp: bool = False,
+        # --- Opt-in improvements (ablation toggles; all default OFF) ---
+        # PopArt-style value normalisation: the value head learns in a
+        # normalised target space whose running mean/std adapt online,
+        # with output-preserving rescaling of the head at every update.
+        use_popart: bool = False,
+        popart_beta: float = 0.995,
+        # Recurrent context: a GRU/LSTM cell over the encoder's pooled
+        # latent gives the policy within-episode memory.  Training uses
+        # the stored-state approximation (hidden states collected during
+        # the rollout are treated as constants; no BPTT across steps).
+        rnn_type: str = "none",
+        rnn_hidden: int = 128,
+        # Number of parallel environment streams feeding this agent.
+        # 1 = classic single-env behaviour (fully backward compatible).
+        n_envs: int = 1,
         # Misc
         seed: int | None = None,
         device: str = "auto",
@@ -143,6 +160,8 @@ class SetTransformerAgent(Agent):
             encoder,
             value_hidden=value_hidden,
             pointer_d_attn=pointer_d_attn,
+            rnn_type=rnn_type,
+            rnn_hidden=rnn_hidden,
         ).to(self.device)
 
         self.optimizer = torch.optim.AdamW(
@@ -185,18 +204,39 @@ class SetTransformerAgent(Agent):
 
         # Return-normalisation running stats (off by default)
         self._return_rms = RunningMeanStd()
-        self._return_running: float = 0.0
+        self._return_running: dict[int, float] = defaultdict(float)
 
-        # Rollout buffers
-        self._obs_buffer: list[dict[str, np.ndarray]] = []
-        self._action_buffer: list[int] = []
-        self._reward_buffer: list[float] = []
-        self._done_buffer: list[bool] = []
-        self._logprob_buffer: list[float] = []
-        self._value_buffer: list[float] = []
-        self._mask_buffer: list[np.ndarray] = []
-        self._last_obs: dict[str, np.ndarray] | None = None
-        self._last_mask: np.ndarray | None = None
+        # PopArt value normalisation (opt-in)
+        self.use_popart = bool(use_popart)
+        if self.use_popart and self.normalize_rewards:
+            msg = (
+                "use_popart and normalize_rewards are mutually exclusive: "
+                "both rescale the value-learning signal."
+            )
+            raise ValueError(msg)
+        self._popart_beta = float(popart_beta)
+        self._popart_mu: float = 0.0
+        self._popart_nu: float = 1.0   # running second moment
+        self._popart_initialized = False
+
+        # Recurrent context (opt-in)
+        self.rnn_type = str(rnn_type)
+        self.rnn_hidden = int(rnn_hidden)
+        self._rnn_state: dict[int, Any] = {}
+
+        # Parallel streams
+        self.n_envs = int(n_envs)
+
+        # Rollout buffers — one stream per (vectorised) environment.
+        # Stream 0 is the classic single-env path.
+        self._streams: dict[int, dict[str, list]] = defaultdict(
+            lambda: {
+                "obs": [], "action": [], "reward": [], "done": [],
+                "logprob": [], "value": [], "mask": [], "hidden": [],
+            }
+        )
+        self._pending: dict[int, dict[str, Any]] = {}
+        self._last: dict[int, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     def num_parameters(self) -> int:
@@ -247,8 +287,65 @@ class SetTransformerAgent(Agent):
         return mask
 
     # ------------------------------------------------------------------
+    # PopArt helpers
+    # ------------------------------------------------------------------
+    @property
+    def _popart_sigma(self) -> float:
+        var = max(self._popart_nu - self._popart_mu**2, 1e-4)
+        return float(np.sqrt(var))
+
+    def _popart_denorm(self, v_norm: float) -> float:
+        if not self.use_popart:
+            return v_norm
+        return v_norm * self._popart_sigma + self._popart_mu
+
+    def _popart_update_stats(self, returns: np.ndarray) -> None:
+        """EMA-update the target statistics and rescale the value head
+        so its *de-normalised* outputs are preserved (PopArt)."""
+        mu_old, sigma_old = self._popart_mu, self._popart_sigma
+        b = self._popart_beta
+        if not self._popart_initialized:
+            self._popart_mu = float(returns.mean())
+            self._popart_nu = float((returns**2).mean())
+            self._popart_initialized = True
+        else:
+            self._popart_mu = b * self._popart_mu + (1 - b) * float(returns.mean())
+            self._popart_nu = b * self._popart_nu + (1 - b) * float((returns**2).mean())
+        mu_new, sigma_new = self._popart_mu, self._popart_sigma
+        head = self.net.value_head[-1]
+        with torch.no_grad():
+            head.weight.mul_(sigma_old / sigma_new)
+            head.bias.mul_(sigma_old / sigma_new)
+            head.bias.add_((mu_old - mu_new) / sigma_new)
+
+    # ------------------------------------------------------------------
+    # Recurrent-state helpers
+    # ------------------------------------------------------------------
+    def reset_stream(self, env_id: int = 0) -> None:
+        """Reset per-episode state (RNN hidden, running return) of a stream."""
+        self._rnn_state.pop(env_id, None)
+        self._return_running[env_id] = 0.0
+
+    def on_episode_start(self) -> None:
+        self.reset_stream(0)
+
+    def _hidden_to_numpy(self, hidden) -> Any:
+        if hidden is None:
+            return None
+        if isinstance(hidden, tuple):
+            return tuple(h.detach().cpu().numpy() for h in hidden)
+        return hidden.detach().cpu().numpy()
+
+    def _hidden_from_numpy(self, hidden) -> Any:
+        if hidden is None:
+            return None
+        if isinstance(hidden, tuple):
+            return tuple(torch.from_numpy(h).to(self.device) for h in hidden)
+        return torch.from_numpy(hidden).to(self.device)
+
+    # ------------------------------------------------------------------
     def select_action(
-        self, obs: dict[str, Any], *, deterministic: bool = False
+        self, obs: dict[str, Any], *, deterministic: bool = False, env_id: int = 0
     ) -> int:
         obs_dict = self._extract_obs(obs)
         mask = self._extract_action_mask(obs)
@@ -257,8 +354,11 @@ class SetTransformerAgent(Agent):
             for k, v in obs_dict.items()
         }
         mask_tensor = torch.from_numpy(mask).unsqueeze(0).to(self.device)
+        hidden_pre = self._rnn_state.get(env_id)
         with torch.no_grad(), self._autocast_ctx:
-            logits, value = self.net(obs_batch)
+            logits, value, hidden_post = self.net(obs_batch, hidden_pre)
+        if self.rnn_type != "none":
+            self._rnn_state[env_id] = hidden_post
         masked_logits = logits.float().masked_fill(~mask_tensor, float("-inf"))
         dist = Categorical(logits=masked_logits)
         if deterministic:
@@ -270,10 +370,88 @@ class SetTransformerAgent(Agent):
             at = dist.sample()
             action = int(at.item())
             log_prob = float(dist.log_prob(at).item())
-        self._pending_logprob = log_prob
-        self._pending_value = float(value.item())
-        self._pending_mask = mask
+        self._pending[env_id] = {
+            "logprob": log_prob,
+            # Values enter GAE in *environment* scale; de-normalise
+            # PopArt's normalised prediction here.
+            "value": self._popart_denorm(float(value.item())),
+            "mask": mask,
+            "hidden": self._hidden_to_numpy(hidden_pre),
+        }
         return action
+
+    # ------------------------------------------------------------------
+    def select_actions(
+        self,
+        obs_list: list[dict[str, Any]],
+        *,
+        deterministic: bool = False,
+        env_ids: list[int] | None = None,
+    ) -> list[int]:
+        """Batched :meth:`select_action` for vectorised collection.
+
+        One network forward for ``len(obs_list)`` observations; the
+        per-stream pending stats and RNN hidden states are maintained
+        exactly as in the single-env path.
+        """
+        if env_ids is None:
+            env_ids = list(range(len(obs_list)))
+        obs_dicts = [self._extract_obs(o) for o in obs_list]
+        masks = [self._extract_action_mask(o) for o in obs_list]
+        keys = obs_dicts[0].keys()
+        obs_batch = {
+            k: torch.from_numpy(np.stack([o[k] for o in obs_dicts], axis=0)).to(
+                self.device
+            )
+            for k in keys
+        }
+        mask_tensor = torch.from_numpy(np.stack(masks, axis=0)).to(self.device)
+
+        hidden_pre_np = [self._hidden_to_numpy(self._rnn_state.get(i)) for i in env_ids]
+        hidden_batch = None
+        if self.rnn_type != "none":
+            hidden_batch = self._stack_hidden(
+                [self._rnn_state.get(i) for i in env_ids], len(env_ids)
+            )
+        with torch.no_grad(), self._autocast_ctx:
+            logits, values, hidden_post = self.net(obs_batch, hidden_batch)
+        masked_logits = logits.float().masked_fill(~mask_tensor, float("-inf"))
+        dist = Categorical(logits=masked_logits)
+        if deterministic:
+            actions_t = dist.probs.argmax(dim=-1)
+        else:
+            actions_t = dist.sample()
+        log_probs = dist.log_prob(actions_t)
+
+        actions: list[int] = []
+        for j, env_id in enumerate(env_ids):
+            if self.rnn_type != "none":
+                self._rnn_state[env_id] = self._slice_hidden(hidden_post, j)
+            self._pending[env_id] = {
+                "logprob": float(log_probs[j].item()),
+                "value": self._popart_denorm(float(values[j].item())),
+                "mask": masks[j],
+                "hidden": hidden_pre_np[j],
+            }
+            actions.append(int(actions_t[j].item()))
+        return actions
+
+    def _stack_hidden(self, hiddens: list, batch: int):
+        """Stack per-stream hidden states (None -> zeros) into a batch."""
+        zero = self.net.initial_hidden(1, self.device)
+        if isinstance(zero, tuple):
+            hs = [h if h is not None else zero for h in hiddens]
+            return tuple(
+                torch.cat([h[i] for h in hs], dim=1) for i in range(2)
+            )
+        hs = [h if h is not None else zero for h in hiddens]
+        return torch.cat(hs, dim=1)
+
+    @staticmethod
+    def _slice_hidden(hidden, j: int):
+        if isinstance(hidden, tuple):
+            return tuple(h[:, j : j + 1, :].contiguous() for h in hidden)
+        return hidden[:, j : j + 1, :].contiguous()
 
     # ------------------------------------------------------------------
     def observe_transition(
@@ -285,29 +463,41 @@ class SetTransformerAgent(Agent):
         terminated: bool,
         truncated: bool,
         info: dict[str, Any],
+        env_id: int = 0,
     ) -> None:
         _ = info
         done = bool(terminated or truncated)
         r_buf = float(reward)
         if self.normalize_rewards:
-            self._return_running = self._return_running * self.gamma + r_buf
-            self._return_rms.update(self._return_running)
+            self._return_running[env_id] = (
+                self._return_running[env_id] * self.gamma + r_buf
+            )
+            self._return_rms.update(self._return_running[env_id])
             std = max(self._return_rms.std, 1e-8)
             r_buf = r_buf / std
             if done:
-                self._return_running = 0.0
-        self._obs_buffer.append(self._extract_obs(obs))
-        self._action_buffer.append(int(action))
-        self._reward_buffer.append(r_buf)
-        self._done_buffer.append(done)
-        self._logprob_buffer.append(float(getattr(self, "_pending_logprob", 0.0)))
-        self._value_buffer.append(float(getattr(self, "_pending_value", 0.0)))
-        pending_mask = getattr(self, "_pending_mask", None)
-        if pending_mask is None:
-            pending_mask = np.ones(self.n_actions, dtype=bool)
-        self._mask_buffer.append(np.asarray(pending_mask, dtype=bool))
-        self._last_obs = self._extract_obs(next_obs)
-        self._last_mask = self._extract_action_mask(next_obs)
+                self._return_running[env_id] = 0.0
+        pending = self._pending.get(env_id, {})
+        stream = self._streams[env_id]
+        stream["obs"].append(self._extract_obs(obs))
+        stream["action"].append(int(action))
+        stream["reward"].append(r_buf)
+        stream["done"].append(done)
+        stream["logprob"].append(float(pending.get("logprob", 0.0)))
+        stream["value"].append(float(pending.get("value", 0.0)))
+        mask = pending.get("mask")
+        if mask is None:
+            mask = np.ones(self.n_actions, dtype=bool)
+        stream["mask"].append(np.asarray(mask, dtype=bool))
+        stream["hidden"].append(pending.get("hidden"))
+        self._last[env_id] = {
+            "obs": self._extract_obs(next_obs),
+            "mask": self._extract_action_mask(next_obs),
+            "hidden": self._hidden_to_numpy(self._rnn_state.get(env_id)),
+        }
+        if done and self.rnn_type != "none":
+            # Episode boundary: the next decision starts a fresh memory.
+            self._rnn_state.pop(env_id, None)
 
     # ------------------------------------------------------------------
     def _compute_gae(
@@ -340,47 +530,89 @@ class SetTransformerAgent(Agent):
     # ------------------------------------------------------------------
     def update(self, **kwargs: Any) -> dict[str, float]:
         _ = kwargs
-        if not self._obs_buffer:
+        active = {i: s for i, s in self._streams.items() if s["obs"]}
+        if not active:
             return {}
 
-        keys = list(self._obs_buffer[0].keys())
+        # --- per-stream GAE: each stream is one contiguous trajectory ---
+        obs_list: list[dict[str, np.ndarray]] = []
+        hidden_list: list = []
+        actions_parts, rewards_parts = [], []
+        logprob_parts, value_parts, mask_parts = [], [], []
+        adv_parts, ret_parts = [], []
+        for env_id in sorted(active):
+            s = active[env_id]
+            rewards = np.asarray(s["reward"], dtype=np.float32)
+            values = np.asarray(s["value"], dtype=np.float32)
+            dones = np.asarray(s["done"], dtype=bool)
+            if dones[-1] or env_id not in self._last:
+                last_value = 0.0
+            else:
+                last = self._last[env_id]
+                last_batch = {
+                    k: torch.from_numpy(v).unsqueeze(0).to(self.device)
+                    for k, v in last["obs"].items()
+                }
+                h = (
+                    self._hidden_from_numpy(last["hidden"])
+                    if self.rnn_type != "none"
+                    else None
+                )
+                with torch.no_grad(), self._autocast_ctx:
+                    _, v, _ = self.net(last_batch, h)
+                last_value = self._popart_denorm(float(v.item()))
+            adv, ret = self._compute_gae(rewards, values, dones, last_value)
+            obs_list.extend(s["obs"])
+            hidden_list.extend(s["hidden"])
+            actions_parts.append(np.asarray(s["action"], dtype=np.int64))
+            rewards_parts.append(rewards)
+            logprob_parts.append(np.asarray(s["logprob"], dtype=np.float32))
+            value_parts.append(values)
+            mask_parts.append(np.stack(s["mask"], axis=0).astype(bool))
+            adv_parts.append(adv)
+            ret_parts.append(ret)
+
+        keys = list(obs_list[0].keys())
         obs_t: dict[str, torch.Tensor] = {
             k: torch.from_numpy(
-                np.stack([o[k] for o in self._obs_buffer], axis=0)
+                np.stack([o[k] for o in obs_list], axis=0)
             ).to(self.device)
             for k in keys
         }
-        actions = np.asarray(self._action_buffer, dtype=np.int64)
-        rewards = np.asarray(self._reward_buffer, dtype=np.float32)
-        dones = np.asarray(self._done_buffer, dtype=bool)
-        old_log_probs = np.asarray(self._logprob_buffer, dtype=np.float32)
-        values = np.asarray(self._value_buffer, dtype=np.float32)
-        if self._mask_buffer:
-            masks = np.stack(self._mask_buffer, axis=0).astype(bool)
-        else:
-            masks = np.ones((len(actions), self.n_actions), dtype=bool)
+        actions = np.concatenate(actions_parts)
+        old_log_probs = np.concatenate(logprob_parts)
+        values = np.concatenate(value_parts)
+        masks = np.concatenate(mask_parts, axis=0)
+        advantages = np.concatenate(adv_parts)
+        returns = np.concatenate(ret_parts)
 
-        # Bootstrap value at the final state
-        if dones[-1] or self._last_obs is None:
-            last_value = 0.0
+        # --- PopArt: adapt target statistics, learn in normalised space ---
+        if self.use_popart:
+            self._popart_update_stats(returns)
+            mu, sigma = self._popart_mu, self._popart_sigma
+            returns_for_loss = (returns - mu) / sigma
+            old_values_for_loss = (values - mu) / sigma
         else:
-            last_batch = {
-                k: torch.from_numpy(v).unsqueeze(0).to(self.device)
-                for k, v in self._last_obs.items()
-            }
-            with torch.no_grad(), self._autocast_ctx:
-                _, v = self.net(last_batch)
-            last_value = float(v.item())
+            returns_for_loss = returns
+            old_values_for_loss = values
 
-        advantages, returns = self._compute_gae(
-            rewards, values, dones, last_value
-        )
+        # --- stored RNN hidden states as (1, N, H) batches ---
+        hidden_t = None
+        if self.rnn_type != "none":
+            hidden_t = self._stack_hidden(
+                [self._hidden_from_numpy(h) for h in hidden_list],
+                len(hidden_list),
+            )
 
         actions_t = torch.from_numpy(actions).to(self.device)
         old_log_probs_t = torch.from_numpy(old_log_probs).to(self.device)
-        old_values_t = torch.from_numpy(values).to(self.device)
+        old_values_t = torch.from_numpy(
+            old_values_for_loss.astype(np.float32)
+        ).to(self.device)
         advantages_t = torch.from_numpy(advantages).to(self.device)
-        returns_t = torch.from_numpy(returns).to(self.device)
+        returns_t = torch.from_numpy(
+            returns_for_loss.astype(np.float32)
+        ).to(self.device)
         masks_t = torch.from_numpy(masks).to(self.device)
 
         n = next(iter(obs_t.values())).shape[0]
@@ -404,12 +636,20 @@ class SetTransformerAgent(Agent):
                 mb_adv = advantages_t.index_select(0, mb_t)
                 mb_ret = returns_t.index_select(0, mb_t)
                 mb_masks = masks_t.index_select(0, mb_t)
+                mb_hidden = None
+                if hidden_t is not None:
+                    if isinstance(hidden_t, tuple):
+                        mb_hidden = tuple(
+                            h.index_select(1, mb_t) for h in hidden_t
+                        )
+                    else:
+                        mb_hidden = hidden_t.index_select(1, mb_t)
 
                 if self.normalize_advantages and mb_adv.numel() > 1:
                     mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
 
                 with self._autocast_ctx:
-                    logits, value = self.net(mb_obs)
+                    logits, value, _ = self.net(mb_obs, mb_hidden)
                     masked_logits = logits.float().masked_fill(
                         ~mb_masks, float("-inf")
                     )
@@ -487,16 +727,21 @@ class SetTransformerAgent(Agent):
 
         self.lr_scheduler.step()
 
-        # Reset buffers
-        self._obs_buffer.clear()
-        self._action_buffer.clear()
-        self._reward_buffer.clear()
-        self._done_buffer.clear()
-        self._logprob_buffer.clear()
-        self._value_buffer.clear()
-        self._mask_buffer.clear()
+        # Reset buffers (ongoing-episode RNN states are kept: they are
+        # acting-time context, consumed as constants by the next update)
+        self._streams.clear()
+        self._pending.clear()
+        self._last.clear()
+
+        out_extra = {}
+        if self.use_popart:
+            out_extra = {
+                "popart_mu": float(self._popart_mu),
+                "popart_sigma": float(self._popart_sigma),
+            }
 
         return {
+            **out_extra,
             "loss": float(np.mean(losses)) if losses else float("nan"),
             "pg_loss": float(np.mean(pg_losses)) if pg_losses else float("nan"),
             "vf_loss": float(np.mean(vf_losses)) if vf_losses else float("nan"),
@@ -529,6 +774,16 @@ class SetTransformerAgent(Agent):
             "max_techs": self.max_techs,
             "max_machines": self.max_machines,
             "vocab_size": self.vocab_size,
+            # Opt-in improvement state (absent in historical checkpoints;
+            # load() treats every field as optional)
+            "improvements": {
+                "use_popart": self.use_popart,
+                "popart_mu": float(self._popart_mu),
+                "popart_nu": float(self._popart_nu),
+                "popart_initialized": bool(self._popart_initialized),
+                "rnn_type": self.rnn_type,
+                "rnn_hidden": self.rnn_hidden,
+            },
         }
         vocab = getattr(self, "_vocab", None)
         if vocab is not None:
@@ -561,7 +816,29 @@ class SetTransformerAgent(Agent):
         # Detect and reconcile a row-count mismatch on the token
         # embedding before delegating to load_state_dict.
         state = self._resize_token_embedding(state)
-        self.net.load_state_dict(state)
+        try:
+            self.net.load_state_dict(state)
+        except RuntimeError:
+            # Architecture superset/subset (e.g. loading a historical
+            # checkpoint into an agent with the opt-in RNN enabled, or
+            # vice versa): load every tensor whose name AND shape match,
+            # keep fresh init for the rest, and say so loudly.
+            live = self.net.state_dict()
+            compatible = {
+                k: v
+                for k, v in state.items()
+                if k in live and live[k].shape == v.shape
+            }
+            skipped = sorted(set(state) - set(compatible))
+            fresh = sorted(set(live) - set(compatible))
+            self.net.load_state_dict(compatible, strict=False)
+            logging.getLogger(__name__).warning(
+                "Partial checkpoint load (%d/%d tensors matched). "
+                "Skipped from checkpoint: %s. Fresh-init in live net: %s",
+                len(compatible), len(live),
+                skipped[:6] + (["..."] if len(skipped) > 6 else []),
+                fresh[:6] + (["..."] if len(fresh) > 6 else []),
+            )
         if "optimizer" in ckpt:
             try:
                 self.optimizer.load_state_dict(ckpt["optimizer"])
@@ -579,6 +856,11 @@ class SetTransformerAgent(Agent):
                 pass
         if "vocab" in ckpt:
             self._vocab = dict(ckpt["vocab"])
+        imp = ckpt.get("improvements") or {}
+        if imp.get("use_popart") and self.use_popart:
+            self._popart_mu = float(imp.get("popart_mu", 0.0))
+            self._popart_nu = float(imp.get("popart_nu", 1.0))
+            self._popart_initialized = bool(imp.get("popart_initialized", False))
 
     def _resize_token_embedding(self, state: dict) -> dict:
         """Pad or refuse to load the token-embedding row count.

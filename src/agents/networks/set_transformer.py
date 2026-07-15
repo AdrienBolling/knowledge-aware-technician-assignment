@@ -555,9 +555,17 @@ class PointerActionHead(nn.Module):
 
 
 class SetTransformerActorCritic(nn.Module):
-    """Encoder + pointer policy head + value head.
+    """Encoder + optional recurrent context + pointer policy head + value head.
 
-    Forward signature: ``obs: dict[str, Tensor] -> (logits, value)``.
+    Forward signature:
+    ``obs: dict[str, Tensor], hidden -> (logits, value, hidden_out)``.
+
+    ``rnn_type`` (opt-in, default ``"none"``) inserts a single-layer GRU
+    or LSTM between the encoder's pooled context and both heads, giving
+    the policy a within-episode memory of past decisions.  When
+    disabled the architecture (and therefore every checkpoint) is
+    identical to the historical version and ``hidden`` passes through
+    untouched, so old checkpoints remain loadable.
     """
 
     def __init__(
@@ -565,27 +573,67 @@ class SetTransformerActorCritic(nn.Module):
         encoder: SetTransformerEncoder,
         value_hidden: int = 256,
         pointer_d_attn: int = 64,
+        rnn_type: str = "none",
+        rnn_hidden: int = 128,
     ) -> None:
         super().__init__()
+        if rnn_type not in ("none", "gru", "lstm"):
+            msg = f"rnn_type must be 'none', 'gru', or 'lstm' (got {rnn_type!r})"
+            raise ValueError(msg)
         self.encoder = encoder
+        self.rnn_type = rnn_type
+        self.rnn_hidden = int(rnn_hidden)
         d_ctx = encoder.output_dim
         d_slot = encoder.d_model
-        self.policy_head = PointerActionHead(d_ctx, d_slot, d_attn=pointer_d_attn)
+        if rnn_type == "gru":
+            self.rnn: nn.Module | None = nn.GRU(
+                d_ctx, self.rnn_hidden, batch_first=True
+            )
+            d_head = self.rnn_hidden
+        elif rnn_type == "lstm":
+            self.rnn = nn.LSTM(d_ctx, self.rnn_hidden, batch_first=True)
+            d_head = self.rnn_hidden
+        else:
+            self.rnn = None
+            d_head = d_ctx
+        self.policy_head = PointerActionHead(d_head, d_slot, d_attn=pointer_d_attn)
         self.value_head = nn.Sequential(
-            nn.Linear(d_ctx, value_hidden),
+            nn.Linear(d_head, value_hidden),
             nn.GELU(),
             nn.Linear(value_hidden, 1),
         )
         nn.init.orthogonal_(self.value_head[-1].weight, gain=1.0)
         nn.init.zeros_(self.value_head[-1].bias)
 
+    def initial_hidden(self, batch_size: int, device: torch.device):
+        """Zero hidden state for ``batch_size`` parallel streams."""
+        if self.rnn_type == "gru":
+            return torch.zeros(1, batch_size, self.rnn_hidden, device=device)
+        if self.rnn_type == "lstm":
+            return (
+                torch.zeros(1, batch_size, self.rnn_hidden, device=device),
+                torch.zeros(1, batch_size, self.rnn_hidden, device=device),
+            )
+        return None
+
     def forward(
-        self, obs: dict[str, torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self,
+        obs: dict[str, torch.Tensor],
+        hidden=None,
+    ) -> tuple[torch.Tensor, torch.Tensor, object]:
         context, tech_slots, tech_mask = self.encoder(obs)
-        logits = self.policy_head(context, tech_slots, tech_mask)
-        value = self.value_head(context).squeeze(-1)
-        return logits, value
+        if self.rnn is not None:
+            if hidden is None:
+                hidden = self.initial_hidden(context.shape[0], context.device)
+            # One recurrent step per decision: (B, 1, d_ctx) -> (B, 1, H)
+            out, hidden_out = self.rnn(context.unsqueeze(1), hidden)
+            head_in = out.squeeze(1)
+        else:
+            head_in = context
+            hidden_out = hidden
+        logits = self.policy_head(head_in, tech_slots, tech_mask)
+        value = self.value_head(head_in).squeeze(-1)
+        return logits, value, hidden_out
 
 
 __all__ = [
