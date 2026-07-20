@@ -2,6 +2,7 @@
 
 from agents.base import Agent
 from agents.baselines.heuristics import (
+    GreedyRewardAgent,
     LeastBusyAgent,
     LeastFatiguedAgent,
     OptimalAssignmentAgent,
@@ -9,6 +10,8 @@ from agents.baselines.heuristics import (
     RoundRobinAgent,
     ShortestProcessingTimeAgent,
     ShortestQueueAgent,
+    TopsisAgent,
+    TrainWeakestAgent,
 )
 from agents.dqn.rainbow import RainbowDQNAgent
 from agents.grpo.grpo import GRPOAgent
@@ -19,6 +22,7 @@ from agents.ppo.ppo_transformer import PPOTransformerAgent
 __all__ = [
     "Agent",
     "GRPOAgent",
+    "GreedyRewardAgent",
     "LeastBusyAgent",
     "LeastFatiguedAgent",
     "OptimalAssignmentAgent",
@@ -30,4 +34,6 @@ __all__ = [
     "SetTransformerAgent",
     "ShortestProcessingTimeAgent",
     "ShortestQueueAgent",
+    "TopsisAgent",
+    "TrainWeakestAgent",
 ]

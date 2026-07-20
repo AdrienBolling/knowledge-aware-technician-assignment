@@ -243,3 +243,127 @@ class OptimalAssignmentAgent(Agent):
         if row0 is None:
             return int(avail[0]) if deterministic else int(np.random.choice(avail))
         return int(avail[np.argmin(row0[avail])])
+
+
+class TopsisAgent(Agent):
+    """Multi-criteria (TOPSIS) dispatching rule.
+
+    Ranks the available technicians by their closeness to the ideal
+    solution across three cost criteria --- expected repair time (skill),
+    fatigue, and workload (assignment count so far) --- and picks the
+    closest.  This is the method of Ferjani et al. (2017), the nearest
+    online multi-skilled-with-fatigue assignment work in the survey, whose
+    TOPSIS rule trades processing time against congestion; here it is
+    extended with an explicit fatigue criterion, making it the strongest
+    "considers-everything" non-learned competitor --- it weighs skill *and*
+    fatigue *and* balance at once, so it patches shortest-processing-time's
+    fatigue blindness.
+
+    Criterion weights default to favouring repair time (skill dominates,
+    fatigue and balance temper it); pass ``weights`` to retune.
+    """
+
+    def __init__(
+        self, n_actions: int, *, weights: tuple[float, float, float] = (0.5, 0.3, 0.2)
+    ) -> None:
+        super().__init__(n_actions, name="TOPSIS")
+        self.weights = np.asarray(weights, dtype=np.float64)
+
+    def _criteria(self, obs: dict[str, Any], avail: np.ndarray) -> np.ndarray | None:
+        """Decision matrix (n_avail x 3) of cost criteria, or None."""
+        if self._env is None:
+            return None
+        try:
+            repair = np.asarray(self._env.expected_repair_times(), dtype=np.float64)
+            counts = np.asarray(self._env.assignment_counts(), dtype=np.float64)
+        except Exception:
+            return None
+        fatigue = obs.get("technician_fatigue")
+        if fatigue is None:
+            fatigue = np.zeros(self.n_actions, dtype=np.float64)
+        fatigue = np.asarray(fatigue, dtype=np.float64)
+        # Non-finite repair estimates (no ticket) make the rule ill-defined.
+        if not np.all(np.isfinite(repair[avail])):
+            return None
+        return np.column_stack([repair[avail], fatigue[avail], counts[avail]])
+
+    def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
+        avail = _available(obs, self.n_actions)
+        if len(avail) == 1:
+            return int(avail[0])
+        m = self._criteria(obs, avail)
+        if m is None:
+            return int(avail[0]) if deterministic else int(np.random.choice(avail))
+        # Vector-normalise each criterion, weight, then rank by relative
+        # closeness to the ideal-best (all criteria are costs, so the
+        # ideal-best is the column min and the ideal-worst the column max).
+        norms = np.sqrt((m ** 2).sum(axis=0))
+        norms[norms == 0.0] = 1.0
+        v = (m / norms) * self.weights
+        best, worst = v.min(axis=0), v.max(axis=0)
+        d_best = np.sqrt(((v - best) ** 2).sum(axis=1))
+        d_worst = np.sqrt(((v - worst) ** 2).sum(axis=1))
+        denom = d_best + d_worst
+        denom[denom == 0.0] = 1.0
+        closeness = d_worst / denom  # higher == closer to ideal-best
+        return int(avail[int(np.argmax(closeness))])
+
+
+class GreedyRewardAgent(Agent):
+    """Myopically maximise the environment's per-assignment reward.
+
+    Picks the available technician yielding the highest *immediate* reward
+    under the env's configured (human-centric) reward stack --- the greedy,
+    zero-lookahead version of the learned policy's own objective.  It
+    isolates the contribution of long-horizon planning from the reward
+    design: if this matches the RL agent, the value is in the reward
+    shaping; if the RL agent beats it, the value is in temporal credit
+    assignment.  Requires the attached environment
+    (:meth:`assignment_reward_estimates`).
+    """
+
+    def __init__(self, n_actions: int) -> None:
+        super().__init__(n_actions, name="GreedyReward")
+
+    def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
+        avail = _available(obs, self.n_actions)
+        rewards = None
+        if self._env is not None:
+            try:
+                rewards = np.asarray(
+                    self._env.assignment_reward_estimates(), dtype=np.float64
+                )
+            except Exception:
+                rewards = None
+        if rewards is None or not np.all(np.isfinite(rewards[avail])):
+            return int(avail[0]) if deterministic else int(np.random.choice(avail))
+        return int(avail[int(np.argmax(rewards[avail]))])
+
+
+class TrainWeakestAgent(Agent):
+    """Assign the ticket to the least-skilled available technician.
+
+    The deliberate-upskilling foil: always develops the weakest qualified
+    technician (lowest current skill match for the ticket), the opposite of
+    shortest-processing-time.  Naively always investing should hurt
+    short-term throughput and repair speed; testing the learned policy
+    against it isolates whether the policy's value is learning *when* to
+    invest versus exploit, rather than simply always developing the fleet.
+    Reads :meth:`skill_match_scores` from the attached environment.
+    """
+
+    def __init__(self, n_actions: int) -> None:
+        super().__init__(n_actions, name="TrainWeakest")
+
+    def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
+        avail = _available(obs, self.n_actions)
+        scores = None
+        if self._env is not None:
+            try:
+                scores = np.asarray(self._env.skill_match_scores(), dtype=np.float64)
+            except Exception:
+                scores = None
+        if scores is None:
+            return int(avail[0]) if deterministic else int(np.random.choice(avail))
+        # Lowest skill match == most room to learn on this ticket.
+        return int(avail[int(np.argmin(scores[avail]))])

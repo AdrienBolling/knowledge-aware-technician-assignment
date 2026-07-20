@@ -1482,6 +1482,55 @@ class KataEnv(gym.Env):
                     cost[i, j] = self._expected_repair_time(tech, tk)
         return cost, tickets
 
+    def assignment_counts(self) -> np.ndarray:
+        """Per-technician assignment count so far this episode (shape
+        ``(n_techs,)``).  A workload-balance criterion for multi-criteria
+        baselines (e.g. TOPSIS)."""
+        techs = self.dispatcher.techs if self.dispatcher else []
+        counts = self._tech_assignment_counts
+        return np.asarray(
+            [int(counts[i]) if i < len(counts) else 0 for i in range(len(techs))],
+            dtype=np.float64,
+        )
+
+    def assignment_reward_estimates(self) -> np.ndarray:
+        """Immediate reward for assigning the current ticket to each
+        technician, evaluated counterfactually (shape ``(n_techs,)``,
+        ``-inf`` when no ticket is open).
+
+        This is the exact per-step reward the learned policy is trained on
+        (:meth:`_reward_for_assignment`, under the env's configured reward
+        stack), so a greedy-on-reward baseline can maximise the same
+        objective with zero lookahead.  The per-step delta state
+        (finished-product / knowledge snapshots, the last breakdown) and
+        the normaliser's freeze flag are snapshotted and restored, and each
+        technician is scored from the same instant, so the probe leaves the
+        environment byte-for-byte unchanged.
+        """
+        techs = self.dispatcher.techs if self.dispatcher else []
+        if self.current_request is None or not techs:
+            return np.full(len(techs), -np.inf, dtype=np.float64)
+        snap_finished = getattr(self, "_prev_finished_products", 0)
+        snap_knowledge = getattr(self, "_prev_fleet_knowledge", 0.0)
+        snap_breakdown = getattr(self, "_last_reward_breakdown", {})
+        was_frozen = self._reward_normalizer.frozen
+        self._reward_normalizer.freeze()
+        out = np.empty(len(techs), dtype=np.float64)
+        try:
+            for j in range(len(techs)):
+                # Restore the per-step deltas before each candidate so every
+                # technician is scored from the same base state.
+                self._prev_finished_products = snap_finished
+                self._prev_fleet_knowledge = snap_knowledge
+                out[j] = float(self._reward_for_assignment(self.current_request, j))
+        finally:
+            self._prev_finished_products = snap_finished
+            self._prev_fleet_knowledge = snap_knowledge
+            self._last_reward_breakdown = snap_breakdown
+            if not was_frozen:
+                self._reward_normalizer.unfreeze()
+        return out
+
     def _structured_obs(self) -> dict[str, np.ndarray]:
         ticket = self.current_request
         busy = np.asarray(
