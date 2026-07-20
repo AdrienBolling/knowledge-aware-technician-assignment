@@ -511,8 +511,13 @@ class SetTransformerAgent(Agent):
         advantages = np.zeros(n, dtype=np.float32)
         gae = 0.0
         next_value = float(last_value)
-        next_non_terminal = 0.0 if dones[-1] else 1.0
         for t in reversed(range(n)):
+            # ``dones[t]`` marks transition t as episode-ending, so it must
+            # mask transition t's OWN bootstrap and lambda-chain.  (A
+            # historical off-by-one consumed ``dones[t+1]`` here, which
+            # leaked value estimates and advantages across episode
+            # boundaries and severed terminal-reward credit at n-2.)
+            next_non_terminal = 0.0 if dones[t] else 1.0
             delta = (
                 rewards[t]
                 + self.gamma * next_value * next_non_terminal
@@ -523,7 +528,6 @@ class SetTransformerAgent(Agent):
             )
             advantages[t] = gae
             next_value = values[t]
-            next_non_terminal = 0.0 if dones[t] else 1.0
         returns = advantages + values
         return advantages, returns
 
