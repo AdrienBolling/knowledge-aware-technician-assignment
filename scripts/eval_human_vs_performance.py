@@ -46,11 +46,15 @@ from kata.scenario import ScenarioBuilder
 from kata.EntityFactories import RandomScenarioSampler
 from experiment.config import AgentConfig
 from agents import (
+    BatchMILPAgent,
+    EmpiricalSPTAgent,
+    EmpiricalTopsisAgent,
     GreedyRewardAgent,
     LeastBusyAgent,
     LeastFatiguedAgent,
     OptimalAssignmentAgent,
     RandomAgent,
+    ReserveSpecialistAgent,
     RoundRobinAgent,
     SetTransformerAgent,
     ShortestProcessingTimeAgent,
@@ -66,14 +70,21 @@ HEURISTICS = {
     "least_fatigued": LeastFatiguedAgent,
     "shortest_queue": ShortestQueueAgent,
     # Skill / optimisation / multi-criteria / reward-greedy / upskilling
-    # baselines drawn from the nearest works in the survey taxonomy; all
-    # read the env's decision-support API (expected repair times, skill
-    # match, workload counts, or the counterfactual per-assignment reward).
+    # baselines drawn from the nearest works in the survey taxonomy.
+    # INFORMED (oracle) baselines --- they read the env's ground-truth
+    # decision-support estimates (expected repair times, skill match, the
+    # batch cost matrix, or the counterfactual per-assignment reward):
     "shortest_processing": ShortestProcessingTimeAgent,
     "optimal_assignment": OptimalAssignmentAgent,
+    "batch_milp": BatchMILPAgent,
     "topsis": TopsisAgent,
+    "reserve_specialist": ReserveSpecialistAgent,
     "greedy_reward": GreedyRewardAgent,
     "train_weakest": TrainWeakestAgent,
+    # HONEST-INFORMATION baselines --- estimates tallied from observed
+    # completions only (env.repair_log); no ground-truth access:
+    "empirical_spt": EmpiricalSPTAgent,
+    "empirical_topsis": EmpiricalTopsisAgent,
 }
 
 CHECKPOINTS = {

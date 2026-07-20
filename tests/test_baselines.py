@@ -7,8 +7,12 @@ import numpy as np
 from conftest import FakeDispatcher, FakeRequest, FakeSimEnv
 
 from agents import (
+    BatchMILPAgent,
+    EmpiricalSPTAgent,
+    EmpiricalTopsisAgent,
     GreedyRewardAgent,
     OptimalAssignmentAgent,
+    ReserveSpecialistAgent,
     ShortestProcessingTimeAgent,
     TopsisAgent,
     TrainWeakestAgent,
@@ -199,3 +203,125 @@ def test_greedy_reward_matches_argmax_estimate():
     est = env.assignment_reward_estimates()
     avail = np.array([1, 2])  # tech 0 busy
     assert gr.select_action(obs, deterministic=True) == int(avail[np.argmax(est[avail])])
+
+
+def test_repair_log_records_tech_key_duration_and_resets():
+    d = FakeDispatcher(tech_count=3)
+    req = FakeRequest(machine_id=1)
+    d.repair_queue.items.append(req)
+    env = _make_env(d)
+    env.reset()
+
+    env._on_repair_completed(req, 7.5, d.techs[1])
+    env._on_repair_completed(req, 3.0, d.techs[2])
+    env._on_repair_completed(req, 4.0)  # legacy caller: counted, not logged
+    log = env.repair_log()
+    assert [rec["tech"] for rec in log] == [1, 2]
+    assert log[0]["duration"] == 7.5
+    assert log[0]["key"] == env.failure_key(req) == env.current_failure_key()
+    assert env._completed_repair_counter == 3
+
+    env.reset()
+    assert env.repair_log() == []
+
+
+def test_empirical_spt_learns_from_observed_completions():
+    d = FakeDispatcher(tech_count=3)
+    req = FakeRequest(machine_id=1)
+    d.repair_queue.items.append(req)
+    env = _make_env(d)
+    obs, _ = env.reset()
+
+    agent = EmpiricalSPTAgent(3)
+    agent.attach_env(env)
+    agent.on_episode_start()
+    # Cold start: no completions observed yet → deterministic fallback.
+    assert agent.select_action(obs, deterministic=True) == 0
+
+    # Observed history: tech 2 is fast (3.0), tech 0 slow (9.0) on this
+    # failure type; tech 1 never seen on it (backs off to its own mean 20).
+    env._on_repair_completed(req, 9.0, d.techs[0])
+    env._on_repair_completed(req, 3.0, d.techs[2])
+    env._on_repair_completed(req, 20.0, d.techs[1])
+    assert agent.select_action(obs, deterministic=True) == 2
+
+    # The fastest tech becoming unavailable redirects to the next-best.
+    d.techs[2].busy = True
+    obs2 = env._structured_obs()
+    assert agent.select_action(obs2, deterministic=True) == 0
+
+
+def test_empirical_topsis_uses_learned_repair_criterion():
+    d = FakeDispatcher(tech_count=3)
+    req = FakeRequest(machine_id=1)
+    d.repair_queue.items.append(req)
+    env = _make_env(d)
+    obs, _ = env.reset()
+    # tech 0: observed fast + rested → dominates on every criterion.
+    d.techs[0].fatigue = 0.1
+    d.techs[1].fatigue = 0.9
+    d.techs[2].fatigue = 0.1
+    env._on_repair_completed(req, 5.0, d.techs[0])
+    env._on_repair_completed(req, 5.0, d.techs[1])
+    env._on_repair_completed(req, 20.0, d.techs[2])
+
+    topsis = EmpiricalTopsisAgent(3)
+    topsis.attach_env(env)
+    topsis.on_episode_start()
+    assert topsis.select_action(obs, deterministic=True) == 0
+
+
+def test_reserve_specialist_picks_weakest_fast_enough():
+    d = FakeDispatcher(tech_count=3)
+    # Repair times: tech 0 fastest (5), tech 1 within tau*min (6 <= 7.5),
+    # tech 2 too slow (20).  Skills: tech 1 weakest of the eligible pair.
+    _set_repair_times(d.techs, {(0, 1): 5.0, (1, 1): 6.0, (2, 1): 20.0})
+    _set_skills(d.techs, [0.8, 0.2, 0.5])
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _make_env(d)
+    obs, _ = env.reset()
+
+    agent = ReserveSpecialistAgent(3)  # default tau=1.5
+    agent.attach_env(env)
+    assert agent.select_action(obs, deterministic=True) == 1
+
+    # tau=1.0 collapses to the SPT choice (only the fastest is eligible).
+    strict = ReserveSpecialistAgent(3, tau=1.0)
+    strict.attach_env(env)
+    assert strict.select_action(obs, deterministic=True) == 0
+
+
+def test_batch_milp_spreads_load_under_capacity_cap():
+    d = FakeDispatcher(tech_count=2)
+    # 3 open tickets, 2 techs → balance cap ceil(3/2)=2.  Tech 0 is
+    # cheaper on every ticket, but capacity forces one ticket to tech 1;
+    # the joint optimum gives tech 1 the CURRENT ticket (6 + 1 + 1 = 8
+    # beats 5 + 1 + 100 = 106).
+    _set_repair_times(
+        d.techs,
+        {(0, 1): 5.0, (1, 1): 6.0, (0, 2): 1.0, (1, 2): 100.0, (0, 3): 1.0, (1, 3): 100.0},
+    )
+    d.repair_queue.items.append(FakeRequest(machine_id=1))  # current
+    d.repair_queue.items.append(FakeRequest(machine_id=2))  # queued
+    d.repair_queue.items.append(FakeRequest(machine_id=3))  # queued
+    env = _make_env(d)
+    obs, _ = env.reset()
+
+    milp = BatchMILPAgent(2)
+    milp.attach_env(env)
+    assert milp.select_action(obs, deterministic=True) == 1
+
+    # Sanity: with a fleet-sized queue (cap=1) it matches plain Hungarian.
+    d2 = FakeDispatcher(tech_count=2)
+    _set_repair_times(d2.techs, {(0, 1): 5.0, (1, 1): 6.0, (0, 2): 5.0, (1, 2): 100.0})
+    d2.repair_queue.items.append(FakeRequest(machine_id=1))
+    d2.repair_queue.items.append(FakeRequest(machine_id=2))
+    env2 = _make_env(d2)
+    obs2, _ = env2.reset()
+    milp2 = BatchMILPAgent(2)
+    milp2.attach_env(env2)
+    hung = OptimalAssignmentAgent(2)
+    hung.attach_env(env2)
+    assert milp2.select_action(obs2, deterministic=True) == hung.select_action(
+        obs2, deterministic=True
+    ) == 1
