@@ -626,6 +626,12 @@ class KataEnv(gym.Env):
                 high=np.array([np.finfo(np.float32).max], dtype=np.float32),
                 dtype=np.float32,
             )
+        if self.config.include_repair_estimate_in_observation:
+            observation_space["technician_expected_repair"] = gym.spaces.Box(
+                low=np.zeros(n_techs, dtype=np.float32),
+                high=np.full(n_techs, np.finfo(np.float32).max, dtype=np.float32),
+                dtype=np.float32,
+            )
         if self.config.expose_action_mask:
             observation_space["action_mask"] = gym.spaces.MultiBinary(n_techs)
         self.observation_space = gym.spaces.Dict(observation_space)
@@ -1389,6 +1395,93 @@ class KataEnv(gym.Env):
             return 0.0
         return max(0.0, min(1.0, 1.0 - mult))
 
+    def _expected_repair_time(self, tech: Any, ticket: Any) -> float:
+        """Estimated repair time of ``tech`` on ``ticket`` at its current
+        knowledge state.  Returns ``inf`` when no ticket is open, and falls
+        back to the ticket's base time if the technician cannot estimate.
+        This is the scalar behind the ``ETA`` token of the set observation.
+        """
+        if ticket is None:
+            return float("inf")
+        base = (
+            float(ticket.get_repair_time())
+            if hasattr(ticket, "get_repair_time")
+            else 10.0
+        )
+        compute = getattr(tech, "compute_repair_time", None)
+        if not callable(compute):
+            return base
+        try:
+            return float(compute(base, ticket))
+        except Exception:
+            return base
+
+    # ------------------------------------------------------------------
+    # Decision-support API for dispatching baselines
+    #
+    # These public helpers expose, for the *currently open* ticket, the
+    # same skill/timing signals the learned policy reads from its set
+    # observation, so rule-based and optimisation baselines (shortest
+    # processing time, Hungarian assignment) can consume them without
+    # reaching into private state.  All are evaluated against
+    # ``self.current_request`` and ordered like ``dispatcher.techs`` (i.e.
+    # aligned with the action index).
+    # ------------------------------------------------------------------
+    def expected_repair_times(self) -> np.ndarray:
+        """Per-technician estimated repair time for the current ticket.
+
+        Shape ``(n_techs,)``; entries are ``+inf`` when no ticket is open.
+        Skill-greedy (shortest-processing-time) baselines take the argmin
+        over the currently-available technicians.
+        """
+        techs = self.dispatcher.techs if self.dispatcher else []
+        return np.asarray(
+            [self._expected_repair_time(t, self.current_request) for t in techs],
+            dtype=np.float64,
+        )
+
+    def skill_match_scores(self) -> np.ndarray:
+        """Per-technician skill match ``1 - m_k`` for the current ticket
+        (shape ``(n_techs,)``, in ``[0, 1]``)."""
+        techs = self.dispatcher.techs if self.dispatcher else []
+        return np.asarray(
+            [self._tech_match(t, self.current_request) for t in techs],
+            dtype=np.float64,
+        )
+
+    def available_mask(self) -> np.ndarray:
+        """Public alias of the action mask (1 == assignable technician)."""
+        return self._action_mask()
+
+    def assignment_cost_matrix(self) -> tuple[np.ndarray, list[Any]] | None:
+        """Expected-repair-time cost matrix for a myopic batch assignment.
+
+        Returns ``(cost, tickets)`` where ``cost`` has shape
+        ``(n_open_tickets, n_techs)`` and ``tickets`` is the matching list
+        of open repair requests.  Row ``0`` is the ticket to be assigned
+        now (``current_request``); the remaining rows are the pending
+        queue.  Columns for currently-unavailable technicians (busy or
+        disrupted) are set to ``+inf`` so an optimiser avoids them unless
+        forced.  Returns ``None`` when no ticket is open.
+
+        Hungarian-style baselines solve the linear-sum assignment on this
+        matrix and commit the technician matched to row 0.
+        """
+        ticket = self.current_request
+        if ticket is None:
+            return None
+        techs = list(self.dispatcher.techs) if self.dispatcher else []
+        queue = self._queue()
+        q_items = list(getattr(queue, "items", queue) or []) if queue is not None else []
+        tickets = [ticket, *q_items]
+        mask = self._action_mask()
+        cost = np.full((len(tickets), len(techs)), np.inf, dtype=np.float64)
+        for i, tk in enumerate(tickets):
+            for j, tech in enumerate(techs):
+                if j < mask.size and mask[j]:
+                    cost[i, j] = self._expected_repair_time(tech, tk)
+        return cost, tickets
+
     def _structured_obs(self) -> dict[str, np.ndarray]:
         ticket = self.current_request
         busy = np.asarray(
@@ -1423,6 +1516,13 @@ class KataEnv(gym.Env):
             observation["pending_queue_size"] = np.asarray(
                 [float(self._queue_size())], dtype=np.float32
             )
+        if self.config.include_repair_estimate_in_observation:
+            # Finite sentinel (not inf) so the vector stays inside the
+            # declared Box; the skill-greedy baseline argmins over the
+            # available technicians only, so absent tickets are inert.
+            eta = self.expected_repair_times().astype(np.float32)
+            eta[~np.isfinite(eta)] = np.finfo(np.float32).max
+            observation["technician_expected_repair"] = eta
         return observation
 
     def _token_id_obs(self) -> dict[str, np.ndarray]:

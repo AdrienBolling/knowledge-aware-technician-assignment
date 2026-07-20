@@ -4,8 +4,10 @@ from agents.base import Agent
 from agents.baselines.heuristics import (
     LeastBusyAgent,
     LeastFatiguedAgent,
+    OptimalAssignmentAgent,
     RandomAgent,
     RoundRobinAgent,
+    ShortestProcessingTimeAgent,
     ShortestQueueAgent,
 )
 from agents.dqn.rainbow import RainbowDQNAgent
@@ -19,11 +21,13 @@ __all__ = [
     "GRPOAgent",
     "LeastBusyAgent",
     "LeastFatiguedAgent",
+    "OptimalAssignmentAgent",
     "PPOLatentAgent",
     "PPOTransformerAgent",
     "RainbowDQNAgent",
     "RandomAgent",
     "RoundRobinAgent",
     "SetTransformerAgent",
+    "ShortestProcessingTimeAgent",
     "ShortestQueueAgent",
 ]

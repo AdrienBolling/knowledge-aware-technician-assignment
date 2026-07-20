@@ -807,6 +807,17 @@ class GymEnvConfig(BaseModel):
         default=True,
         description="Include pending-repair queue size in observations.",
     )
+    include_repair_estimate_in_observation: bool = Field(
+        default=True,
+        description=(
+            "Include a per-technician ``technician_expected_repair`` vector "
+            "in the structured observation: the estimated repair time of "
+            "each technician for the current ticket, given their present "
+            "knowledge state.  Consumed by skill-aware dispatching baselines "
+            "(e.g. shortest-processing-time); the same signal the learned "
+            "policy already sees in its ``ETA`` token."
+        ),
+    )
     expose_action_mask: bool = Field(
         default=True,
         description=(

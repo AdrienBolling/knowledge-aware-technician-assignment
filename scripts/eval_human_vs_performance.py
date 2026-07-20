@@ -48,9 +48,11 @@ from experiment.config import AgentConfig
 from agents import (
     LeastBusyAgent,
     LeastFatiguedAgent,
+    OptimalAssignmentAgent,
     RandomAgent,
     RoundRobinAgent,
     SetTransformerAgent,
+    ShortestProcessingTimeAgent,
     ShortestQueueAgent,
 )
 
@@ -60,11 +62,21 @@ HEURISTICS = {
     "least_busy": LeastBusyAgent,
     "least_fatigued": LeastFatiguedAgent,
     "shortest_queue": ShortestQueueAgent,
+    # Skill-based (SPT) and optimisation-based (Hungarian) baselines drawn
+    # from the nearest works in the survey taxonomy; both read the env's
+    # decision-support API for per-technician expected repair times.
+    "shortest_processing": ShortestProcessingTimeAgent,
+    "optimal_assignment": OptimalAssignmentAgent,
 }
 
 CHECKPOINTS = {
     "human": Path("checkpoints/human_set_transformer_best.pt"),
     "performance": Path("checkpoints/performance_set_transformer_best.pt"),
+    # Second-generation human-centric agent (long-horizon gamma/lambda +
+    # PopArt + GRU, trained with the opt-in improvement stack).  Its
+    # architecture is read from the checkpoint's own ``improvements`` dict
+    # by build_agents, so no separate agent config is needed here.
+    "hc_v2": Path("checkpoints/hc_v2/set_transformer_best.pt"),
 }
 
 AGENT_CONFIG = Path("run_configs/agents/set_transformer.json")
@@ -158,11 +170,35 @@ def make_env(env_cfg, scenario_factory, representation, tokenizer=None) -> KataE
         )
 
 
+def peek_improvements(checkpoint: Path) -> dict:
+    """Return the opt-in improvement config embedded in a checkpoint.
+
+    Checkpoints saved by the improved PPO agent carry an
+    ``improvements`` dict (``rnn_type``, ``rnn_hidden``, ``use_popart``,
+    ...); historical checkpoints have none.  We read it so the eval-time
+    agent is built with the *same architecture* it was trained with,
+    rather than a fixed config that would only partially load a
+    GRU/PopArt checkpoint.
+    """
+    import torch
+
+    ck = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    return dict(ck.get("improvements") or {}) if isinstance(ck, dict) else {}
+
+
 def build_agents(env_cfg, scenario_factory, n_techs):
-    """Return {label: (agent, env)} for the 2 checkpoints + 5 heuristics."""
+    """Return {label: (agent, env)} for the trained checkpoints + 5 heuristics.
+
+    Each trained agent is instantiated with the architecture recorded in
+    its own checkpoint (plain set-transformer, or the GRU/PopArt variant),
+    so heterogeneous checkpoints can be benchmarked side by side.
+    """
     agents: dict[str, tuple] = {}
     agent_cfg = AgentConfig(**json.loads(AGENT_CONFIG.read_text()))
     for label, ckpt in CHECKPOINTS.items():
+        if not ckpt.is_file():
+            print(f"  (skipping {label}: no checkpoint at {ckpt})", flush=True)
+            continue
         tok = load_set_tokenizer(ckpt, env_cfg)
         params = dict(agent_cfg.params)
         params["n_actions"] = int(env_cfg.gym.max_techs)
@@ -171,13 +207,27 @@ def build_agents(env_cfg, scenario_factory, n_techs):
         params.setdefault("env_length", int(env_cfg.gym.set_env_length))
         params.setdefault("sim_time_scale", float(env_cfg.gym.max_sim_time))
         params.setdefault("vocab_size", tok.vocab_size)
+        # Match the checkpoint's trained architecture (opt-in improvements).
+        imp = peek_improvements(ckpt)
+        rnn_type = str(imp.get("rnn_type", "none") or "none")
+        if rnn_type != "none":
+            params["rnn_type"] = rnn_type
+            params["rnn_hidden"] = int(imp.get("rnn_hidden", 128))
+        if imp.get("use_popart"):
+            params["use_popart"] = True
+            params["normalize_rewards"] = False  # mutually exclusive
         agent = SetTransformerAgent(**params)
         agent.load(ckpt)
         env = make_env(env_cfg, scenario_factory, "set", tokenizer=tok)
         agents[label] = (agent, env)
     for name, cls in HEURISTICS.items():
         env = make_env(env_cfg, scenario_factory, "structured")
-        agents[name] = (cls(n_actions=n_techs), env)
+        agent = cls(n_actions=n_techs)
+        # Skill/optimisation baselines read the env's decision-support API
+        # (expected repair times, batch cost matrix); harmless no-op for the
+        # obs-only rules.
+        agent.attach_env(env)
+        agents[name] = (agent, env)
     return agents
 
 
