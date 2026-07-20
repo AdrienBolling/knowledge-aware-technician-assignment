@@ -28,16 +28,43 @@ import pandas as pd
 ROOT = Path("reports/hvp_eval")
 SCENARIOS = ["massive_scale", "small_scale", "baseline", "very_long"]
 
+# Display labels.  Markers flag the information level of each baseline:
+#   \dagger  = informed / oracle (reads the simulator's ground-truth
+#              repair-time / skill / cost-matrix estimates)
+#   \ddagger = reward oracle (reads the exact counterfactual per-
+#              assignment reward, i.e. the learned agents' own objective)
+# Unmarked heuristics act on the observation (and, for the empirical
+# variants, on observed repair completions) only.
 AGENT_LABELS = {
     "human": r"HC-RL (ours)",
     "performance": r"PO-RL (ours)",
+    "hc_v2": r"HC-RL-v2 (ours)",
     "random": "Random",
     "round_robin": "RoundRobin",
     "least_busy": "LeastBusy",
     "least_fatigued": "LeastFatigued",
     "shortest_queue": "ShortestQueue",
+    "empirical_spt": "SPT-emp",
+    "empirical_topsis": "TOPSIS-emp",
+    "shortest_processing": r"SPT$^{\dagger}$",
+    "optimal_assignment": r"Hungarian$^{\dagger}$",
+    "batch_milp": r"BatchMILP$^{\dagger}$",
+    "topsis": r"TOPSIS$^{\dagger}$",
+    "reserve_specialist": r"ReserveSpec$^{\dagger}$",
+    "train_weakest": r"TrainWeakest$^{\dagger}$",
+    "greedy_reward": r"GreedyReward$^{\ddagger}$",
 }
 AGENT_ORDER = list(AGENT_LABELS)
+
+# Drop-in table footnote for the manuscript (also written next to each
+# generated table so the marker semantics travel with the artefact).
+ORACLE_FOOTNOTE = (
+    r"$^{\dagger}$informed baseline: reads the simulator's ground-truth "
+    r"repair-time/skill estimates; $^{\ddagger}$reward oracle: reads the "
+    r"exact per-assignment reward (the learned agents' training "
+    r"objective).  Unmarked rules use the observation (and, for the "
+    r"-emp variants, observed repair completions) only."
+)
 
 # Episode-level KPIs: (column, pretty name, direction, format)
 # direction: +1 higher-better, -1 lower-better, 0 report-only (no bold, no rank)
@@ -151,7 +178,7 @@ def kpi_table(episodes: pd.DataFrame, scenario: str) -> tuple[str, pd.DataFrame]
     best_overall = rank_df.iloc[0]["agent"]
     lines = []
     for a in agents:
-        cells = [AGENT_LABELS[a]]
+        cells = [AGENT_LABELS.get(a, a.replace("_", r"\_"))]
         for c, _, direction, fmt in KPI_SPEC:
             if c not in stats[a]:
                 cells.append("--")
@@ -186,7 +213,7 @@ def horizon_table(hm: pd.DataFrame) -> str:
                 best[(w, key)] = max(valid, key=lambda a: direction * valid[a])
     lines = []
     for a in agents:
-        cells = [AGENT_LABELS[a]]
+        cells = [AGENT_LABELS.get(a, a.replace("_", r"\_"))]
         for w in WINDOWS:
             for key, _, _, fmt in WINDOW_SPEC:
                 mean, std, n = cell_stats[(a, w, key)]
@@ -218,6 +245,8 @@ def main() -> int:
 
         hz_rows = horizon_table(hm)
         (d / "horizon_table.tex").write_text(hz_rows + "\n")
+        # Marker semantics travel with the generated tables.
+        (d / "table_footnote.tex").write_text(ORACLE_FOOTNOTE + "\n")
 
         print(f"=== {scenario} (horizon {horizon:.0f}) ===")
         print(rank_df.to_string(index=False))

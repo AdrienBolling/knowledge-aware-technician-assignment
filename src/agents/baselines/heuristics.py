@@ -187,8 +187,8 @@ class OptimalAssignmentAgent(Agent):
     current ticket if the matrix or an optimal match is unavailable.
     """
 
-    def __init__(self, n_actions: int) -> None:
-        super().__init__(n_actions, name="OptimalAssignment")
+    def __init__(self, n_actions: int, *, name: str = "OptimalAssignment") -> None:
+        super().__init__(n_actions, name=name)
 
     def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
         avail = _available(obs, self.n_actions)
@@ -269,12 +269,23 @@ class TopsisAgent(Agent):
         super().__init__(n_actions, name="TOPSIS")
         self.weights = np.asarray(weights, dtype=np.float64)
 
+    def _repair_criterion(self) -> np.ndarray | None:
+        """Per-technician repair-time criterion (simulator ground-truth
+        estimate; the empirical variant overrides this with learned
+        estimates)."""
+        try:
+            return np.asarray(self._env.expected_repair_times(), dtype=np.float64)
+        except Exception:
+            return None
+
     def _criteria(self, obs: dict[str, Any], avail: np.ndarray) -> np.ndarray | None:
         """Decision matrix (n_avail x 3) of cost criteria, or None."""
         if self._env is None:
             return None
+        repair = self._repair_criterion()
+        if repair is None:
+            return None
         try:
-            repair = np.asarray(self._env.expected_repair_times(), dtype=np.float64)
             counts = np.asarray(self._env.assignment_counts(), dtype=np.float64)
         except Exception:
             return None
@@ -367,3 +378,209 @@ class TrainWeakestAgent(Agent):
             return int(avail[0]) if deterministic else int(np.random.choice(avail))
         # Lowest skill match == most room to learn on this ticket.
         return int(avail[int(np.argmin(scores[avail]))])
+
+
+class ReserveSpecialistAgent(Agent):
+    """Assign the least-skilled technician that is still fast enough.
+
+    The practical skill-based-routing rule of the cross-training
+    literature: keep scarce experts free for the jobs only they can do
+    quickly, and give everything else to the weakest technician whose
+    expected repair time is within ``tau`` times the best available ---
+    the interpretable midpoint of the exploit--invest axis that
+    shortest-processing-time (pure exploit) and train-weakest (pure
+    invest) bracket.  *Informed*: reads the environment's ground-truth
+    repair-time and skill-match estimates.
+    """
+
+    def __init__(self, n_actions: int, *, tau: float = 1.5) -> None:
+        super().__init__(n_actions, name="ReserveSpecialist")
+        self.tau = float(tau)
+
+    def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
+        avail = _available(obs, self.n_actions)
+        eta = scores = None
+        if self._env is not None:
+            try:
+                eta = np.asarray(self._env.expected_repair_times(), dtype=np.float64)
+                scores = np.asarray(self._env.skill_match_scores(), dtype=np.float64)
+            except Exception:
+                eta = scores = None
+        if eta is None or scores is None or not np.all(np.isfinite(eta[avail])):
+            return int(avail[0]) if deterministic else int(np.random.choice(avail))
+        eligible = avail[eta[avail] <= self.tau * float(eta[avail].min())]
+        if len(eligible) == 0:  # numerical guard; tau >= 1 keeps the argmin in
+            eligible = avail
+        # Weakest technician among the fast-enough set.
+        return int(eligible[int(np.argmin(scores[eligible]))])
+
+
+class BatchMILPAgent(OptimalAssignmentAgent):
+    """Rolling-horizon batch-assignment MILP with a workload-balance cap.
+
+    The mathematical-programming baseline of the surveyed HRAP
+    literature: assign the whole open-ticket window to technicians,
+    minimising total expected repair time subject to a per-technician
+    capacity cap ``ceil(K / n_available)`` --- the workload-balance
+    constraint family of HRAP-4.0.  With this constraint set the MILP is
+    a transportation problem, so integrality is guaranteed and it is
+    solved exactly via linear-sum assignment over capacity-replicated
+    technician columns.  Unlike the plain Hungarian baseline --- which
+    can leave the current ticket unmatched whenever the queue exceeds
+    the fleet --- every ticket in the window is matched, so the current
+    ticket always receives its optimum-consistent technician.  The
+    window is truncated to ``4 x n_techs`` tickets (rolling horizon).
+    *Informed*: reads the environment's ground-truth cost matrix.
+    """
+
+    def __init__(self, n_actions: int) -> None:
+        super().__init__(n_actions, name="BatchMILP")
+
+    def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
+        avail = _available(obs, self.n_actions)
+        matrix = None
+        if self._env is not None:
+            try:
+                matrix = self._env.assignment_cost_matrix()
+            except Exception:
+                matrix = None
+        if matrix is None:
+            return self._spt_fallback(obs, avail, deterministic)
+
+        cost, _tickets = matrix
+        cost = np.asarray(cost, dtype=np.float64)
+        if cost.ndim != 2 or cost.shape[0] == 0 or cost.shape[1] == 0:
+            return self._spt_fallback(obs, avail, deterministic)
+        cost = cost[: max(1, 4 * cost.shape[1])]  # rolling-horizon window
+        n_tickets = cost.shape[0]
+        n_avail = int(np.isfinite(cost[0]).sum())
+        if n_avail == 0:
+            return self._spt_fallback(obs, avail, deterministic, row0=cost[0])
+        cap = -(-n_tickets // n_avail)  # ceil: balance cap per technician
+
+        finite = cost[np.isfinite(cost)]
+        big_m = (float(finite.max()) + 1.0) * (cost.size * cap + 1.0)
+        solvable = np.where(np.isfinite(cost), cost, big_m)
+        # Column j of the expanded matrix is capacity slot j % cap of
+        # technician j // cap; total slots >= tickets, so every ticket
+        # (in particular row 0, the one to dispatch now) is matched.
+        expanded = np.repeat(solvable, cap, axis=1)
+
+        from scipy.optimize import linear_sum_assignment
+
+        rows, cols = linear_sum_assignment(expanded)
+        match = {int(r): int(c) // cap for r, c in zip(rows, cols)}
+        chosen = match.get(0)
+        if chosen is not None and np.isfinite(cost[0, chosen]):
+            return int(chosen)
+        return self._spt_fallback(obs, avail, deterministic, row0=cost[0])
+
+
+class _EmpiricalRepairMixin:
+    """Learn repair-time estimates from the env's observed completions.
+
+    Maintains incremental means at three pooling levels --- per
+    ``(technician, failure key)``, per technician, and global --- fed by
+    :meth:`KataEnv.repair_log`.  Unseen pairs back off pair -> technician
+    -> global mean.  This is *honest* information: exactly the history a
+    real dispatcher could tally from finished work orders, with no access
+    to the simulator's ground-truth estimates.  Estimator state resets
+    with each episode (and self-heals if the env was reset without the
+    ``on_episode_start`` hook firing).
+    """
+
+    def _reset_estimates(self) -> None:
+        self._log_cursor = 0
+        # Incremental (count, mean) pairs per pooling level.
+        self._pair_stats: dict[tuple[int, str], list[float]] = {}
+        self._tech_stats: dict[int, list[float]] = {}
+        self._global_stats: list[float] = [0, 0.0]
+
+    def on_episode_start(self) -> None:
+        self._reset_estimates()
+
+    def _ingest_log(self) -> None:
+        log_getter = getattr(self._env, "repair_log", None)
+        log = log_getter() if callable(log_getter) else None
+        if log is None:
+            return
+        if self._log_cursor > len(log):  # env reset without the hook
+            self._reset_estimates()
+        for rec in log[self._log_cursor:]:
+            tech = int(rec["tech"])
+            dur = float(rec["duration"])
+            for stats in (
+                self._pair_stats.setdefault((tech, str(rec["key"])), [0, 0.0]),
+                self._tech_stats.setdefault(tech, [0, 0.0]),
+                self._global_stats,
+            ):
+                stats[0] += 1
+                stats[1] += (dur - stats[1]) / stats[0]
+        self._log_cursor = len(log)
+
+    def _empirical_estimates(self) -> np.ndarray | None:
+        """Per-technician empirical repair time for the current ticket's
+        failure type (shape ``(n_actions,)``), or ``None`` before any
+        completion has been observed."""
+        if self._env is None:
+            return None
+        self._ingest_log()
+        if self._global_stats[0] == 0:
+            return None
+        key_getter = getattr(self._env, "current_failure_key", None)
+        key = str(key_getter()) if callable(key_getter) else ""
+        out = np.empty(self.n_actions, dtype=np.float64)
+        for j in range(self.n_actions):
+            pair = self._pair_stats.get((j, key))
+            tech = self._tech_stats.get(j)
+            out[j] = (
+                pair[1] if pair else (tech[1] if tech else self._global_stats[1])
+            )
+        return out
+
+
+class EmpiricalSPTAgent(_EmpiricalRepairMixin, Agent):
+    """Shortest processing time on *observed* repair durations only.
+
+    The honest-information twin of :class:`ShortestProcessingTimeAgent`:
+    identical decision rule, but its per-technician repair estimates are
+    tallied from the episode's completed repairs instead of the
+    simulator's ground truth.  The gap between the two isolates how much
+    of the informed baselines' strength is oracle access rather than the
+    dispatching logic itself.  Cold start (no completions yet) degrades
+    to an available-technician pick.
+    """
+
+    def __init__(self, n_actions: int) -> None:
+        super().__init__(n_actions, name="EmpiricalSPT")
+        self._reset_estimates()
+
+    def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
+        avail = _available(obs, self.n_actions)
+        eta = self._empirical_estimates()
+        if eta is None:
+            return int(avail[0]) if deterministic else int(np.random.choice(avail))
+        return int(avail[int(np.argmin(eta[avail]))])
+
+
+class EmpiricalTopsisAgent(_EmpiricalRepairMixin, TopsisAgent):
+    """TOPSIS with the repair criterion learned from observed completions.
+
+    The honest-information twin of :class:`TopsisAgent`: same
+    multi-criteria closeness ranking over repair time, fatigue, and
+    workload, but the repair-time criterion comes from the empirical
+    estimator rather than the simulator's ground truth.  (Fatigue is read
+    from the observation the learned policy also sees, and assignment
+    counts are the agent's own bookkeeping --- neither is privileged
+    information.)  Cold start degrades to an available-technician pick.
+    """
+
+    def __init__(
+        self, n_actions: int, *, weights: tuple[float, float, float] = (0.5, 0.3, 0.2)
+    ) -> None:
+        super().__init__(n_actions, weights=weights)
+        self.name = "EmpiricalTOPSIS"
+        self._reset_estimates()
+
+    def _repair_criterion(self) -> np.ndarray | None:
+        return self._empirical_estimates()

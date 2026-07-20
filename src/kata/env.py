@@ -434,6 +434,12 @@ class KataEnv(gym.Env):
         self._recent_repair_durations: collections.deque[float] = collections.deque(
             maxlen=int(self.config.mttr_rolling_window)
         )
+        # Append-only log of completed repairs for the current episode
+        # (technician index, failure key, on-tool duration, sim time).
+        # Public via :meth:`repair_log`; empirical dispatching baselines
+        # learn their repair-time estimates from these observations
+        # instead of the simulator's ground-truth estimates.
+        self._repair_log: list[dict[str, Any]] = []
 
         # State tracking for delta-based rewards.  These are updated on
         # every step (regardless of which reward components are enabled)
@@ -1531,6 +1537,44 @@ class KataEnv(gym.Env):
                 self._reward_normalizer.unfreeze()
         return out
 
+    def failure_key(self, request: Any) -> str:
+        """Coarse failure-type key ``"<machine type>:<component type>"``.
+
+        The granularity at which an empirical dispatcher can pool observed
+        repair durations: machine type plus failed-component type (empty
+        component part for machines without a component model).  Returns
+        ``""`` when ``request`` is ``None``.
+        """
+        if request is None:
+            return ""
+        machine = getattr(request, "machine", None)
+        mtype = getattr(machine, "mtype", None) if machine is not None else None
+        if mtype is None:
+            mtype = type(machine).__name__ if machine is not None else "unknown"
+        ctype = ""
+        getter = getattr(request, "get_failed_component_info", None)
+        if callable(getter):
+            info = getter()
+            if isinstance(info, dict):
+                ctype = str(info.get("component_type", ""))
+        return f"{mtype}:{ctype}"
+
+    def current_failure_key(self) -> str:
+        """:meth:`failure_key` of the ticket currently awaiting dispatch."""
+        return self.failure_key(self.current_request)
+
+    def repair_log(self) -> list[dict[str, Any]]:
+        """Completed repairs observed so far this episode (append-only).
+
+        Each record is ``{"tech": <action index>, "key": <failure key>,
+        "duration": <on-tool repair time>, "completed_at": <sim time>}``.
+        Unlike the rest of the decision-support API this exposes only
+        *observed outcomes* --- no ground-truth estimates --- so empirical
+        baselines built on it compete on honest information (the same
+        history a real dispatcher could tally).
+        """
+        return self._repair_log
+
     def _structured_obs(self) -> dict[str, np.ndarray]:
         ticket = self.current_request
         busy = np.asarray(
@@ -2063,14 +2107,34 @@ class KataEnv(gym.Env):
             }
         return stats
 
-    def _on_repair_completed(self, request: Any, repair_duration: float) -> None:
-        """Dispatcher callback invoked when a repair finishes."""
-        _ = request
+    def _on_repair_completed(
+        self, request: Any, repair_duration: float, tech: Any = None
+    ) -> None:
+        """Dispatcher callback invoked when a repair finishes.
+
+        ``tech`` is the technician who performed the repair (``None`` for
+        legacy callers); when provided, the completion is appended to the
+        public :meth:`repair_log` so empirical baselines can learn
+        repair-time estimates from observed outcomes only.
+        """
         self._completed_repair_counter += 1
         duration = float(repair_duration)
         self._total_repair_time += duration
         # Feed the sliding window backing the ``mttr_rolling`` step metric.
         self._recent_repair_durations.append(duration)
+        if tech is not None:
+            techs = self.dispatcher.techs if self.dispatcher else []
+            for idx, t in enumerate(techs):
+                if t is tech:
+                    self._repair_log.append(
+                        {
+                            "tech": idx,
+                            "key": self.failure_key(request),
+                            "duration": duration,
+                            "completed_at": self._sim_time(),
+                        }
+                    )
+                    break
 
     def _selection_diversity_raw(self, action: int) -> float:
         """Reward for spreading assignments across the fleet.
@@ -2181,6 +2245,7 @@ class KataEnv(gym.Env):
         self._completed_repair_counter = 0
         self._total_repair_time = 0.0
         self._recent_repair_durations.clear()
+        self._repair_log = []
         self._prev_finished_products = 0
         self._machine_down_since = {}
         self._total_downtime = 0.0

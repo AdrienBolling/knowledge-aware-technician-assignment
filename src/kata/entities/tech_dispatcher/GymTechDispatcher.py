@@ -166,9 +166,12 @@ class GymTechDispatcher:
 
                 # Notify any listener (e.g. KataEnv) that a repair just
                 # completed.  ``final_repair_time`` excludes travel and
-                # queue waiting so it is exactly the repair duration.
+                # queue waiting so it is exactly the repair duration; the
+                # technician identity feeds the env's public repair log.
                 if self.on_repair_completed is not None:
-                    self.on_repair_completed(request, float(final_repair_time))
+                    self.on_repair_completed(
+                        request, float(final_repair_time), tech
+                    )
             except simpy.Interrupt:
                 # A higher-priority disruption preempted this repair.
                 # Restore technician state and re-queue the ticket; the

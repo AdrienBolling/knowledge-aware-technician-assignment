@@ -2,11 +2,15 @@
 
 from agents.base import Agent
 from agents.baselines.heuristics import (
+    BatchMILPAgent,
+    EmpiricalSPTAgent,
+    EmpiricalTopsisAgent,
     GreedyRewardAgent,
     LeastBusyAgent,
     LeastFatiguedAgent,
     OptimalAssignmentAgent,
     RandomAgent,
+    ReserveSpecialistAgent,
     RoundRobinAgent,
     ShortestProcessingTimeAgent,
     ShortestQueueAgent,
@@ -21,6 +25,9 @@ from agents.ppo.ppo_transformer import PPOTransformerAgent
 
 __all__ = [
     "Agent",
+    "BatchMILPAgent",
+    "EmpiricalSPTAgent",
+    "EmpiricalTopsisAgent",
     "GRPOAgent",
     "GreedyRewardAgent",
     "LeastBusyAgent",
@@ -30,6 +37,7 @@ __all__ = [
     "PPOTransformerAgent",
     "RainbowDQNAgent",
     "RandomAgent",
+    "ReserveSpecialistAgent",
     "RoundRobinAgent",
     "SetTransformerAgent",
     "ShortestProcessingTimeAgent",
