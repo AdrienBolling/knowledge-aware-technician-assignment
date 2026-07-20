@@ -6,9 +6,22 @@ from __future__ import annotations
 import numpy as np
 from conftest import FakeDispatcher, FakeRequest, FakeSimEnv
 
-from agents import OptimalAssignmentAgent, ShortestProcessingTimeAgent
+from agents import (
+    GreedyRewardAgent,
+    OptimalAssignmentAgent,
+    ShortestProcessingTimeAgent,
+    TopsisAgent,
+    TrainWeakestAgent,
+)
 from kata.core.config import GymEnvConfig
 from kata.env import KataEnv
+
+
+def _set_skills(techs, skills):
+    """Give each fake tech a ``get_knowledge_multiplier`` so its skill match
+    (``1 - multiplier``) equals the requested value."""
+    for t, s in zip(techs, skills):
+        t.get_knowledge_multiplier = lambda request, _m=1.0 - s: _m
 
 
 def _make_env(dispatcher, **cfg):
@@ -111,7 +124,78 @@ def test_baselines_fall_back_without_env_handle():
     d.repair_queue.items.append(FakeRequest(machine_id=1))
     env = _make_env(d, include_repair_estimate_in_observation=False)
     obs, _ = env.reset()
-    for agent_cls in (ShortestProcessingTimeAgent, OptimalAssignmentAgent):
+    for agent_cls in (
+        ShortestProcessingTimeAgent,
+        OptimalAssignmentAgent,
+        TopsisAgent,
+        GreedyRewardAgent,
+        TrainWeakestAgent,
+    ):
         agent = agent_cls(2)  # no attach_env
         action = agent.select_action(obs, deterministic=True)
         assert action in (0, 1)
+
+
+def test_topsis_prefers_pareto_best_technician():
+    d = FakeDispatcher(tech_count=3)
+    _set_repair_times(
+        d.techs, {(0, 1): 5.0, (1, 1): 5.0, (2, 1): 20.0}
+    )
+    # tech 0: fast + rested; tech 1: fast + exhausted; tech 2: slow + rested.
+    d.techs[0].fatigue = 0.1
+    d.techs[1].fatigue = 0.9
+    d.techs[2].fatigue = 0.1
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _make_env(d)
+    obs, _ = env.reset()
+
+    topsis = TopsisAgent(3)
+    topsis.attach_env(env)
+    # tech 0 dominates on both repair time and fatigue → chosen.
+    assert topsis.select_action(obs, deterministic=True) == 0
+
+
+def test_train_weakest_picks_least_skilled_available():
+    d = FakeDispatcher(tech_count=3)
+    _set_skills(d.techs, [0.8, 0.2, 0.5])  # tech 1 is least skilled
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _make_env(d)
+    obs, _ = env.reset()
+    assert list(np.round(env.skill_match_scores(), 1)) == [0.8, 0.2, 0.5]
+
+    tw = TrainWeakestAgent(3)
+    tw.attach_env(env)
+    assert tw.select_action(obs, deterministic=True) == 1
+
+
+def test_assignment_reward_estimates_is_side_effect_free():
+    d = FakeDispatcher(tech_count=3)
+    _set_skills(d.techs, [0.9, 0.3, 0.6])
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _make_env(d)
+    env.reset()
+    env.freeze_reward_normalizer()
+
+    before = (env._prev_finished_products, env._prev_fleet_knowledge)
+    r1 = env.assignment_reward_estimates()
+    r2 = env.assignment_reward_estimates()
+    after = (env._prev_finished_products, env._prev_fleet_knowledge)
+    assert np.allclose(r1, r2)           # idempotent probe
+    assert before == after               # no per-step delta mutation
+    assert r1.shape == (3,)
+
+
+def test_greedy_reward_matches_argmax_estimate():
+    d = FakeDispatcher(tech_count=3)
+    _set_skills(d.techs, [0.9, 0.3, 0.6])
+    d.techs[0].busy = True  # highest-reward tech unavailable → mask respected
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _make_env(d)
+    obs, _ = env.reset()
+    env.freeze_reward_normalizer()
+
+    gr = GreedyRewardAgent(3)
+    gr.attach_env(env)
+    est = env.assignment_reward_estimates()
+    avail = np.array([1, 2])  # tech 0 busy
+    assert gr.select_action(obs, deterministic=True) == int(avail[np.argmax(est[avail])])

@@ -46,6 +46,7 @@ from kata.scenario import ScenarioBuilder
 from kata.EntityFactories import RandomScenarioSampler
 from experiment.config import AgentConfig
 from agents import (
+    GreedyRewardAgent,
     LeastBusyAgent,
     LeastFatiguedAgent,
     OptimalAssignmentAgent,
@@ -54,6 +55,8 @@ from agents import (
     SetTransformerAgent,
     ShortestProcessingTimeAgent,
     ShortestQueueAgent,
+    TopsisAgent,
+    TrainWeakestAgent,
 )
 
 HEURISTICS = {
@@ -62,11 +65,15 @@ HEURISTICS = {
     "least_busy": LeastBusyAgent,
     "least_fatigued": LeastFatiguedAgent,
     "shortest_queue": ShortestQueueAgent,
-    # Skill-based (SPT) and optimisation-based (Hungarian) baselines drawn
-    # from the nearest works in the survey taxonomy; both read the env's
-    # decision-support API for per-technician expected repair times.
+    # Skill / optimisation / multi-criteria / reward-greedy / upskilling
+    # baselines drawn from the nearest works in the survey taxonomy; all
+    # read the env's decision-support API (expected repair times, skill
+    # match, workload counts, or the counterfactual per-assignment reward).
     "shortest_processing": ShortestProcessingTimeAgent,
     "optimal_assignment": OptimalAssignmentAgent,
+    "topsis": TopsisAgent,
+    "greedy_reward": GreedyRewardAgent,
+    "train_weakest": TrainWeakestAgent,
 }
 
 CHECKPOINTS = {
