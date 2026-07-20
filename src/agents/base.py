@@ -44,6 +44,18 @@ class Agent(ABC):
     def __init__(self, n_actions: int, *, name: str = "Agent") -> None:
         self.n_actions = n_actions
         self.name = name
+        self._env: Any = None
+
+    def attach_env(self, env: Any) -> None:
+        """Give the agent a handle to its environment.
+
+        Optional: most agents act purely on the observation.  Baselines
+        that need richer decision-support than the observation carries
+        (e.g. the batch cost matrix for a Hungarian assignment) read it
+        through the env's public decision-support API.  The evaluation
+        harness calls this once, after pairing each agent with its env.
+        """
+        self._env = env
 
     @abstractmethod
     def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
