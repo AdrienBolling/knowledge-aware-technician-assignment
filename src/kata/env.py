@@ -438,6 +438,10 @@ class KataEnv(gym.Env):
         self._last_knowledge_decay: float = 0.0
         # Episode horizon (may be re-sampled per reset when a range is set).
         self._episode_max_sim_time: float = float(self.config.max_sim_time)
+        # Per-decision cache of the expected-repair vector (same ticket at
+        # the same instant => identical vector; obs building and the
+        # decision-support API otherwise recompute it independently).
+        self._eta_cache: tuple[tuple[int, float], np.ndarray] | None = None
         # Append-only log of completed repairs for the current episode
         # (technician index, failure key, on-tool duration, sim time).
         # Public via :meth:`repair_log`; empirical dispatching baselines
@@ -1452,13 +1456,20 @@ class KataEnv(gym.Env):
 
         Shape ``(n_techs,)``; entries are ``+inf`` when no ticket is open.
         Skill-greedy (shortest-processing-time) baselines take the argmin
-        over the currently-available technicians.
+        over the currently-available technicians.  Memoised per decision
+        instant (same ticket, same sim time): observation building and
+        the decision-support consumers share one computation.
         """
+        key = (id(self.current_request), float(self._sim_time()))
+        if self._eta_cache is not None and self._eta_cache[0] == key:
+            return self._eta_cache[1].copy()
         techs = self.dispatcher.techs if self.dispatcher else []
-        return np.asarray(
+        vec = np.asarray(
             [self._expected_repair_time(t, self.current_request) for t in techs],
             dtype=np.float64,
         )
+        self._eta_cache = (key, vec)
+        return vec.copy()
 
     def skill_match_scores(self) -> np.ndarray:
         """Per-technician skill match ``1 - m_k`` for the current ticket

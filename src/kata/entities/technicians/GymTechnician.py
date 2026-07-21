@@ -349,10 +349,16 @@ class GymTechnician(Technician):
             base *= self.get_fatigue_multiplier()
         return max(0.0, base)
 
+    def _invalidate_knowledge_cache(self) -> None:
+        cache = getattr(self, "_km_cache", None)
+        if cache:
+            cache.clear()
+
     def increase_knowledge(self, request: RepairRequest) -> None:
         """Increase knowledge based on the completed repair."""
         embedding = self.encoder.encode(request)
         self.knowledge_grid.add_ticket_knowledge(embedding)
+        self._invalidate_knowledge_cache()
 
     def get_knowledge_multiplier(self, request: RepairRequest) -> float:
         """Return knowledge-based repair time multiplier in ``[min_floor, 1]``.
@@ -373,8 +379,27 @@ class GymTechnician(Technician):
         - No experience (k = 0) → multiplier = 1 (full base repair time).
         - High experience (k → ∞) → multiplier → ``min_floor``.
         """
-        embedding = self.encoder.encode(request)
-        knowledge = float(self.knowledge_grid.get_knowledge(embedding))
+        # The encode + grid lookup is memoised per failure key: the
+        # KNOWLEDGE value is a pure function of the (machine type,
+        # component type) key and this technician's grid state, which
+        # only changes on increase_knowledge / decay (both invalidate).
+        # The floor/alpha resolution below stays live (it can depend on
+        # per-component overrides and runtime config).  Profiling showed
+        # the grid lookup dominating the decision loop at industrial
+        # scale (~30 techs x every step).
+        comp_info = request.get_failed_component_info()
+        cache_key = (
+            getattr(request.machine, "mtype", "unknown"),
+            comp_info["component_type"] if comp_info else "none",
+        )
+        cache = getattr(self, "_km_cache", None)
+        if cache is None:
+            cache = self._km_cache = {}
+        knowledge = cache.get(cache_key)
+        if knowledge is None:
+            embedding = self.encoder.encode(request)
+            knowledge = float(self.knowledge_grid.get_knowledge(embedding))
+            cache[cache_key] = knowledge
 
         cfg = CONFIG.sim.repair
         min_floor = float(cfg.min_repair_fraction)
@@ -395,6 +420,7 @@ class GymTechnician(Technician):
     def decay_knowledge(self) -> None:
         """Decay knowledge over time."""
         self.knowledge_grid.decay_knowledge()
+        self._invalidate_knowledge_cache()
 
     def get_fatigue_multiplier(self) -> float:
         """Return fatigue-based repair time multiplier.

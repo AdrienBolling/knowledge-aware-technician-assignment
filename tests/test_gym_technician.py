@@ -523,3 +523,39 @@ class TestTimeAwareFatigue:
         # (i.e. doing a repair) does.  So the property applies decay
         # for the elapsed 5 sim time even though the tech is on leave.
         assert tech.fatigue < 0.8
+
+
+def test_knowledge_multiplier_cache_hits_and_invalidates():
+    """The multiplier is memoised per failure key and invalidated by
+    grid mutations (increase_knowledge / decay_knowledge)."""
+    from kata.core.config import TechnicianConfig
+    from kata.entities.technicians.GymTechnician import GymTechnician
+
+    tech = GymTechnician(TechnicianConfig(name="cache_t"))
+
+    class _M:
+        mtype = "CNC"
+
+    class _Req:
+        machine = _M()
+
+        def get_failed_component_info(self):
+            return {"component_type": "spindle", "component_id": 0, "repair_time": 1}
+
+    calls = {"n": 0}
+    orig = tech.knowledge_grid.get_knowledge
+
+    def counting(emb):
+        calls["n"] += 1
+        return orig(emb)
+
+    tech.knowledge_grid.get_knowledge = counting
+    m1 = tech.get_knowledge_multiplier(_Req())
+    m2 = tech.get_knowledge_multiplier(_Req())
+    assert m1 == m2
+    assert calls["n"] == 1          # grid looked up once; second call cached
+
+    tech.increase_knowledge(_Req())
+    m3 = tech.get_knowledge_multiplier(_Req())
+    assert calls["n"] == 2          # invalidated and recomputed
+    assert m3 <= m1                 # more knowledge => multiplier not larger
