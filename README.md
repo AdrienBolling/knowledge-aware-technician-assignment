@@ -1,5 +1,22 @@
 # knowledge-aware-technician-assignment
 
+## Time units
+
+Simulation time is unitless; the calibration used throughout the released
+configurations reads **1 time unit ≈ 1 minute**. Under that anchor:
+
+| Quantity | Config value | Reads as |
+|---|---|---|
+| Technician travel delay | 15 t.u. | 15 minutes |
+| Base repair times | 10–150 t.u. | 10 min – 2.5 h |
+| Industrial-scale MTTR | 70–100 t.u. | ≈ 1.2–1.7 h |
+| Benchmark horizons | 1–2 × 10⁵ t.u. | ≈ 10 weeks – 4.5 months |
+| Very-long study | 5 × 10⁶ t.u. | ≈ 9.5 years (career-scale) |
+
+The simulator models continuous coverage (no shift patterns), so the anchor
+is indicative rather than literal. See the paper's experimental-setup section
+for the same statement in context.
+
 ## Observation (`obs`) format in `KataEnv`
 
 `KataEnv` supports two observation representations, selected with
