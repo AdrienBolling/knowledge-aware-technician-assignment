@@ -291,6 +291,12 @@ class TopsisAgent(Agent):
             return None
         fatigue = obs.get("technician_fatigue")
         if fatigue is None:
+            # Token/set observations omit the structured fatigue field;
+            # read the same signal from the env so the criterion survives
+            # any representation.
+            getter = getattr(self._env, "technician_fatigues", None)
+            fatigue = getter() if callable(getter) else None
+        if fatigue is None:
             fatigue = np.zeros(self.n_actions, dtype=np.float64)
         fatigue = np.asarray(fatigue, dtype=np.float64)
         # Non-finite repair estimates (no ticket) make the rule ill-defined.

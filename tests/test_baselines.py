@@ -325,3 +325,24 @@ def test_batch_milp_spreads_load_under_capacity_cap():
     assert milp2.select_action(obs2, deterministic=True) == hung.select_action(
         obs2, deterministic=True
     ) == 1
+
+
+def test_topsis_reads_fatigue_from_env_when_obs_lacks_it():
+    # Token/set observations do not carry the structured fatigue field;
+    # TOPSIS must fall back to env.technician_fatigues() so its fatigue
+    # criterion survives any representation.
+    d = FakeDispatcher(tech_count=3)
+    _set_repair_times(d.techs, {(0, 1): 5.0, (1, 1): 5.0, (2, 1): 20.0})
+    d.techs[0].fatigue = 0.1
+    d.techs[1].fatigue = 0.9
+    d.techs[2].fatigue = 0.1
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _make_env(d)
+    obs, _ = env.reset()
+    obs.pop("technician_fatigue", None)  # simulate a set-mode observation
+
+    topsis = TopsisAgent(3)
+    topsis.attach_env(env)
+    assert list(np.round(env.technician_fatigues(), 1)) == [0.1, 0.9, 0.1]
+    # tech 0 still dominates (fast + rested) despite the missing obs field.
+    assert topsis.select_action(obs, deterministic=True) == 0
