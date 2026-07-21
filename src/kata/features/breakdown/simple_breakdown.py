@@ -61,7 +61,8 @@ class SimpleBreakdownProcess(BreakdownProcess):
         env_rate = max(rw, ri)
         if env_rate <= 0.0:
             return None
-        return random.expovariate(env_rate)
+        # Same one-event-per-poll cap as the polling driver.
+        return max(random.expovariate(env_rate), float(poll_dt))
 
     def accept_fraction(self, is_processing: bool, poll_dt: float) -> float:
         rw, ri = self._rates(poll_dt)
@@ -145,7 +146,12 @@ class WeibullBreakdownProcess(BreakdownProcess):
         a = max(0.0, float(self.age))
         h_a = (a / self.scale) ** self.shape
         t_next = self.scale * (h_a + e) ** (1.0 / self.shape)
-        return max(t_next - a, 1e-9)
+        # Floor at dt: the polling driver could fire at most one event per
+        # dt, so an aged high-shape component (exploding hazard) must not
+        # degenerate into a sub-dt event storm here -- without this floor
+        # a shape-3 machine at large virtual age schedules candidates
+        # every ~1e-3 t.u. and the simulation grinds to a halt.
+        return max(t_next - a, float(self.dt))
 
     def accept_fraction(self, is_processing: bool, poll_dt: float) -> float:
         _ = poll_dt
