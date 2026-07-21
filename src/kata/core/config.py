@@ -482,7 +482,9 @@ class GymRewardConfig(BaseModel):
             "Per-step reward for fleet-wide knowledge growth.  Raw "
             "value is the change in mean per-technician knowledge "
             "volume between two consecutive decision steps "
-            "(``volume(t) - volume(t-1)``, floored at 0).  This is the "
+            "(``volume(t) - volume(t-1)``, floored at 0; see "
+            "``knowledge_increment_potential_based`` for the un-floored "
+            "potential-based variant).  This is the "
             "*dense* counterpart of ``terminal_fleet_knowledge``: it "
             "fires every step instead of once, so credit assignment "
             "for knowledge-investment actions can propagate over a "
@@ -491,6 +493,33 @@ class GymRewardConfig(BaseModel):
             "increment reflects the sum of all knowledge gains "
             "between the two decisions, not just the chosen tech's "
             "current repair."
+        ),
+    )
+    knowledge_increment_potential_based: bool = Field(
+        default=False,
+        description=(
+            "Compute ``knowledge_increment`` as potential-based reward "
+            "shaping F = gamma_p * Phi(s') - Phi(s) with the potential "
+            "Phi = mean fleet knowledge volume, instead of the legacy "
+            "floored delta max(0, Phi(s') - Phi(s)).  The potential form "
+            "is provably policy-invariant (Ng et al., 1999), telescopes "
+            "cleanly across the episode, and does not clip legitimate "
+            "negative drift -- the floored aggregate mis-attributes "
+            "passive fleet learning to whichever action is being scored.  "
+            "Default False to preserve the reward stack of historical "
+            "benchmarks; new trainings should enable it."
+        ),
+    )
+    knowledge_potential_gamma: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Discount gamma_p used inside the potential-based knowledge "
+            "shaping term.  Set to the agent's discount for exact "
+            "policy-invariance; 1.0 (default) reduces to the un-floored "
+            "telescoping delta, which is simpler and nearly equivalent "
+            "at gamma close to 1."
         ),
     )
     repair_quality: RewardComponentConfig = Field(

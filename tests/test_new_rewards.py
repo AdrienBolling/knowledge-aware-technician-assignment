@@ -997,3 +997,71 @@ class TestMTTRRolling:
         dispatcher.repair_queue.items.append(FakeRequest(machine_id=1, created_at=0.0))
         env.reset()
         assert MeanTimeToRepairRolling().compute(None, None, env) == 0.0
+
+
+# ======================================================================
+# knowledge_increment: potential-based shaping vs legacy floored delta
+# ======================================================================
+
+
+def _set_fleet_knowledge(dispatcher, value: float) -> None:
+    for t in dispatcher.techs:
+        t.knowledge = value
+
+
+def _ki_env(dispatcher, **extra_reward):
+    return _make_env(
+        dispatcher=dispatcher,
+        reward_overrides={
+            "knowledge_increment": {"enabled": True, "coefficient": 1.0},
+            **extra_reward,
+        },
+    )
+
+
+def test_knowledge_increment_legacy_floors_negative_drift():
+    d = FakeDispatcher(tech_count=2)
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _ki_env(d)
+    env.reset()
+    req = FakeRequest(machine_id=1)
+    _set_fleet_knowledge(d, 4.0)
+    env._reward_for_assignment(req, 0)  # prev snapshot -> 4.0
+    _set_fleet_knowledge(d, 3.0)  # fleet knowledge drifts down
+    env._reward_for_assignment(req, 0)
+    # Legacy mode clips the negative delta to zero.
+    assert env._last_reward_breakdown["knowledge_increment"] == 0.0
+
+
+def test_knowledge_increment_potential_mode_is_unfloored():
+    d = FakeDispatcher(tech_count=2)
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _ki_env(d, knowledge_increment_potential_based=True)
+    env.reset()
+    req = FakeRequest(machine_id=1)
+    _set_fleet_knowledge(d, 4.0)
+    prev = env._prev_fleet_knowledge
+    env._reward_for_assignment(req, 0)
+    got = env._last_reward_breakdown["knowledge_increment"]
+    assert abs(got - (4.0 - prev)) < 1e-9
+    _set_fleet_knowledge(d, 3.0)
+    env._reward_for_assignment(req, 0)
+    # Negative drift passes through un-floored (Phi(s') - Phi(s) = -1).
+    assert abs(env._last_reward_breakdown["knowledge_increment"] + 1.0) < 1e-9
+
+
+def test_knowledge_increment_potential_gamma_weighting():
+    d = FakeDispatcher(tech_count=2)
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _ki_env(
+        d,
+        knowledge_increment_potential_based=True,
+        knowledge_potential_gamma=0.5,
+    )
+    env.reset()
+    req = FakeRequest(machine_id=1)
+    _set_fleet_knowledge(d, 4.0)
+    env._reward_for_assignment(req, 0)  # prev snapshot -> 4.0
+    env._reward_for_assignment(req, 0)
+    # F = gamma_p*Phi(s') - Phi(s) = 0.5*4 - 4 = -2 at steady state.
+    assert abs(env._last_reward_breakdown["knowledge_increment"] + 2.0) < 1e-9

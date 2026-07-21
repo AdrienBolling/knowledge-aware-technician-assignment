@@ -1459,6 +1459,18 @@ class KataEnv(gym.Env):
         """Public alias of the action mask (1 == assignable technician)."""
         return self._action_mask()
 
+    def technician_fatigues(self) -> np.ndarray:
+        """Per-technician fatigue in ``[0, 1]`` (shape ``(n_techs,)``).
+
+        The same signal the structured observation carries as
+        ``technician_fatigue``; exposed here so fatigue-aware baselines
+        keep their criterion under observation representations that do
+        not include the structured field (e.g. the token/set modes)."""
+        techs = self.dispatcher.techs if self.dispatcher else []
+        return np.asarray(
+            [float(getattr(t, "fatigue", 0.0)) for t in techs], dtype=np.float64
+        )
+
     def assignment_cost_matrix(self) -> tuple[np.ndarray, list[Any]] | None:
         """Expected-repair-time cost matrix for a myopic batch assignment.
 
@@ -1848,7 +1860,16 @@ class KataEnv(gym.Env):
         # snapshot drifting downward.
         if self.config.reward.knowledge_increment.enabled:
             current_volume = self._fleet_mean_knowledge_volume()
-            increment = max(0.0, current_volume - self._prev_fleet_knowledge)
+            if self.config.reward.knowledge_increment_potential_based:
+                # Potential-based shaping F = gamma_p*Phi(s') - Phi(s)
+                # (Phi = mean fleet knowledge volume): policy-invariant,
+                # un-floored, telescopes across the episode instead of
+                # mis-attributing passive fleet learning to the action
+                # being scored.
+                gamma_p = float(self.config.reward.knowledge_potential_gamma)
+                increment = gamma_p * current_volume - self._prev_fleet_knowledge
+            else:
+                increment = max(0.0, current_volume - self._prev_fleet_knowledge)
             self._prev_fleet_knowledge = current_volume
             breakdown["knowledge_increment"] = self._reward_component(
                 "knowledge_increment", increment
