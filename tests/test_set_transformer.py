@@ -246,3 +246,31 @@ class TestSetTransformerAgent:
                 max_techs=30,  # mismatch
                 device="cpu",
             )
+
+
+def test_snapshot_restore_stream_state_roundtrip():
+    """Inline eval borrows stream 0; snapshot/restore must round-trip the
+    live training stream's state (RNN hidden, pending, bootstrap, running
+    return) across an arbitrary clobber."""
+    agent = SetTransformerAgent(
+        n_actions=4, vocab_size=64,
+        d_model=32, n_heads=4, n_layers=2,
+        max_techs=4, max_machines=10, env_length=8,
+        device="cpu", seed=0,
+    )
+    agent._rnn_state[0] = "hidden-sentinel"
+    agent._pending[0] = {"logprob": 1.5}
+    agent._last[0] = {"obs": "o"}
+    agent._return_running[0] = 3.25
+    snap = agent.snapshot_stream_state()
+
+    # Simulate an inline eval clobbering stream 0.
+    agent.on_episode_start()
+    agent._rnn_state[0] = "eval-hidden"
+    agent._pending[0] = {"logprob": -9.0}
+
+    agent.restore_stream_state(snap)
+    assert agent._rnn_state[0] == "hidden-sentinel"
+    assert agent._pending[0] == {"logprob": 1.5}
+    assert agent._last[0] == {"obs": "o"}
+    assert agent._return_running[0] == 3.25

@@ -1518,26 +1518,40 @@ class Experiment:
     # ------------------------------------------------------------------
 
     def _inline_eval(self, current_ep: int) -> dict[str, Any]:
-        """Run a few evaluation episodes inline during training."""
-        cfg = self.exp_cfg.eval
-        returns: list[float] = []
-        all_metrics: dict[str, list[float]] = defaultdict(list)
-        all_breakdown: dict[str, list[float]] = defaultdict(list)
+        """Run a few evaluation episodes inline during training.
 
-        for i in range(cfg.n_episodes):
-            ep_data = self._run_episode(
-                training=False,
-                seed=10_000 + current_ep * 100 + i,
-                phase="inline_eval",
-                episode_idx=current_ep,
-            )
-            returns.append(ep_data["return"])
-            for k, v in ep_data.get("episode_metrics", {}).items():
-                all_metrics[k].append(v)
-            for k, v in ep_data.get("step_metrics_mean", {}).items():
-                all_metrics[k].append(v)
-            for k, v in ep_data.get("mean_reward_components", {}).items():
-                all_breakdown[k].append(v)
+        The eval episodes borrow stream 0 of the agent
+        (``on_episode_start`` / ``select_action`` with the default
+        ``env_id``), which during vectorised training is a LIVE
+        mid-episode training stream.  Snapshot and restore the agent's
+        per-stream state around the eval so the training stream's RNN
+        hidden / pending caches are not clobbered.
+        """
+        cfg = self.exp_cfg.eval
+        snap_fn = getattr(self.agent, "snapshot_stream_state", None)
+        snap = snap_fn() if callable(snap_fn) else None
+        try:
+            returns: list[float] = []
+            all_metrics: dict[str, list[float]] = defaultdict(list)
+            all_breakdown: dict[str, list[float]] = defaultdict(list)
+
+            for i in range(cfg.n_episodes):
+                ep_data = self._run_episode(
+                    training=False,
+                    seed=10_000 + current_ep * 100 + i,
+                    phase="inline_eval",
+                    episode_idx=current_ep,
+                )
+                returns.append(ep_data["return"])
+                for k, v in ep_data.get("episode_metrics", {}).items():
+                    all_metrics[k].append(v)
+                for k, v in ep_data.get("step_metrics_mean", {}).items():
+                    all_metrics[k].append(v)
+                for k, v in ep_data.get("mean_reward_components", {}).items():
+                    all_breakdown[k].append(v)
+        finally:
+            if snap is not None:
+                self.agent.restore_stream_state(snap)
 
         result: dict[str, Any] = {
             "eval/return_mean": float(np.mean(returns)),
