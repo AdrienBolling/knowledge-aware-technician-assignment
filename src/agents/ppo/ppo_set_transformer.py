@@ -317,6 +317,20 @@ class SetTransformerAgent(Agent):
             head.weight.mul_(sigma_old / sigma_new)
             head.bias.mul_(sigma_old / sigma_new)
             head.bias.add_((mu_old - mu_new) / sigma_new)
+            # Keep AdamW's moment estimates consistent with the rescaled
+            # head: re-expressing targets in the new normalised units
+            # scales the value residual -- and hence the head gradients
+            # -- by sigma_old/sigma_new, so first moments scale linearly
+            # and second moments quadratically.  Without this the first
+            # updates after a large sigma jump chase stale-unit momenta.
+            c = sigma_old / sigma_new
+            for p in (head.weight, head.bias):
+                st = self.optimizer.state.get(p)
+                if st:
+                    if "exp_avg" in st:
+                        st["exp_avg"].mul_(c)
+                    if "exp_avg_sq" in st:
+                        st["exp_avg_sq"].mul_(c * c)
 
     # ------------------------------------------------------------------
     # Recurrent-state helpers
@@ -325,6 +339,35 @@ class SetTransformerAgent(Agent):
         """Reset per-episode state (RNN hidden, running return) of a stream."""
         self._rnn_state.pop(env_id, None)
         self._return_running[env_id] = 0.0
+
+    def snapshot_stream_state(self) -> tuple:
+        """Shallow snapshot of the per-stream episode state.
+
+        Captures the RNN hiddens, pending step caches, bootstrap caches,
+        and running returns for every stream.  Pairs with
+        :meth:`restore_stream_state` so an inline evaluation --- which
+        borrows stream 0 via ``select_action``/``on_episode_start`` ---
+        cannot clobber a live training episode's state.  Shallow copies
+        suffice: streams rebind entries rather than mutating them.
+        """
+        return (
+            dict(self._rnn_state),
+            dict(self._pending),
+            dict(self._last),
+            dict(self._return_running),
+        )
+
+    def restore_stream_state(self, snap: tuple) -> None:
+        """Restore the state captured by :meth:`snapshot_stream_state`."""
+        rnn, pending, last, running = snap
+        for live, saved in (
+            (self._rnn_state, rnn),
+            (self._pending, pending),
+            (self._last, last),
+            (self._return_running, running),
+        ):
+            live.clear()
+            live.update(saved)
 
     def on_episode_start(self) -> None:
         self.reset_stream(0)
