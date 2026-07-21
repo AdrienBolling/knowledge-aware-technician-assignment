@@ -800,6 +800,19 @@ class GymEnvConfig(BaseModel):
             "exposing it lets the policy learn diversification directly."
         ),
     )
+    ticket_embedding_path: str | None = Field(
+        default=None,
+        description=(
+            "Path to a canonical precomputed ticket->grid embedding "
+            "artifact (e.g. run_configs/embeddings/ticket_grid_som.json, "
+            "fitted offline with a SOM on observable ticket features).  "
+            "When set, it is installed as the global request encoder at "
+            "env construction: no MCA warmup runs, every run shares one "
+            "deterministic transfer geometry, and unknown keys fall back "
+            "to hash placements on the grid's border ring.  Takes "
+            "precedence over ``use_mca_encoder``."
+        ),
+    )
     # -- MCA / tokenizer warmup settings -----------------------------------
     use_mca_encoder: bool = Field(
         default=False,
@@ -835,6 +848,56 @@ class GymEnvConfig(BaseModel):
     include_queue_size_in_observation: bool = Field(
         default=True,
         description="Include pending-repair queue size in observations.",
+    )
+    max_sim_time_min: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "With ``max_sim_time_max``, sample each episode's horizon "
+            "uniformly from [min, max] at reset (seeded).  Varies the "
+            "credit-assignment depth the policy trains on and cuts the "
+            "mean episode cost; ``max_sim_time`` stays the normalisation "
+            "scale for time encodings.  None (default) = fixed horizon."
+        ),
+    )
+    max_sim_time_max: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Upper bound of the sampled episode horizon (see min).",
+    )
+    pad_action_space_to_max_techs: bool = Field(
+        default=False,
+        description=(
+            "In the ``set`` representation, declare the action space as "
+            "``Discrete(max_techs)`` (the padded slot count) instead of "
+            "``Discrete(n_techs)`` of the current scenario.  Required for "
+            "vectorised training over variable-fleet scenario sampling "
+            "(AsyncVectorEnv needs identical spaces across workers); the "
+            "emitted action mask is already padded to ``max_techs`` in "
+            "set mode, and padding slots are never valid actions."
+        ),
+    )
+    knowledge_decay_enabled: bool = Field(
+        default=False,
+        description=(
+            "Apply knowledge decay (forgetting) to every technician's "
+            "grid at a fixed simulated-time cadence.  Default False -- "
+            "the historical monotone-knowledge behaviour.  Enabling it "
+            "makes fleet knowledge a leaky stock: saturation is no "
+            "longer an absorbing state, so sustained upskilling has "
+            "lasting value (the sensitivity axis for the very-long-"
+            "horizon analysis)."
+        ),
+    )
+    knowledge_decay_interval: float = Field(
+        default=5_000.0,
+        gt=0.0,
+        description=(
+            "Simulated time units between two decay applications when "
+            "``knowledge_decay_enabled`` is True.  Each application "
+            "calls ``technician.decay_knowledge()`` once (the ongoing "
+            "grid's own forgetting step)."
+        ),
     )
     include_repair_estimate_in_observation: bool = Field(
         default=True,

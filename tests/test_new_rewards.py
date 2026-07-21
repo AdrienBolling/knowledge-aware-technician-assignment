@@ -1065,3 +1065,44 @@ def test_knowledge_increment_potential_gamma_weighting():
     env._reward_for_assignment(req, 0)
     # F = gamma_p*Phi(s') - Phi(s) = 0.5*4 - 4 = -2 at steady state.
     assert abs(env._last_reward_breakdown["knowledge_increment"] + 2.0) < 1e-9
+
+
+# ======================================================================
+# knowledge decay (forgetting) hook
+# ======================================================================
+
+
+def test_knowledge_decay_fires_once_per_elapsed_interval():
+    d = FakeDispatcher(tech_count=2)
+    calls = {0: 0, 1: 0}
+    for i, t in enumerate(d.techs):
+        t.decay_knowledge = lambda _i=i: calls.__setitem__(_i, calls[_i] + 1)
+    sim = FakeSimEnv()
+    env = _make_env(
+        sim_env=sim,
+        dispatcher=d,
+        knowledge_decay_enabled=True,
+        knowledge_decay_interval=100.0,
+    )
+    env.reset()
+    sim.now = 250.0  # 2 full intervals elapsed
+    env._maybe_decay_knowledge()
+    assert calls == {0: 2, 1: 2}
+    sim.now = 299.0  # remainder below the interval: no extra call
+    env._maybe_decay_knowledge()
+    assert calls == {0: 2, 1: 2}
+    sim.now = 300.0
+    env._maybe_decay_knowledge()
+    assert calls == {0: 3, 1: 3}
+
+
+def test_knowledge_decay_disabled_by_default():
+    d = FakeDispatcher(tech_count=1)
+    fired = []
+    d.techs[0].decay_knowledge = lambda: fired.append(1)
+    sim = FakeSimEnv()
+    env = _make_env(sim_env=sim, dispatcher=d)
+    env.reset()
+    sim.now = 10_000.0
+    env._maybe_decay_knowledge()
+    assert fired == []  # historical monotone-knowledge behaviour preserved

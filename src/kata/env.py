@@ -434,6 +434,10 @@ class KataEnv(gym.Env):
         self._recent_repair_durations: collections.deque[float] = collections.deque(
             maxlen=int(self.config.mttr_rolling_window)
         )
+        # Simulated timestamp of the last knowledge-decay application.
+        self._last_knowledge_decay: float = 0.0
+        # Episode horizon (may be re-sampled per reset when a range is set).
+        self._episode_max_sim_time: float = float(self.config.max_sim_time)
         # Append-only log of completed repairs for the current episode
         # (technician index, failure key, on-tool duration, sim time).
         # Public via :meth:`repair_log`; empirical dispatching baselines
@@ -503,7 +507,17 @@ class KataEnv(gym.Env):
         # are fully reset at every ``reset()`` regardless).
         self._tech_assignment_counts = [0] * n_techs
         self._tech_last_assignment_time = [-1.0] * n_techs
-        self.action_space = gym.spaces.Discrete(n_techs)
+        # Variable-fleet sampling needs an identical action space across
+        # vectorised workers: pad to the set representation's slot count.
+        n_actions = (
+            int(self.config.max_techs)
+            if (
+                self.config.observation_representation == "set"
+                and getattr(self.config, "pad_action_space_to_max_techs", False)
+            )
+            else n_techs
+        )
+        self.action_space = gym.spaces.Discrete(n_actions)
         if self.config.observation_representation == "set":
             max_t = int(self.config.max_techs)
             max_m = int(self.config.max_machines)
@@ -729,7 +743,7 @@ class KataEnv(gym.Env):
                 return
             if np.isinf(next_event_time_float):
                 return
-            if next_event_time_float > float(self.config.max_sim_time):
+            if next_event_time_float > float(self._episode_max_sim_time):
                 return
             try:
                 self.sim_env.step()
@@ -748,7 +762,7 @@ class KataEnv(gym.Env):
     def _is_done(self) -> bool:
         if self.episode_step >= self.config.max_episode_steps:
             return True
-        if self._sim_time() >= self.config.max_sim_time:
+        if self._sim_time() >= self._episode_max_sim_time:
             return True
         if self.sim_env is None or not hasattr(self.sim_env, "peek"):
             return False
@@ -2128,6 +2142,25 @@ class KataEnv(gym.Env):
             }
         return stats
 
+    def _maybe_decay_knowledge(self) -> None:
+        """Apply technician knowledge decay for every full decay interval
+        elapsed since the last application (no-op unless
+        ``knowledge_decay_enabled``).  Event-driven episodes advance sim
+        time in irregular jumps, so one decision may span several
+        intervals; each one triggers a single ``decay_knowledge()`` call
+        per technician."""
+        if not getattr(self.config, "knowledge_decay_enabled", False):
+            return
+        interval = float(self.config.knowledge_decay_interval)
+        now = float(self._sim_time())
+        techs = self.dispatcher.techs if self.dispatcher else []
+        while now - self._last_knowledge_decay >= interval:
+            for t in techs:
+                decay = getattr(t, "decay_knowledge", None)
+                if callable(decay):
+                    decay()
+            self._last_knowledge_decay += interval
+
     def _on_repair_completed(
         self, request: Any, repair_duration: float, tech: Any = None
     ) -> None:
@@ -2207,7 +2240,19 @@ class KataEnv(gym.Env):
         return -min(total_down / total_available, 1.0)
 
     def _run_warmup(self) -> None:
-        """Run MCA warmup to fit encoder and build tokenizer vocabulary."""
+        """Install the precomputed encoder, or run the MCA warmup."""
+        emb_path = getattr(self.config, "ticket_embedding_path", None)
+        if emb_path and not self._warmup_done:
+            from kata.entities.encoder import base as encoder_base
+            from kata.entities.encoder.precomputed import PrecomputedEncoder
+
+            if (
+                not isinstance(encoder_base.ENCODER, PrecomputedEncoder)
+                or encoder_base.ENCODER.path != str(emb_path)
+            ):
+                encoder_base.ENCODER = PrecomputedEncoder(emb_path)
+            self._warmup_done = True
+            return
         if self._warmup_done or not self.config.use_mca_encoder:
             return
         if self._scenario_factory is None:
@@ -2267,6 +2312,16 @@ class KataEnv(gym.Env):
         self._total_repair_time = 0.0
         self._recent_repair_durations.clear()
         self._repair_log = []
+        self._last_knowledge_decay = float(self._sim_time())
+        # Per-episode horizon: fixed, or sampled uniformly when the
+        # config declares a [min, max] range (np.random is seeded by the
+        # harness at reset time, so the draw is reproducible).
+        lo = getattr(self.config, "max_sim_time_min", None)
+        hi = getattr(self.config, "max_sim_time_max", None)
+        if lo is not None and hi is not None:
+            self._episode_max_sim_time = float(np.random.uniform(lo, hi))
+        else:
+            self._episode_max_sim_time = float(self.config.max_sim_time)
         self._prev_finished_products = 0
         self._machine_down_since = {}
         self._total_downtime = 0.0
@@ -2301,6 +2356,7 @@ class KataEnv(gym.Env):
         avoid this behaviour should read ``obs['action_mask']`` and
         sample only from positions where the mask is 1.
         """
+        self._maybe_decay_knowledge()
         if self.current_request is None:
             self._advance_until_next_ticket()
             if self.current_request is None:
