@@ -24,6 +24,8 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 
+from kata.funcs import seed_numba_rng
+
 
 class SeededResetWrapper(gym.Wrapper):
     """Seed the *process-global* RNGs on seeded resets.
@@ -42,6 +44,9 @@ class SeededResetWrapper(gym.Wrapper):
         if seed is not None:
             np.random.seed(seed)
             random.seed(seed)
+            # numba keeps its own RNG state: the machine-failure draws in
+            # kata.funcs.step_degrade ignore the global seeds above.
+            seed_numba_rng(seed & 0xFFFFFFFF)
         return self.env.reset(seed=seed, options=options)
 
 

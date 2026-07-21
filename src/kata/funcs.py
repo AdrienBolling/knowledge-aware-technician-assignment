@@ -1,6 +1,21 @@
 import numpy as np
 from numba import njit
 
+
+@njit(cache=True)
+def seed_numba_rng(seed):
+    """Seed numba's internal RNG (separate from NumPy's global state).
+
+    ``step_degrade`` draws its failure Bernoulli inside an ``@njit``
+    function, where numba maintains its OWN per-thread random state:
+    calling ``np.random.seed`` from Python code does NOT touch it, so
+    episode seeding silently left machine-failure sequences
+    uncontrolled.  Seeded resets must call this njit shim alongside the
+    global ``np.random.seed``.
+    """
+    np.random.seed(seed)
+
+
 # -------------- Kijima degradation model ---------------
 
 
