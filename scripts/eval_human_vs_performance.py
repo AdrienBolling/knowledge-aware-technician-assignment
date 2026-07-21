@@ -44,6 +44,7 @@ from kata.core.tokenizer import StateTokenizer
 from kata.env import KataEnv
 from kata.scenario import ScenarioBuilder
 from kata.EntityFactories import RandomScenarioSampler
+from kata.funcs import seed_numba_rng
 from experiment.config import AgentConfig
 from agents import (
     BatchMILPAgent,
@@ -271,6 +272,7 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     long episodes where every-step records would dominate memory.
     """
     np.random.seed(seed)  # heuristic tiebreaks / RandomAgent
+    seed_numba_rng(seed & 0xFFFFFFFF)  # machine-failure draws (numba RNG)
     agent.on_episode_start()
     with quiet():
         obs, _ = env.reset(seed=seed)
