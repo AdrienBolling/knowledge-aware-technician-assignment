@@ -1,0 +1,73 @@
+# Hydra-composed training configuration.
+#
+# The env/ and agent/ groups are SYMLINKS to the canonical JSON configs
+# (run_configs/benchmark_suite/, run_configs/agents/) -- JSON is valid
+# YAML, so there is a single source of truth and zero duplication.
+# Trainer-level keys below mirror scripts/train_hc_improved.py.
+#
+# Usage:
+#   uv run python scripts/train_hydra.py                          # defaults
+#   uv run python scripts/train_hydra.py env=train_multiscale \
+#       init_checkpoint=checkpoints/bc_topsis_mca/set_transformer_bc.pt
+#   uv run python scripts/train_hydra.py 'env.gym.reward.knowledge_increment.coefficient=0.5'
+#
+# Ablation sweeps (each job gets its own output dir + config snapshot):
+#   uv run python scripts/train_hydra.py --multirun \
+#       use_popart=true,false seed=42,43,44
+#   uv run python scripts/train_hydra.py --multirun \
+#       'agent.params.gae_lambda=0.95,0.97,0.98' dry_run=true
+#
+# Every run writes the fully-resolved config to
+# outputs/<date>/<time>/.hydra/config.yaml (multirun: multirun/<date>/...).
+
+defaults:
+  - env: baseline
+  - agent: set_transformer_gru
+  - _self_
+
+hydra:
+  job:
+    # Keep the process in the repo root: KATA_CONF_PATH, relative
+    # checkpoint and run_configs paths all assume it.
+    chdir: false
+
+# ----- training regime (mirrors train_hc_improved.py) -----------------
+episodes: 2000
+sim_time: 500000.0
+# optional per-episode horizon range (uniform sample at reset); sim_time
+# remains the time-encoding normalisation scale
+sim_time_min: null
+sim_time_max: null
+max_steps: 25000
+episodes_per_scenario: 5
+parallel_envs: 6
+rollout_steps: 2048
+
+# null = take the value from the agent config group
+gamma: null
+gae_lambda: null
+
+# opt-in improvement toggles
+use_popart: true
+use_gru: false
+# false (default) = HC-v1's exact reward stack (floored knowledge_increment);
+# true = opt-in potential-based shaping
+potential_knowledge_reward: false
+
+# warm-start (e.g. the behaviour-cloned TOPSIS policy)
+init_checkpoint: null
+
+seed: 42
+# Default: checkpoints inside this run's hydra output dir, so every
+# experiment is self-contained (config snapshot + checkpoints together).
+# Override with an explicit path for the historical layout.
+checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
+checkpoint_interval: 50
+eval_interval: 25
+eval_episodes: 5
+
+wandb: true
+wandb_project: kata-set-transformer
+
+# Validate + print the composed configuration and exit without training.
+dry_run: false

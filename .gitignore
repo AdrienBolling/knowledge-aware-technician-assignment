@@ -213,3 +213,6 @@ wandb/
 # Local experiment artefacts
 reports/
 checkpoints/
+# Hydra run outputs
+outputs/
+multirun/
