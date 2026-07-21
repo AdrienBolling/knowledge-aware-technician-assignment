@@ -16,7 +16,7 @@ generation agent:
   policy sees deeper into the knowledge-saturation curve;
 * **fresh factory layout every 5 episodes** (``episodes_per_scenario``);
 * vectorised collection over N parallel simulators (default 6);
-* long-horizon credit (gamma 0.997, GAE-lambda 0.97);
+* long-horizon credit (gamma 0.997, GAE-lambda 0.98);
 * PopArt value normalisation;
 * GRU recurrent context.
 
@@ -71,8 +71,16 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--gamma", type=float, default=None,
                     help="override gamma (default: from agent config, 0.997)")
     ap.add_argument("--gae-lambda", type=float, default=None,
-                    help="override GAE lambda (default: from agent config, 0.97)")
+                    help="override GAE lambda (default: from agent config, 0.98)")
     ap.add_argument("--no-popart", action="store_true", help="disable PopArt")
+    ap.add_argument("--legacy-knowledge-reward", action="store_true",
+                    help="keep the historical floored knowledge_increment "
+                         "instead of the potential-based (un-floored, "
+                         "policy-invariant) form")
+    ap.add_argument("--init-checkpoint", default=None,
+                    help="warm-start from a checkpoint (e.g. the "
+                         "behaviour-cloned TOPSIS policy from "
+                         "scripts/warmstart_bc.py)")
     ap.add_argument("--no-gru", action="store_true", help="disable the GRU context")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--checkpoint-dir", default="checkpoints/hc_v2")
@@ -80,7 +88,7 @@ def parse_args() -> argparse.Namespace:
                     help="checkpoint every N PPO rounds (vec) / episodes (classic)")
     ap.add_argument("--eval-interval", type=int, default=25,
                     help="deterministic metric eval every N rounds/episodes")
-    ap.add_argument("--eval-episodes", type=int, default=2)
+    ap.add_argument("--eval-episodes", type=int, default=5)
     ap.add_argument("--no-wandb", action="store_true")
     ap.add_argument("--wandb-project", default="kata-set-transformer")
     ap.add_argument("--quiet", action="store_true")
@@ -104,6 +112,12 @@ def main() -> int:
     env_data["randomized_scenario"]["episodes_per_scenario"] = int(
         args.episodes_per_scenario
     )
+    # Potential-based knowledge shaping (un-floored, policy-invariant) is
+    # the default for new trainings; --legacy-knowledge-reward reproduces
+    # the historical floored delta.
+    env_data["gym"].setdefault("reward", {})[
+        "knowledge_increment_potential_based"
+    ] = not args.legacy_knowledge_reward
 
     # ----- agent: long-horizon credit + PopArt + GRU (each optional) -----
     agent_data = json.loads(Path(args.agent_config).read_text())
@@ -117,6 +131,8 @@ def main() -> int:
         params["gamma"] = float(args.gamma)
     if args.gae_lambda is not None:
         params["gae_lambda"] = float(args.gae_lambda)
+    if args.init_checkpoint:
+        agent_data["checkpoint"] = str(args.init_checkpoint)
     params["rollout_steps"] = int(args.rollout_steps)
     # LR schedule sized to the actual update budget:
     # rounds ~= episodes/worker * steps/episode / rollout_steps.
@@ -166,6 +182,9 @@ def main() -> int:
     print(f"  popart / rnn         : {params.get('use_popart')} / {params.get('rnn_type')}")
     print(f"  rollout / lr budget  : {params['rollout_steps']} steps, "
           f"{params['total_updates']} updates")
+    print(f"  knowledge reward     : "
+          f"{'legacy floored' if args.legacy_knowledge_reward else 'potential-based'}")
+    print(f"  init checkpoint      : {args.init_checkpoint or '(from scratch)'}")
     print(f"  checkpoints          : {args.checkpoint_dir}")
     print(f"  wandb                : {not args.no_wandb}")
 
