@@ -73,10 +73,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--gae-lambda", type=float, default=None,
                     help="override GAE lambda (default: from agent config, 0.98)")
     ap.add_argument("--no-popart", action="store_true", help="disable PopArt")
-    ap.add_argument("--legacy-knowledge-reward", action="store_true",
-                    help="keep the historical floored knowledge_increment "
-                         "instead of the potential-based (un-floored, "
-                         "policy-invariant) form")
+    ap.add_argument("--potential-knowledge-reward", action="store_true",
+                    help="opt-in: replace the historical floored "
+                         "knowledge_increment with the potential-based "
+                         "(un-floored, policy-invariant) form.  Default OFF "
+                         "-- next runs train on HC-v1's exact reward stack")
     ap.add_argument("--init-checkpoint", default=None,
                     help="warm-start from a checkpoint (e.g. the "
                          "behaviour-cloned TOPSIS policy from "
@@ -112,12 +113,11 @@ def main() -> int:
     env_data["randomized_scenario"]["episodes_per_scenario"] = int(
         args.episodes_per_scenario
     )
-    # Potential-based knowledge shaping (un-floored, policy-invariant) is
-    # the default for new trainings; --legacy-knowledge-reward reproduces
-    # the historical floored delta.
+    # HC-v1's exact reward stack is the default; potential-based knowledge
+    # shaping is opt-in (--potential-knowledge-reward).
     env_data["gym"].setdefault("reward", {})[
         "knowledge_increment_potential_based"
-    ] = not args.legacy_knowledge_reward
+    ] = bool(args.potential_knowledge_reward)
 
     # ----- agent: long-horizon credit + PopArt + GRU (each optional) -----
     agent_data = json.loads(Path(args.agent_config).read_text())
@@ -183,7 +183,7 @@ def main() -> int:
     print(f"  rollout / lr budget  : {params['rollout_steps']} steps, "
           f"{params['total_updates']} updates")
     print(f"  knowledge reward     : "
-          f"{'legacy floored' if args.legacy_knowledge_reward else 'potential-based'}")
+          f"{'potential-based' if args.potential_knowledge_reward else 'HC-v1 legacy (floored)'}")
     print(f"  init checkpoint      : {args.init_checkpoint or '(from scratch)'}")
     print(f"  checkpoints          : {args.checkpoint_dir}")
     print(f"  wandb                : {not args.no_wandb}")

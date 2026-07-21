@@ -136,7 +136,10 @@ def main() -> int:
     student.attach_vocab(tok.get_vocab())
     device = student.device
 
-    n_techs = int(rcfg.n_technicians)
+    # Size the teacher to the padded slot count: variable-fleet sampling
+    # means per-episode fleets differ, and the padded action mask governs
+    # which slots are real.
+    n_techs = int(gym_cfg.max_techs)
     teacher = TopsisAgent(n_techs)
     teacher.attach_env(env)
 
