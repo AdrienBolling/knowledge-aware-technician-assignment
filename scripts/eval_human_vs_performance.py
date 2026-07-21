@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import random
 import os
 import sys
 import time
@@ -272,7 +273,10 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     long episodes where every-step records would dominate memory.
     """
     np.random.seed(seed)  # heuristic tiebreaks / RandomAgent
-    seed_numba_rng(seed & 0xFFFFFFFF)  # machine-failure draws (numba RNG)
+    random.seed(seed)  # machine-failure Bernoulli draws (stdlib random in
+    #                    Machine._breakdown_driver) — without this, failure
+    #                    sequences were NOT seed-controlled in evaluation
+    seed_numba_rng(seed & 0xFFFFFFFF)  # legacy numba path (defensive)
     agent.on_episode_start()
     with quiet():
         obs, _ = env.reset(seed=seed)
@@ -337,8 +341,17 @@ def main() -> int:
                          "output dir: rows of the re-run agents are "
                          "replaced, all other agents' rows are kept")
     ap.add_argument("--record-every", type=int, default=1)
+    ap.add_argument("--eval-seed", type=int, default=None,
+                    help="override the benchmark layout/episode seed base "
+                         "(default: EVAL_SEED=4321, the historical lineage; "
+                         "final paper benchmarks use a freshly drawn seed, "
+                         "stated in the manuscript protocol)")
     ap.add_argument("--out-root", default="reports/hvp_eval")
     args = ap.parse_args()
+
+    global EVAL_SEED
+    if args.eval_seed is not None:
+        EVAL_SEED = int(args.eval_seed)
 
     names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
     for scenario in names:
