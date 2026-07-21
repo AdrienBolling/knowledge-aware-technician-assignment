@@ -370,3 +370,22 @@ def test_padded_action_space_flag_set_mode():
     assert obs["action_mask"].shape == (30,)
     assert obs["action_mask"][:3].sum() >= 1   # real techs present
     assert obs["action_mask"][3:].sum() == 0   # padding never valid
+
+
+def test_expected_repair_times_memoised_per_decision():
+    d = FakeDispatcher(tech_count=3)
+    calls = {"n": 0}
+    for t in d.techs:
+        def compute(base, ticket, _c=calls):
+            _c["n"] += 1
+            return 5.0
+        t.compute_repair_time = compute
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _make_env(d)
+    env.reset()
+
+    v1 = env.expected_repair_times()
+    n_after_first = calls["n"]
+    v2 = env.expected_repair_times()
+    assert np.allclose(v1, v2)
+    assert calls["n"] == n_after_first  # second call cached
