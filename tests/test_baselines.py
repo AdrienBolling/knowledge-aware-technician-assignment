@@ -346,3 +346,27 @@ def test_topsis_reads_fatigue_from_env_when_obs_lacks_it():
     assert list(np.round(env.technician_fatigues(), 1)) == [0.1, 0.9, 0.1]
     # tech 0 still dominates (fast + rested) despite the missing obs field.
     assert topsis.select_action(obs, deterministic=True) == 0
+
+
+def test_padded_action_space_flag_set_mode():
+    from kata.core.tokenizer import StateTokenizer
+
+    tok = StateTokenizer.build_set_vocab(
+        machine_types=["generic"], component_types=["comp"],
+        technician_templates=["t"], seq_length=32,
+    )
+    d = FakeDispatcher(tech_count=3)
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = KataEnv(
+        sim_env=FakeSimEnv(), dispatcher=d, tokenizer=tok,
+        config=GymEnvConfig(
+            max_episode_steps=5, max_sim_time=100.0,
+            observation_representation="set",
+            max_techs=30, pad_action_space_to_max_techs=True,
+        ),
+    )
+    obs, _ = env.reset()
+    assert env.action_space.n == 30            # padded, worker-invariant
+    assert obs["action_mask"].shape == (30,)
+    assert obs["action_mask"][:3].sum() >= 1   # real techs present
+    assert obs["action_mask"][3:].sum() == 0   # padding never valid
