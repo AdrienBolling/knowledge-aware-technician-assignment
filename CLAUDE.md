@@ -21,7 +21,7 @@ Thesis: RL dispatching with human-centric reward (fleet knowledge growth + fatig
 |---|---|
 | §1 Intro, §2 Related Work (+ Table 1 taxonomy), §4 FactoReal, §5 MDP Implementation, §7 Results (7.1 setup, 7.2 scales, 7.3 objectives ablation; 6 tables + 2 figures from 2026-07-07 benchmarks), Appendix A | drafted prose |
 | §3 HRAP-4.0 formalization | **notation table only — body is commented out/empty** |
-| §6 Method (hybrid tokens, PLE/T2V/Fourier, Transformer, MLM, PPO), §7.4 RL ablation, §8 Discussion, §9 Conclusion | skeleton `\emph{}` placeholders |
+| §6 Method (hybrid tokens, PLE/T2V/Fourier, Transformer, PPO), §7.4 RL ablation, §8 Discussion, §9 Conclusion | skeleton `\emph{}` placeholders |
 | Abstract | red placeholder — benchmark numbers now available (see `reports/hvp_eval/`, memory note benchmark-results-hvp) |
 
 ## Key decisions
@@ -35,6 +35,7 @@ Thesis: RL dispatching with human-centric reward (fleet knowledge growth + fatig
 | §5 documents the MDP **implementation** (state schema, event loop, action semantics, reward table `tab:reward_components`); §6 Method covers the learned encoders | §5 written from actual code (`env.py::_build_token_stream/_set_obs/_action_mask/_reward_for_assignment`) — keep in sync if obs schema or reward stack changes |
 | §5 framing: event-driven POMDP with semi-MDP remark; γ discounts decision steps, not sim time | Matches implementation; soften if reviewers balk |
 | Reward regimes (production-only vs human-centric subsets/coefficients) deferred to §7 Setup | Env capability vs experiment configuration split |
+| **MLM pretraining DROPPED from the paper** (2026-07-21): keywords, contribution bullet, §7.4 reserved text (now representation + RL-anchor ablations), §8 deployment-pattern clause, threats, conclusion contributions all scrubbed | User decision — never run, cut scope; §7.4 focuses on hybrid-token vs bucket-token + PPOTransformer/Rainbow anchors |
 
 ## Blockers / Warnings
 
@@ -56,6 +57,15 @@ Thesis: RL dispatching with human-centric reward (fleet knowledge growth + fatig
 2. **Fix §6/§7 false claims + abstract** (list in Blockers) and wire the generated `table_footnote.tex` († informed / ‡ reward-oracle) under the result tables.
 3. **§7.4 RL ablation (blank)**: train `PPOTransformerAgent`/`RainbowDQNAgent` on the HC reward as RL anchors (repo already has them); `chen2024` ADP/CFA (cost-function approx + implicit cross-training) is the one distinct literature RL method worth porting. If retrying the GRU axis: fix the `_inline_eval` RNN clobber first and add real TBPTT.
 4. Notation fix package (λ_c vs λ_i, β triple-use, `s` scale vs state, Q_t vs 𝒬(t)); write §3 formalization body.
+
+## Session notes (2026-07-21 — Tier-1 improvements batch)
+
+- **MLM pretraining dropped** (user decision): 7 live manuscript mentions scrubbed (see Key decisions); build 0 err / 29pp.
+- **Small-fixes bundle**: inline-eval stream-state guard (`snapshot_stream_state`/`restore_stream_state` + try/finally in `_inline_eval`); PopArt→AdamW moment rescale (exp_avg ×c, exp_avg_sq ×c²); λ 0.97→0.98 in `set_transformer_gru.json`; **numba RNG bug found+fixed** — `step_degrade`'s failure Bernoulli runs in `@njit` where numba keeps a SEPARATE RNG that `np.random.seed` never touched → machine-failure sequences were never seed-controlled in ANY run; `seed_numba_rng` njit shim wired into `SeededResetWrapper` + eval harness.
+- **Potential-based knowledge reward**: `knowledge_increment_potential_based` (+`knowledge_potential_gamma`) = F = γₚ·Φ(s′)−Φ(s), un-floored, policy-invariant; default OFF (benchmark compat), ON by default in `train_hc_improved.py` (`--legacy-knowledge-reward` opt-out).
+- **TOPSIS BC warm-start** (`scripts/warmstart_bc.py`): rotating-layout collection → masked-CE clone → trainer-compatible ckpt (vocab embedded); launcher `--init-checkpoint`. Teacher = TOPSIS (not greedy_reward) for fairness — no reward-oracle info even at collection. Smoke: 68.7% agreement on tiny run.
+- Launcher eval episodes 2→5. Env got `technician_fatigues()`; TOPSIS falls back to it when obs lacks the structured fatigue field (set-mode support). Suite **459 pass**.
+- **Queue when `hc_v2_gaefix` lands** (watcher active): (1) verify rc, (2) sync today's code to serval, (3) benchmark gaefix at industrial vs greedy 2217/TOPSIS 2202, (4) launch `hc_v3_bc` = BC-init + PBRS + λ0.98 training (`--init-checkpoint checkpoints/bc_topsis/set_transformer_bc.pt --checkpoint-dir checkpoints/hc_v3_bc`). NOTE: running gaefix predates all of today's changes (λ0.97, legacy knowledge reward) — it stays the clean GAE-only ablation point.
 
 ## Session notes (2026-07-20, part 2 — review, GAE fix, retrain)
 
