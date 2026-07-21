@@ -28,6 +28,7 @@ class ComplexMachine(Machine):
         components: list[MachineComponent],
         process_time: int,
         dt: int,
+        event_driven: bool | None = None,
     ) -> None:
         """Initialize a ComplexMachine with multiple components.
 
@@ -50,6 +51,8 @@ class ComplexMachine(Machine):
         # We'll override the breakdown behavior with component-based logic
         dummy_breakdown = SimpleBreakdownProcess(failure_prob_working=0.0)
 
+        self._candidate_component: MachineComponent | None = None
+
         super().__init__(
             env=env,
             machine_id=machine_id,
@@ -60,7 +63,41 @@ class ComplexMachine(Machine):
             breakdown_process=dummy_breakdown,
             process_time=process_time,
             dt=dt,
+            event_driven=event_driven,
         )
+
+    # -- event-driven hooks: the candidate is the min over components --
+    def _next_failure_candidate(self) -> float | None:
+        best, best_c = None, None
+        for c in self.components:
+            bp = c.breakdown_process
+            if not getattr(bp, "supports_event_driven", False):
+                return None  # mixed setups fall back to polling upstream
+            w = bp.sample_envelope_wait(float(self.dt))
+            if w is not None and (best is None or w < best):
+                best, best_c = w, c
+        self._candidate_component = best_c
+        return best
+
+    def _advance_failure_clocks(self, elapsed: float) -> None:
+        # All component clocks advance together while the machine is up.
+        for c in self.components:
+            c.breakdown_process.advance_age(elapsed)
+
+    def _accept_candidate(self) -> bool:
+        c = self._candidate_component
+        if c is None:
+            return False
+        frac = c.breakdown_process.accept_fraction(
+            self.is_processing, float(self.dt)
+        )
+        if frac > 0.0 and random.uniform(0, 1) < frac:
+            self.failed_component = c
+            self._log(
+                f"Component '{c.get_id()}' ({c.get_type()}) FAILED!"
+            )
+            return True
+        return False
 
     def _breakdown_driver(self):
         """Override parent's breakdown driver to check each component.
@@ -68,6 +105,12 @@ class ComplexMachine(Machine):
         On each time step, check all components for failure. If any component fails,
         trigger a breakdown and record which component caused the failure.
         """
+        if self.event_driven and all(
+            getattr(c.breakdown_process, "supports_event_driven", False)
+            for c in self.components
+        ):
+            yield from self._breakdown_driver_event()
+            return
         while True:
             yield self.env.timeout(self.dt)
             if self.broken:

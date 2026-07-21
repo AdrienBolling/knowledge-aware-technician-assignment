@@ -70,3 +70,34 @@ class TestWeibullBreakdownProcess:
         for _ in range(10000):
             p = bp.step_and_get_proba()
             assert p <= 1.0
+
+
+def test_weibull_kijima_restoration_keeps_residual_age():
+    from kata.features.breakdown.simple_breakdown import WeibullBreakdownProcess
+
+    bp = WeibullBreakdownProcess(shape=2.0, scale=100.0, restoration_alpha=0.5)
+    for _ in range(40):
+        bp.step_and_get_proba()
+    assert bp.age == 40
+    bp.repair()
+    assert bp.age == 20.0  # Kijima type-1: alpha * age survives the repair
+
+    # Default (perfect repair) is byte-compatible with historical behaviour.
+    perfect = WeibullBreakdownProcess(shape=2.0, scale=100.0)
+    for _ in range(40):
+        perfect.step_and_get_proba()
+    perfect.repair()
+    assert perfect.age == 0
+
+
+def test_imperfect_repair_raises_post_repair_hazard():
+    from kata.features.breakdown.simple_breakdown import WeibullBreakdownProcess
+
+    imperfect = WeibullBreakdownProcess(shape=2.0, scale=100.0, restoration_alpha=0.8)
+    perfect = WeibullBreakdownProcess(shape=2.0, scale=100.0, restoration_alpha=0.0)
+    for bp in (imperfect, perfect):
+        for _ in range(60):
+            bp.step_and_get_proba()
+        bp.repair()
+    # First post-repair step: the imperfectly-repaired component is older.
+    assert imperfect.step_and_get_proba() > perfect.step_and_get_proba()

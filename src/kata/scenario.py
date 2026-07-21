@@ -208,11 +208,13 @@ class ScenarioBuilder:
                     shape=ccfg.weibull_breakdown.shape,
                     scale=ccfg.weibull_breakdown.scale,
                     dt=mcfg.dt,
+                    restoration_alpha=getattr(ccfg, "restoration_alpha", 0.0),
                 )
             else:
                 bp = SimpleBreakdownProcess(
                     failure_prob_working=ccfg.simple_breakdown.failure_prob_working,
                     failure_prob_idle=ccfg.simple_breakdown.failure_prob_idle,
+                    restoration_alpha=getattr(ccfg, "restoration_alpha", 0.0),
                 )
             components.append(
                 MachineComponent(

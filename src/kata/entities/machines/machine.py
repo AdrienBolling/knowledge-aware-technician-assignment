@@ -9,6 +9,10 @@ from kata.features.breakdown.base import BreakdownProcess
 
 logger = logging.getLogger(__name__)
 
+# Global default for the breakdown-driver mode; validation and regression
+# harnesses flip this to compare event-driven vs per-dt polling drivers.
+EVENT_DRIVEN_DEFAULT = True
+
 
 class Machine(Mach):
     """A machine works on products abd may get broken
@@ -27,6 +31,7 @@ class Machine(Mach):
         breakdown_process: BreakdownProcess,
         process_time: int,
         dt: int,
+        event_driven: bool | None = None,
     ) -> None:
         self.env = env
         self.machine_id = machine_id
@@ -40,6 +45,9 @@ class Machine(Mach):
         self.broken = False
         self.total_processed = 0
         self.last_failed_at = None
+        self.event_driven = (
+            EVENT_DRIVEN_DEFAULT if event_driven is None else bool(event_driven)
+        )
 
         self.proc = env.process(self._run())
         self.breaks = env.process(self._breakdown_driver())
@@ -112,6 +120,11 @@ class Machine(Mach):
             )
 
     def _breakdown_driver(self):
+        if self.event_driven and getattr(
+            self.breakdown_process, "supports_event_driven", False
+        ):
+            yield from self._breakdown_driver_event()
+            return
         while True:
             yield self.env.timeout(self.dt)
             if self.broken:
@@ -123,6 +136,43 @@ class Machine(Mach):
             )
             if p_break >= random.uniform(0, 1) and p_break > 0:
                 # Machine breaks down
+                self._trigger_breakdown()
+
+    # -- event-driven variant: one scheduled event per failure candidate
+    # instead of one poll per ``dt``.  Candidates are sampled at the
+    # envelope (working) hazard via inverse-CDF and thinned by the
+    # machine state at fire time (Ogata/Lewis), which is exact for the
+    # state-modulated hazards used here.  The failure clock freezes
+    # while the machine is broken, matching the polling driver.
+    def _next_failure_candidate(self) -> float | None:
+        return self.breakdown_process.sample_envelope_wait(float(self.dt))
+
+    def _advance_failure_clocks(self, elapsed: float) -> None:
+        self.breakdown_process.advance_age(elapsed)
+
+    def _accept_candidate(self) -> bool:
+        frac = self.breakdown_process.accept_fraction(
+            self.is_processing, float(self.dt)
+        )
+        return frac > 0.0 and random.uniform(0, 1) < frac
+
+    def _breakdown_driver_event(self):
+        while True:
+            if self.broken:
+                yield self.tech_dispatcher.wait_until_repaired(self)
+                continue
+            wait = self._next_failure_candidate()
+            if wait is None:
+                # Hazard-free machine: nothing will ever fail.
+                yield self.env.timeout(2**31)
+                continue
+            yield self.env.timeout(wait)
+            if self.broken:
+                # Broke through another path while waiting (multi-component
+                # machines): the clock freeze is handled by that path.
+                continue
+            self._advance_failure_clocks(wait)
+            if self._accept_candidate():
                 self._trigger_breakdown()
 
     def _trigger_breakdown(self):
