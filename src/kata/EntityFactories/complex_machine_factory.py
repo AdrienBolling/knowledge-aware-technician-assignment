@@ -43,7 +43,10 @@ def _build_breakdown_process(
         else:
             shape = float(comp_config.get("weibull_shape", 2.0))
             scale = float(comp_config.get("weibull_scale", 1000.0))
-        return WeibullBreakdownProcess(shape=shape, scale=scale, dt=dt)
+        return WeibullBreakdownProcess(
+            shape=shape, scale=scale, dt=dt,
+            restoration_alpha=float(comp_config.get("restoration_alpha", 0.0)),
+        )
 
     simple = comp_config.get("simple_breakdown")
     degradation_rate = comp_config.get("degradation_rate", 0.001)
@@ -65,6 +68,7 @@ def _build_breakdown_process(
     return SimpleBreakdownProcess(
         failure_prob_working=failure_prob_working,
         failure_prob_idle=failure_prob_idle,
+        restoration_alpha=float(comp_config.get("restoration_alpha", 0.0)),
     )
 
 

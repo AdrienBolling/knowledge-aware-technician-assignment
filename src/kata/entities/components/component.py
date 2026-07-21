@@ -63,6 +63,11 @@ class MachineComponent(Component):
             return self._breakdown_process.step_and_get_proba()
         return self._breakdown_process.step_and_get_idle_proba()
 
+    @property
+    def breakdown_process(self):
+        """The component's breakdown process (event-driven sampling API)."""
+        return self._breakdown_process
+
     def repair(self) -> None:
         """Reset the component state after repair."""
         self._breakdown_process.repair()

@@ -27,6 +27,20 @@ class ComponentConfig(BaseModel):
         le=1.0,
         description="Factor to reduce degradation when machine is idle.",
     )
+    restoration_alpha: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Kijima type-1 restoration factor: after a repair the "
+            "component keeps ``alpha * age`` as residual virtual age. "
+            "0 (default) = perfect repair (as-good-as-new, the historical "
+            "behaviour); 1 = minimal repair (as-bad-as-old). The lever "
+            "for imperfect-maintenance studies; a future extension "
+            "modulates it by the repairing technician's skill and "
+            "fatigue (the fatigue-to-quality channel)."
+        ),
+    )
     breakdown_model: str = Field(
         default="simple",
         description="Type of breakdown model: 'simple' or 'weibull'.",
