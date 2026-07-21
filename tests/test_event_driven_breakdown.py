@@ -87,3 +87,15 @@ def test_event_sampling_respects_kijima_residual_age():
         aged_waits.append(bp.sample_envelope_wait(1.0))
     # Increasing hazard (shape > 1): residual age shortens expected wait.
     assert np.mean(aged_waits) < 0.9 * fresh
+
+
+def test_aged_high_shape_component_cannot_storm():
+    """An aged, high-shape (exploding-hazard) component must never sample
+    sub-dt candidate waits: the polling driver could fire at most one
+    event per dt, and without this cap the event calendar degenerates
+    into millions of micro-events late in long episodes."""
+    random.seed(5)
+    bp = WeibullBreakdownProcess(shape=3.0, scale=100.0, dt=1)
+    bp.advance_age(300_000.0)
+    waits = [bp.sample_envelope_wait(1.0) for _ in range(200)]
+    assert min(waits) >= 1.0
