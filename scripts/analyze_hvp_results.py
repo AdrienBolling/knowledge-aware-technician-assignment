@@ -39,6 +39,11 @@ AGENT_LABELS = {
     "human": r"HC-RL (ours)",
     "performance": r"PO-RL (ours)",
     "hc_v2": r"HC-RL-v2 (ours)",
+    "gaefix": r"HC-RL-v2g (diag.)",
+    "hc_v3": r"HTT-RL-v3 (ours)",
+    "hc_v3_last": r"HTT-RL-v3-last (ours)",
+    "ppo_transformer": "PPO-TRF (anchor)",
+    "rainbow_dqn": "Rainbow (anchor)",
     "random": "Random",
     "round_robin": "RoundRobin",
     "least_busy": "LeastBusy",
@@ -224,6 +229,16 @@ def horizon_table(hm: pd.DataFrame) -> str:
 
 
 def main() -> int:
+    import argparse
+
+    global ROOT
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default=str(ROOT),
+                    help="hvp_eval artefact root to analyse "
+                         "(default: reports/hvp_eval)")
+    args = ap.parse_args()
+    ROOT = Path(args.root)
+
     all_ranks = []
     for scenario in SCENARIOS:
         d = ROOT / scenario

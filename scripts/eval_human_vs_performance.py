@@ -55,6 +55,8 @@ from agents import (
     LeastBusyAgent,
     LeastFatiguedAgent,
     OptimalAssignmentAgent,
+    PPOTransformerAgent,
+    RainbowDQNAgent,
     RandomAgent,
     ReserveSpecialistAgent,
     RoundRobinAgent,
@@ -64,6 +66,11 @@ from agents import (
     TopsisAgent,
     TrainWeakestAgent,
 )
+
+TOKEN_AGENT_CLASSES = {
+    "ppo_transformer": PPOTransformerAgent,
+    "rainbow_dqn": RainbowDQNAgent,
+}
 
 HEURISTICS = {
     "random": RandomAgent,
@@ -97,6 +104,29 @@ CHECKPOINTS = {
     # architecture is read from the checkpoint's own ``improvements`` dict
     # by build_agents, so no separate agent config is needed here.
     "hc_v2": Path("checkpoints/hc_v2/set_transformer_best.pt"),
+    # GAE-fix infra ablation (diagnostic — training cut at 80%).
+    "gaefix": Path("checkpoints/hc_v2_gaefix/set_transformer_best.pt"),
+    # Third generation: BC warm-start + multiscale SOM-world training.
+    # ``hc_v3_final/`` is populated by the post-v3 queue with the best
+    # AND the latest round checkpoint of the (possibly extended) run —
+    # the inline eval is sparse (5 eps / 50 rounds), so "best" is a
+    # noisy selection and both are benchmarked.
+    "hc_v3": Path("checkpoints/hc_v3_final/set_transformer_best.pt"),
+    "hc_v3_last": Path("checkpoints/hc_v3_final/set_transformer_last.pt"),
+}
+
+# Token-stream RL anchors (section 7.4): standard architectures trained
+# on the exact HC-v1 world + reward.  Fixed action head + fleet-sized
+# vocab: they only run on the scenario they were trained on (baseline).
+TOKEN_CHECKPOINTS = {
+    "ppo_transformer": (
+        Path("checkpoints/anchors/ppo_transformer_best.pt"),
+        Path("run_configs/agents/ppo_transformer.json"),
+    ),
+    "rainbow_dqn": (
+        Path("checkpoints/anchors/rainbow_dqn_best.pt"),
+        Path("run_configs/agents/rainbow_dqn.json"),
+    ),
 }
 
 AGENT_CONFIG = Path("run_configs/agents/set_transformer.json")
@@ -206,7 +236,8 @@ def peek_improvements(checkpoint: Path) -> dict:
     return dict(ck.get("improvements") or {}) if isinstance(ck, dict) else {}
 
 
-def build_agents(env_cfg, scenario_factory, n_techs):
+def build_agents(env_cfg, scenario_factory, n_techs,
+                 machine_types=None, component_types=None):
     """Return {label: (agent, env)} for the trained checkpoints + 5 heuristics.
 
     Each trained agent is instantiated with the architecture recorded in
@@ -240,6 +271,39 @@ def build_agents(env_cfg, scenario_factory, n_techs):
         agent.load(ckpt)
         env = make_env(env_cfg, scenario_factory, "set", tokenizer=tok)
         agents[label] = (agent, env)
+    # Token-stream anchors: rebuilt with the runner's exact vocab recipe
+    # (deterministic given identical config/pools, so checkpoint ids
+    # match).  ``setdefault`` mirrors the runner: an explicit vocab_size
+    # in the agent JSON wins, exactly as it did at training time.
+    if machine_types is not None and component_types is not None:
+        for label, (ckpt, cfg_path) in TOKEN_CHECKPOINTS.items():
+            if not ckpt.is_file():
+                print(f"  (skipping {label}: no checkpoint at {ckpt})",
+                      flush=True)
+                continue
+            tok = StateTokenizer.build_vocab(
+                machine_types=machine_types,
+                n_technicians=n_techs,
+                seq_length=env_cfg.gym.tokenizer_seq_length,
+                component_types=component_types,
+                next_ticket_lookahead=env_cfg.gym.next_ticket_lookahead,
+            )
+            acfg = AgentConfig(**json.loads(cfg_path.read_text()))
+            params = dict(acfg.params)
+            params["n_actions"] = n_techs
+            params.setdefault("vocab_size", tok.vocab_size)
+            params.setdefault("max_seq_len", env_cfg.gym.tokenizer_seq_length)
+            try:
+                agent = TOKEN_AGENT_CLASSES[label](**params)
+                agent.load(ckpt)
+            except Exception as exc:  # fixed head/vocab: wrong scale
+                print(f"  (skipping {label}: checkpoint incompatible with "
+                      f"this scenario — {type(exc).__name__}: {exc})",
+                      flush=True)
+                continue
+            env = make_env(env_cfg, scenario_factory, "token_ids",
+                           tokenizer=tok)
+            agents[label] = (agent, env)
     for name, cls in HEURISTICS.items():
         env = make_env(env_cfg, scenario_factory, "structured")
         agent = cls(n_actions=n_techs)
@@ -361,10 +425,11 @@ def main() -> int:
             scenario, n_eps_override=args.n_eps,
             sim_override=args.sim, steps_override=args.steps,
         )
-        agents = build_agents(env_cfg, factory, n_techs)
+        agents = build_agents(env_cfg, factory, n_techs,
+                              machine_types=mtypes, component_types=ctypes)
         if args.agents != "all":
             if args.agents == "trained":
-                keep = set(CHECKPOINTS)
+                keep = set(CHECKPOINTS) | set(TOKEN_CHECKPOINTS)
             elif args.agents == "heuristics":
                 keep = set(HEURISTICS)
             else:
