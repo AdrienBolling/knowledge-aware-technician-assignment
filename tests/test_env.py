@@ -470,3 +470,69 @@ def test_reward_busy_technician_component_applies_when_enabled():
 
     assert reward == -2.0
     assert info["reward_breakdown"]["busy_technician"] == -2.0
+
+
+# ---------------------------------------------------------------------------
+# Horizon termination with continuous-time (event-driven) schedules.
+#
+# The advance loop refuses to execute events beyond the episode horizon,
+# so ``now`` freezes just below it.  Polling engines still terminated
+# because dt-aligned events landed exactly on integer horizons; the
+# event-driven engine schedules at continuous times, where that has
+# probability zero.  ``_is_done`` must therefore treat "every remaining
+# event lies beyond the horizon, no decision pending" as episode end —
+# otherwise episodes only die at ``max_episode_steps``, thousands of
+# no-op steps later.
+# ---------------------------------------------------------------------------
+
+
+def test_done_when_all_remaining_events_lie_beyond_horizon():
+    sim_env = FakeSimEnv()
+    dispatcher = FakeDispatcher(tech_count=2)
+    sim_env.schedule(at=250.3, callback=lambda: None)
+    env = KataEnv(
+        sim_env=sim_env,
+        dispatcher=dispatcher,
+        config=GymEnvConfig(max_episode_steps=1000, max_sim_time=100.7),
+    )
+    env.reset()
+
+    assert env.current_request is None
+    assert env._is_done()
+
+
+def test_not_done_while_an_event_remains_within_horizon():
+    sim_env = FakeSimEnv()
+    dispatcher = FakeDispatcher(tech_count=2)
+    sim_env.schedule(
+        at=50.2,
+        callback=lambda: dispatcher.repair_queue.items.append(
+            FakeRequest(machine_id=3, created_at=sim_env.now)
+        ),
+    )
+    env = KataEnv(
+        sim_env=sim_env,
+        dispatcher=dispatcher,
+        config=GymEnvConfig(max_episode_steps=1000, max_sim_time=100.7),
+    )
+    env.reset()
+
+    # The in-horizon event produced a ticket: a decision is pending.
+    assert env.current_request is not None
+    assert not env._is_done()
+
+
+def test_not_done_with_pending_decision_even_if_next_event_is_beyond_horizon():
+    sim_env = FakeSimEnv()
+    dispatcher = FakeDispatcher(tech_count=2)
+    dispatcher.repair_queue.items.append(FakeRequest(machine_id=5, created_at=0.0))
+    sim_env.schedule(at=250.3, callback=lambda: None)
+    env = KataEnv(
+        sim_env=sim_env,
+        dispatcher=dispatcher,
+        config=GymEnvConfig(max_episode_steps=1000, max_sim_time=100.7),
+    )
+    env.reset()
+
+    assert env.current_request is not None
+    assert not env._is_done()
