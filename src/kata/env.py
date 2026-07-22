@@ -770,7 +770,24 @@ class KataEnv(gym.Env):
             return True
         if self.sim_env is None or not hasattr(self.sim_env, "peek"):
             return False
-        if not np.isinf(self.sim_env.peek()):
+        next_event = self.sim_env.peek()
+        if not np.isinf(next_event):
+            # Event-driven clocks schedule at continuous times, so no
+            # event lands exactly on the horizon: the advance loop
+            # freezes ``now`` just below it and the ``>=`` check above
+            # can never fire.  If every remaining event lies beyond the
+            # horizon and no decision is pending, nothing more can
+            # happen inside the episode — end it here instead of
+            # burning no-op steps until ``max_episode_steps``.
+            try:
+                if (
+                    float(next_event) > float(self._episode_max_sim_time)
+                    and self.current_request is None
+                    and self._queue_size() == 0
+                ):
+                    return True
+            except (TypeError, ValueError):
+                pass
             return False
         return self.current_request is None and self._queue_size() == 0
 
