@@ -20,6 +20,10 @@
 # subshell logs liveness every 10 min. Nothing here ever kills processes.
 set -u
 cd "$(dirname "$0")/.."
+# The serval venv has no editable install of the project — every entry
+# point that imports kata/experiment needs src/ on the path (train_hydra
+# bootstraps its own sys.path; the eval/analysis/CLI scripts do not).
+export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
 Q=reports/post_v3_queue.log
 RUNLOG=reports/hvp_eval_v3_run.log
 SEED=20260722
