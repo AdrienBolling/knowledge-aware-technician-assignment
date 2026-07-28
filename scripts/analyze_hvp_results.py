@@ -44,6 +44,8 @@ AGENT_LABELS = {
     "hc_v3_last": r"HTT-RL-v3-last (ours)",
     "hc_v3_ft": r"HTT-RL-v3-ft (ours)",
     "hc_v3_ft_mid": r"HTT-RL-v3-ft-mid (ours)",
+    "hc_v4": r"HTT-RL-v4 (ours)",
+    "hc_v4_last": r"HTT-RL-v4-last (ours)",
     "ppo_transformer": "PPO-TRF (anchor)",
     "rainbow_dqn": "Rainbow (anchor)",
     "random": "Random",

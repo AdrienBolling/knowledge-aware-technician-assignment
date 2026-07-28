@@ -101,3 +101,33 @@ def test_imperfect_repair_raises_post_repair_hazard():
         bp.repair()
     # First post-repair step: the imperfectly-repaired component is older.
     assert imperfect.step_and_get_proba() > perfect.step_and_get_proba()
+
+
+def test_global_default_restoration_alpha_reaches_components():
+    """sim.repair.default_restoration_alpha applies to every component
+    that does not set its own restoration_alpha (0.0 = unset)."""
+    import json
+    from pathlib import Path
+
+    from kata.core.config import KATAConfig
+    from kata.scenario import ScenarioBuilder
+
+    cfg_data = json.loads(
+        Path("run_configs/benchmark_suite/baseline.json").read_text()
+    )
+    cfg_data["sim"]["repair"]["default_restoration_alpha"] = 0.3
+    cfg = KATAConfig(**cfg_data)
+    _sim_env, dispatcher = ScenarioBuilder(cfg).build()
+    machines = list(getattr(dispatcher, "machines", {}).values()) if isinstance(
+        getattr(dispatcher, "machines", None), dict
+    ) else list(getattr(dispatcher, "machines", []) or [])
+    alphas = []
+    for m in machines:
+        comps = getattr(m, "components", None)
+        if comps:
+            for c in comps:
+                alphas.append(c.breakdown_process.restoration_alpha)
+        elif hasattr(m, "breakdown_process"):
+            alphas.append(m.breakdown_process.restoration_alpha)
+    assert alphas, "no breakdown processes found"
+    assert all(abs(a - 0.3) < 1e-9 for a in alphas), alphas

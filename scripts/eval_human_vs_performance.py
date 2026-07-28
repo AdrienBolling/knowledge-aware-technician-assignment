@@ -118,6 +118,10 @@ CHECKPOINTS = {
     # canonicalised by scripts/serval_post_ft_queue.sh.
     "hc_v3_ft": Path("checkpoints/hc_v3_ft_final/set_transformer_last.pt"),
     "hc_v3_ft_mid": Path("checkpoints/hc_v3_ft_final/set_transformer_mid.pt"),
+    # v4: trained from scratch (fresh TOPSIS BC-init) in the mechanisms-ON
+    # world (knowledge decay + Kijima imperfect repair, alpha=0.25).
+    "hc_v4": Path("checkpoints/hc_v4_final/set_transformer_best.pt"),
+    "hc_v4_last": Path("checkpoints/hc_v4_final/set_transformer_last.pt"),
 }
 
 # Token-stream RL anchors (section 7.4): standard architectures trained
