@@ -113,6 +113,11 @@ CHECKPOINTS = {
     # noisy selection and both are benchmarked.
     "hc_v3": Path("checkpoints/hc_v3_final/set_transformer_best.pt"),
     "hc_v3_last": Path("checkpoints/hc_v3_final/set_transformer_last.pt"),
+    # Long-horizon fine-tune of hc_v3_last (horizons U(1.5M, 5M), halved
+    # LR, inline eval off): final and mid-training round checkpoints,
+    # canonicalised by scripts/serval_post_ft_queue.sh.
+    "hc_v3_ft": Path("checkpoints/hc_v3_ft_final/set_transformer_last.pt"),
+    "hc_v3_ft_mid": Path("checkpoints/hc_v3_ft_final/set_transformer_mid.pt"),
 }
 
 # Token-stream RL anchors (section 7.4): standard architectures trained

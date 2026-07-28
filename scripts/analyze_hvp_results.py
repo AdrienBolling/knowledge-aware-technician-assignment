@@ -42,6 +42,8 @@ AGENT_LABELS = {
     "gaefix": r"HC-RL-v2g (diag.)",
     "hc_v3": r"HTT-RL-v3 (ours)",
     "hc_v3_last": r"HTT-RL-v3-last (ours)",
+    "hc_v3_ft": r"HTT-RL-v3-ft (ours)",
+    "hc_v3_ft_mid": r"HTT-RL-v3-ft-mid (ours)",
     "ppo_transformer": "PPO-TRF (anchor)",
     "rainbow_dqn": "Rainbow (anchor)",
     "random": "Random",
