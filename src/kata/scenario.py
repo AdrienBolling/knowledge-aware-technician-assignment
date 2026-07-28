@@ -186,6 +186,13 @@ class ScenarioBuilder:
             breakdown_process=SimpleBreakdownProcess(
                 failure_prob_working=0.005,
                 failure_prob_idle=0.0005,
+                restoration_alpha=float(
+                    getattr(
+                        self.config.sim.repair,
+                        "default_restoration_alpha",
+                        0.0,
+                    )
+                ),
             ),
             process_time=mcfg.process_time,
             dt=mcfg.dt,
@@ -201,20 +208,26 @@ class ScenarioBuilder:
         dispatcher: GymTechDispatcher,
     ) -> ComplexMachine:
         """Create a ComplexMachine with components from config."""
+        # Per-component restoration_alpha wins; components that leave it
+        # unset (0.0) inherit the global repair-physics default.
+        global_alpha = float(
+            getattr(self.config.sim.repair, "default_restoration_alpha", 0.0)
+        )
         components: list[MachineComponent] = []
         for _cname, ccfg in mcfg.components.items():
+            alpha = getattr(ccfg, "restoration_alpha", 0.0) or global_alpha
             if ccfg.breakdown_model == "weibull":
                 bp = WeibullBreakdownProcess(
                     shape=ccfg.weibull_breakdown.shape,
                     scale=ccfg.weibull_breakdown.scale,
                     dt=mcfg.dt,
-                    restoration_alpha=getattr(ccfg, "restoration_alpha", 0.0),
+                    restoration_alpha=alpha,
                 )
             else:
                 bp = SimpleBreakdownProcess(
                     failure_prob_working=ccfg.simple_breakdown.failure_prob_working,
                     failure_prob_idle=ccfg.simple_breakdown.failure_prob_idle,
-                    restoration_alpha=getattr(ccfg, "restoration_alpha", 0.0),
+                    restoration_alpha=alpha,
                 )
             components.append(
                 MachineComponent(

@@ -239,6 +239,17 @@ class RepairConfig(BaseModel):
         default=True,
         description="Apply fatigue multiplier to base repair time when True.",
     )
+    default_restoration_alpha: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Kijima type-1 restoration factor applied to every component "
+            "whose own config does not set ``restoration_alpha``: after a "
+            "repair the component retains ``alpha * age``.  0 = perfect "
+            "(as-good-as-new, historical behaviour), 1 = minimal repair."
+        ),
+    )
     min_repair_fraction: float = Field(
         default=0.3,
         ge=0.0,
