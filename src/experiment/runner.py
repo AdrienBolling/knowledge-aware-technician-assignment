@@ -1231,6 +1231,10 @@ class Experiment:
                     actions = agent.select_actions(obs_list, env_ids=list(range(n)))
                     next_obs, rewards, terms, truncs, _infos = venv.step(actions)
                     next_obs_list = unbatch_obs(next_obs, n)
+                    # Per-env sim-time stamps (gymnasium vec envs merge
+                    # worker info dicts into {key: array, "_key": mask}).
+                    # Feeds the agent's semi-MDP dt bookkeeping.
+                    _sim_times = _infos.get("sim_time") if isinstance(_infos, dict) else None
                     for i in range(n):
                         if prev_done[i]:
                             # Autoreset step: the env ignored our action and
@@ -1245,7 +1249,9 @@ class Experiment:
                             next_obs_list[i],
                             bool(terms[i]),
                             bool(truncs[i]),
-                            {},
+                            {"sim_time": float(_sim_times[i])}
+                            if _sim_times is not None
+                            else {},
                             env_id=i,
                         )
                         ep_return[i] += float(rewards[i])

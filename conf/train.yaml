@@ -43,9 +43,17 @@ episodes_per_scenario: 5
 parallel_envs: 6
 rollout_steps: 2048
 
-# null = take the value from the agent config group
-gamma: null
+# null = take the value from the agent config group.
+# NOTE: with time_based_discount=true, gamma is the discount PER
+# SIM-TIME-UNIT (0.9999 -> ~10k t.u. effective horizon).
+gamma: 0.9999
 gae_lambda: null
+
+# Semi-MDP time-based discounting: each transition is discounted by
+# gamma**dt (dt = elapsed sim time), so the effective horizon is
+# consistent in factory time regardless of decision density.  Set
+# false + a per-decision gamma to reproduce v3/v4-era trainings.
+time_based_discount: true
 
 # opt-in improvement toggles
 use_popart: true

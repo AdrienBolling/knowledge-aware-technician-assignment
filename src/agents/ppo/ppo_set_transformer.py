@@ -88,6 +88,13 @@ class SetTransformerAgent(Agent):
         sim_time_scale: float = 200_000.0,
         # PPO hyperparameters
         gamma: float = 0.99,
+        # Semi-MDP time-based discounting: when True, ``gamma`` is the
+        # discount PER SIM-TIME-UNIT and each transition is discounted
+        # by ``gamma ** dt`` (dt = elapsed sim time), so the effective
+        # horizon is consistent in factory time regardless of how
+        # densely decisions are spaced.  When False (default), classic
+        # per-decision discounting.
+        time_based_discount: bool = False,
         gae_lambda: float = 0.95,
         clip_eps: float = 0.2,
         clip_eps_vf: float | None = 0.2,
@@ -185,6 +192,7 @@ class SetTransformerAgent(Agent):
 
         # PPO knobs
         self.gamma = float(gamma)
+        self.time_based_discount = bool(time_based_discount)
         self.gae_lambda = float(gae_lambda)
         self.clip_eps = float(clip_eps)
         self.clip_eps_vf = clip_eps_vf
@@ -233,10 +241,16 @@ class SetTransformerAgent(Agent):
             lambda: {
                 "obs": [], "action": [], "reward": [], "done": [],
                 "logprob": [], "value": [], "mask": [], "hidden": [],
+                "dt": [],
             }
         )
         self._pending: dict[int, dict[str, Any]] = {}
         self._last: dict[int, dict[str, Any]] = {}
+        # Sim-time of each stream's newest observation (semi-MDP dt
+        # bookkeeping).  None = unknown (fresh episode): the first
+        # transition falls back to dt=0, i.e. undiscounted — a
+        # one-transition approximation per episode.
+        self._last_sim_time: dict[int, float | None] = {}
 
     # ------------------------------------------------------------------
     def num_parameters(self) -> int:
@@ -339,6 +353,7 @@ class SetTransformerAgent(Agent):
         """Reset per-episode state (RNN hidden, running return) of a stream."""
         self._rnn_state.pop(env_id, None)
         self._return_running[env_id] = 0.0
+        self._last_sim_time[env_id] = None
 
     def snapshot_stream_state(self) -> tuple:
         """Shallow snapshot of the per-stream episode state.
@@ -508,8 +523,21 @@ class SetTransformerAgent(Agent):
         info: dict[str, Any],
         env_id: int = 0,
     ) -> None:
-        _ = info
         done = bool(terminated or truncated)
+        # Semi-MDP bookkeeping: dt = sim time elapsed across this
+        # transition (obs -> next_obs).  ``info["sim_time"]`` stamps
+        # next_obs; the previous transition's stamp is the time of obs.
+        # A fresh episode has no previous stamp -> dt=0 (undiscounted),
+        # a one-transition approximation.
+        sim_time = info.get("sim_time") if isinstance(info, dict) else None
+        prev_time = self._last_sim_time.get(env_id)
+        if sim_time is not None and prev_time is not None:
+            dt = max(0.0, float(sim_time) - prev_time)
+        else:
+            dt = 0.0
+        self._last_sim_time[env_id] = (
+            None if done else (float(sim_time) if sim_time is not None else None)
+        )
         r_buf = float(reward)
         if self.normalize_rewards:
             self._return_running[env_id] = (
@@ -533,6 +561,7 @@ class SetTransformerAgent(Agent):
             mask = np.ones(self.n_actions, dtype=bool)
         stream["mask"].append(np.asarray(mask, dtype=bool))
         stream["hidden"].append(pending.get("hidden"))
+        stream["dt"].append(dt)
         self._last[env_id] = {
             "obs": self._extract_obs(next_obs),
             "mask": self._extract_action_mask(next_obs),
@@ -549,8 +578,18 @@ class SetTransformerAgent(Agent):
         values: np.ndarray,
         dones: np.ndarray,
         last_value: float,
+        dts: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         n = len(rewards)
+        # Semi-MDP discounting: transition t's bootstrap spans dts[t]
+        # sim-time units, so its discount is gamma**dt (gamma is
+        # per-time-unit).  The lambda mixing weight stays per-decision
+        # — lambda trades bias for variance over *decisions*, it is not
+        # a time preference.
+        if self.time_based_discount and dts is not None:
+            gammas = np.power(self.gamma, dts.astype(np.float64))
+        else:
+            gammas = np.full(n, self.gamma, dtype=np.float64)
         advantages = np.zeros(n, dtype=np.float32)
         gae = 0.0
         next_value = float(last_value)
@@ -563,11 +602,11 @@ class SetTransformerAgent(Agent):
             next_non_terminal = 0.0 if dones[t] else 1.0
             delta = (
                 rewards[t]
-                + self.gamma * next_value * next_non_terminal
+                + gammas[t] * next_value * next_non_terminal
                 - values[t]
             )
             gae = (
-                delta + self.gamma * self.gae_lambda * next_non_terminal * gae
+                delta + gammas[t] * self.gae_lambda * next_non_terminal * gae
             )
             advantages[t] = gae
             next_value = values[t]
@@ -608,7 +647,8 @@ class SetTransformerAgent(Agent):
                 with torch.no_grad(), self._autocast_ctx:
                     _, v, _ = self.net(last_batch, h)
                 last_value = self._popart_denorm(float(v.item()))
-            adv, ret = self._compute_gae(rewards, values, dones, last_value)
+            dts = np.asarray(s["dt"], dtype=np.float64)
+            adv, ret = self._compute_gae(rewards, values, dones, last_value, dts)
             obs_list.extend(s["obs"])
             hidden_list.extend(s["hidden"])
             actions_parts.append(np.asarray(s["action"], dtype=np.int64))
