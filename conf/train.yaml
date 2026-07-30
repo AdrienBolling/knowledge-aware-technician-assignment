@@ -60,7 +60,9 @@ use_popart: true
 use_gru: false
 # false (default) = HC-v1's exact reward stack (floored knowledge_increment);
 # true = opt-in potential-based shaping
-potential_knowledge_reward: false
+# null = respect the env config's reward stack (v5 sets PBRS itself);
+# explicit true/false force-overrides for ablations
+potential_knowledge_reward: null
 
 # warm-start (e.g. the behaviour-cloned TOPSIS policy)
 init_checkpoint: null

@@ -141,6 +141,8 @@ celerybeat.pid
 env/
 venv/
 ENV/
+# hydra env-group symlinks are real config, not a Python venv
+!conf/env/
 env.bak/
 venv.bak/
 

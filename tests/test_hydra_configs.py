@@ -53,4 +53,5 @@ def test_trainer_defaults_mirror_launcher():
     assert cfg.episodes == 2000
     assert cfg.eval_episodes == 5          # hardened selection default
     assert cfg.use_gru is False            # current-generation stack
-    assert cfg.potential_knowledge_reward is False  # HC-v1 reward by default
+    # null = respect the env config's reward stack (v5 sets PBRS itself)
+    assert cfg.potential_knowledge_reward is None
