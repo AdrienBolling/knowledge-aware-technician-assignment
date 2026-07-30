@@ -25,7 +25,9 @@ LAM = 0.95
 
 def _gae(rewards, values, dones, last_value, gamma=GAMMA, lam=LAM):
     """Call the (unbound) production implementation on a stub self."""
-    stub = SimpleNamespace(gamma=gamma, gae_lambda=lam)
+    stub = SimpleNamespace(
+        gamma=gamma, gae_lambda=lam, time_based_discount=False
+    )
     return SetTransformerAgent._compute_gae(
         stub,
         np.asarray(rewards, dtype=np.float32),
@@ -116,3 +118,101 @@ def test_truncation_bootstraps_only_the_tail():
     delta0 = 1.0 + GAMMA * 0.0
     assert adv[1] == pytest.approx(delta1, rel=1e-5)
     assert adv[0] == pytest.approx(delta0 + GAMMA * LAM * delta1, rel=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Semi-MDP time-based discounting: gamma is per sim-time-unit and each
+# transition is discounted by gamma**dt.
+# ---------------------------------------------------------------------------
+
+
+def _gae_smdp(rewards, values, dones, last_value, dts, gamma=0.9999, lam=LAM):
+    stub = SimpleNamespace(
+        gamma=gamma, gae_lambda=lam, time_based_discount=True
+    )
+    return SetTransformerAgent._compute_gae(
+        stub,
+        np.asarray(rewards, dtype=np.float32),
+        np.asarray(values, dtype=np.float32),
+        np.asarray(dones, dtype=bool),
+        float(last_value),
+        np.asarray(dts, dtype=np.float64),
+    )
+
+
+def test_smdp_with_unit_dts_equals_per_decision_gae():
+    rng = np.random.default_rng(3)
+    n = 48
+    rewards, values = rng.normal(size=n), rng.normal(size=n)
+    dones = np.zeros(n, dtype=bool)
+    dones[20] = True
+    adv_t, ret_t = _gae_smdp(rewards, values, dones, 0.4, np.ones(n),
+                             gamma=GAMMA)
+    adv_d, ret_d = _gae(rewards, values, dones, 0.4, gamma=GAMMA)
+    np.testing.assert_allclose(adv_t, adv_d, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(ret_t, ret_d, rtol=1e-5, atol=1e-5)
+
+
+def test_smdp_discount_depends_on_elapsed_time_not_step_count():
+    # One transition, reward only in the bootstrap: A_0 = g*V' - V.
+    # The discount must be gamma**dt.
+    for dt in (1.0, 22.0, 200.0):
+        adv, _ = _gae_smdp([0.0], [0.0], [False], 1.0, [dt], lam=0.0)
+        assert adv[0] == pytest.approx(0.9999 ** dt, rel=1e-6)
+
+
+def test_smdp_respects_episode_boundaries():
+    # Terminal transition must not bootstrap regardless of its dt.
+    adv, _ = _gae_smdp([1.0], [0.0], [True], 55.0, [1e6], lam=0.0)
+    assert adv[0] == pytest.approx(1.0)
+
+
+def test_disabled_flag_ignores_dts():
+    stub = SimpleNamespace(
+        gamma=GAMMA, gae_lambda=LAM, time_based_discount=False
+    )
+    rng = np.random.default_rng(11)
+    n = 16
+    rewards, values = rng.normal(size=n), rng.normal(size=n)
+    dones = np.zeros(n, dtype=bool)
+    adv, _ = SetTransformerAgent._compute_gae(
+        stub,
+        rewards.astype(np.float32), values.astype(np.float32), dones, 0.0,
+        np.full(n, 500.0),
+    )
+    ref, _ = _gae(rewards, values, dones, 0.0)
+    np.testing.assert_allclose(adv, ref, rtol=1e-5, atol=1e-5)
+
+
+def test_observe_transition_records_sim_time_deltas():
+    """dt bookkeeping: first transition of an episode falls back to 0,
+    later ones record the sim-time delta; done resets the stamp."""
+    agent = SetTransformerAgent.__new__(SetTransformerAgent)
+    agent.n_actions = 4
+    agent.normalize_rewards = False
+    agent.rnn_type = "none"
+    agent.time_based_discount = True
+    from collections import defaultdict
+    agent._streams = defaultdict(
+        lambda: {
+            "obs": [], "action": [], "reward": [], "done": [],
+            "logprob": [], "value": [], "mask": [], "hidden": [], "dt": [],
+        }
+    )
+    agent._pending, agent._last, agent._rnn_state = {}, {}, {}
+    agent._return_running = defaultdict(float)
+    agent._last_sim_time = {}
+    agent._extract_obs = lambda o: {}
+    agent._extract_action_mask = lambda o: np.ones(4, dtype=bool)
+    agent._hidden_to_numpy = lambda h: None
+
+    def step(sim_time, done=False):
+        agent.observe_transition(
+            {}, 0, 0.0, {}, done, False, {"sim_time": sim_time}, env_id=0
+        )
+
+    step(107.0)          # first of episode: no previous stamp
+    step(129.5)          # dt = 22.5
+    step(329.5, done=True)  # dt = 200, then stamp cleared
+    step(13.0)           # new episode: fallback again
+    assert agent._streams[0]["dt"] == [0.0, 22.5, 200.0, 0.0]

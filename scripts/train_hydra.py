@@ -64,6 +64,15 @@ def main(cfg: DictConfig) -> int:
         params["rnn_type"] = "none"
     if cfg.gamma is not None:
         params["gamma"] = float(cfg.gamma)
+    params["time_based_discount"] = bool(cfg.get("time_based_discount", False))
+    if params["time_based_discount"] and params.get("gamma", 1.0) < 0.999:
+        raise ValueError(
+            "time_based_discount=true interprets gamma per sim-TIME-UNIT: "
+            f"gamma={params.get('gamma')} would give a ~"
+            f"{1.0 / (1.0 - float(params.get('gamma', 0.99))):.0f} t.u. "
+            "horizon (likely a per-decision value passed by mistake). "
+            "Use e.g. gamma=0.9999, or set time_based_discount=false."
+        )
     if cfg.gae_lambda is not None:
         params["gae_lambda"] = float(cfg.gae_lambda)
     params["rollout_steps"] = int(cfg.rollout_steps)
@@ -122,7 +131,8 @@ def main(cfg: DictConfig) -> int:
     print(f"  env group            : {cfg.env.get('name', '(group)')}")
     print(f"  episodes             : {int(cfg.episodes)}  @ {float(cfg.sim_time):,.0f} t.u.")
     print(f"  parallel envs        : {int(cfg.parallel_envs)}")
-    print(f"  gamma / gae_lambda   : {params['gamma']} / {params['gae_lambda']}")
+    print(f"  gamma / gae_lambda   : {params['gamma']} / {params['gae_lambda']}"
+          + (" (semi-MDP: gamma per t.u.)" if params.get("time_based_discount") else " (per decision)"))
     print(f"  popart / rnn         : {params.get('use_popart')} / {params.get('rnn_type')}")
     print(f"  knowledge reward     : "
           f"{'potential-based' if cfg.potential_knowledge_reward else 'HC-v1 legacy (floored)'}")
