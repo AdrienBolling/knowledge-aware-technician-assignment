@@ -407,6 +407,10 @@ class KataEnv(gym.Env):
         # Fleet knowledge volume sampled at the previous decision step,
         # used to compute the ``knowledge_increment`` per-step reward.
         self._prev_fleet_knowledge: float = 0.0
+        # Sim time of that snapshot: the potential-based variant
+        # discounts by gamma_p**dt (dt = elapsed sim time), matching
+        # the agent's semi-MDP discounting for exact policy-invariance.
+        self._prev_decision_sim_time: float = 0.0
 
         # Tokenizer & MCA state (populated by warmup or passed in)
         self._tokenizer: StateTokenizer | None = tokenizer
@@ -1572,6 +1576,7 @@ class KataEnv(gym.Env):
             return np.full(len(techs), -np.inf, dtype=np.float64)
         snap_finished = getattr(self, "_prev_finished_products", 0)
         snap_knowledge = getattr(self, "_prev_fleet_knowledge", 0.0)
+        snap_decision_time = getattr(self, "_prev_decision_sim_time", 0.0)
         snap_breakdown = getattr(self, "_last_reward_breakdown", {})
         was_frozen = self._reward_normalizer.frozen
         self._reward_normalizer.freeze()
@@ -1582,10 +1587,12 @@ class KataEnv(gym.Env):
                 # technician is scored from the same base state.
                 self._prev_finished_products = snap_finished
                 self._prev_fleet_knowledge = snap_knowledge
+                self._prev_decision_sim_time = snap_decision_time
                 out[j] = float(self._reward_for_assignment(self.current_request, j))
         finally:
             self._prev_finished_products = snap_finished
             self._prev_fleet_knowledge = snap_knowledge
+            self._prev_decision_sim_time = snap_decision_time
             self._last_reward_breakdown = snap_breakdown
             if not was_frozen:
                 self._reward_normalizer.unfreeze()
@@ -1908,11 +1915,26 @@ class KataEnv(gym.Env):
                 # un-floored, telescopes across the episode instead of
                 # mis-attributing passive fleet learning to the action
                 # being scored.
+                # Semi-MDP-consistent shaping: gamma_p is PER SIM-TIME-
+                # UNIT and the potential is discounted by gamma_p**dt,
+                # so F telescopes exactly under the agent's gamma**dt
+                # return and the invariance guarantee holds for any
+                # decision spacing (a fixed per-decision gamma_p would
+                # leak a small spurious reward correlated with gap
+                # length).  dt=0 (several decisions at one sim instant,
+                # or the first decision) reduces to a pure delta.
                 gamma_p = float(self.config.reward.knowledge_potential_gamma)
-                increment = gamma_p * current_volume - self._prev_fleet_knowledge
+                dt = max(
+                    0.0, self._sim_time() - self._prev_decision_sim_time
+                )
+                increment = (
+                    (gamma_p ** dt) * current_volume
+                    - self._prev_fleet_knowledge
+                )
             else:
                 increment = max(0.0, current_volume - self._prev_fleet_knowledge)
             self._prev_fleet_knowledge = current_volume
+            self._prev_decision_sim_time = self._sim_time()
             breakdown["knowledge_increment"] = self._reward_component(
                 "knowledge_increment", increment
             )
@@ -2368,6 +2390,9 @@ class KataEnv(gym.Env):
         # episodes within this env instance.
         self._prev_fleet_knowledge = self._initial_mean_knowledge_volume
         self._advance_until_next_ticket()
+        # Stamp the PBRS baseline at the first decision's sim time so
+        # the first shaping term is a pure potential delta (dt = 0).
+        self._prev_decision_sim_time = self._sim_time()
         return self._obs(), self._info()
 
     def step(self, action: int):

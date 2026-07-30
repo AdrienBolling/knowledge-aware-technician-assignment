@@ -527,10 +527,12 @@ class GymRewardConfig(BaseModel):
         le=1.0,
         description=(
             "Discount gamma_p used inside the potential-based knowledge "
-            "shaping term.  Set to the agent's discount for exact "
-            "policy-invariance; 1.0 (default) reduces to the un-floored "
-            "telescoping delta, which is simpler and nearly equivalent "
-            "at gamma close to 1."
+            "shaping term, PER SIM-TIME-UNIT: the shaping is "
+            "F = gamma_p**dt * Phi(s') - Phi(s) with dt the sim time "
+            "elapsed since the previous decision.  Set to the agent's "
+            "per-time-unit discount (time_based_discount training) for "
+            "exact policy-invariance; 1.0 (default) reduces to the "
+            "un-floored telescoping delta regardless of dt."
         ),
     )
     repair_quality: RewardComponentConfig = Field(

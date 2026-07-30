@@ -170,7 +170,7 @@
       "normalize_components": true,
       "normalize_components_eps": 0.0001,
       "knowledge_increment_potential_based": true,
-      "knowledge_potential_gamma": 0.998
+      "knowledge_potential_gamma": 0.9999
     },
     "pad_action_space_to_max_techs": true,
     "ticket_embedding_path": "run_configs/embeddings/ticket_grid_som.json",
