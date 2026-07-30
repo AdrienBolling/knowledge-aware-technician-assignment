@@ -1050,7 +1050,9 @@ def test_knowledge_increment_potential_mode_is_unfloored():
     assert abs(env._last_reward_breakdown["knowledge_increment"] + 1.0) < 1e-9
 
 
-def test_knowledge_increment_potential_gamma_weighting():
+def test_knowledge_increment_potential_gamma_is_per_time_unit():
+    """gamma_p discounts by ELAPSED SIM TIME (gamma_p**dt), matching the
+    agent's semi-MDP gamma**dt return for exact policy-invariance."""
     d = FakeDispatcher(tech_count=2)
     d.repair_queue.items.append(FakeRequest(machine_id=1))
     env = _ki_env(
@@ -1061,10 +1063,43 @@ def test_knowledge_increment_potential_gamma_weighting():
     env.reset()
     req = FakeRequest(machine_id=1)
     _set_fleet_knowledge(d, 4.0)
-    env._reward_for_assignment(req, 0)  # prev snapshot -> 4.0
+    env._reward_for_assignment(req, 0)  # prev snapshot -> 4.0 at t=now
+
+    # Same sim instant: dt=0 -> gamma_p**0 = 1 -> pure delta = 0.
     env._reward_for_assignment(req, 0)
-    # F = gamma_p*Phi(s') - Phi(s) = 0.5*4 - 4 = -2 at steady state.
-    assert abs(env._last_reward_breakdown["knowledge_increment"] + 2.0) < 1e-9
+    assert abs(env._last_reward_breakdown["knowledge_increment"]) < 1e-9
+
+    # Two time units later: F = 0.5**2 * 4 - 4 = -3.
+    env.sim_env.now += 2.0
+    env._reward_for_assignment(req, 0)
+    assert abs(env._last_reward_breakdown["knowledge_increment"] + 3.0) < 1e-9
+
+    # Baseline stamp advanced with the last decision: another dt=2 hop
+    # gives the same value again (steady state).
+    env.sim_env.now += 2.0
+    env._reward_for_assignment(req, 0)
+    assert abs(env._last_reward_breakdown["knowledge_increment"] + 3.0) < 1e-9
+
+
+def test_reward_probe_restores_pbrs_time_stamp():
+    """assignment_reward_estimates must not consume the PBRS dt."""
+    d = FakeDispatcher(tech_count=2)
+    d.repair_queue.items.append(FakeRequest(machine_id=1))
+    env = _ki_env(
+        d,
+        knowledge_increment_potential_based=True,
+        knowledge_potential_gamma=0.5,
+    )
+    env.reset()
+    _set_fleet_knowledge(d, 4.0)
+    env._reward_for_assignment(FakeRequest(machine_id=1), 0)
+    env.sim_env.now += 2.0
+    stamp = env._prev_decision_sim_time
+    env.assignment_reward_estimates()
+    assert env._prev_decision_sim_time == stamp
+    # The real step after the probe still sees the full dt=2 discount.
+    env._reward_for_assignment(FakeRequest(machine_id=1), 0)
+    assert abs(env._last_reward_breakdown["knowledge_increment"] + 3.0) < 1e-9
 
 
 # ======================================================================
