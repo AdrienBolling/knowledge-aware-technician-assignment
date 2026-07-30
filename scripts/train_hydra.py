@@ -50,9 +50,13 @@ def main(cfg: DictConfig) -> int:
     env_data.setdefault("randomized_scenario", {})[
         "episodes_per_scenario"
     ] = int(cfg.episodes_per_scenario)
-    env_data["gym"].setdefault("reward", {})[
-        "knowledge_increment_potential_based"
-    ] = bool(cfg.potential_knowledge_reward)
+    # null = respect the env config's own reward stack (v5+ configs set
+    # knowledge_increment_potential_based themselves); an explicit
+    # true/false still force-overrides for ablations.
+    if cfg.get("potential_knowledge_reward") is not None:
+        env_data["gym"].setdefault("reward", {})[
+            "knowledge_increment_potential_based"
+        ] = bool(cfg.potential_knowledge_reward)
 
     # ----- agent: composed group + improvement toggles -----------------
     agent_data = OmegaConf.to_container(cfg.agent, resolve=True)
@@ -134,8 +138,11 @@ def main(cfg: DictConfig) -> int:
     print(f"  gamma / gae_lambda   : {params['gamma']} / {params['gae_lambda']}"
           + (" (semi-MDP: gamma per t.u.)" if params.get("time_based_discount") else " (per decision)"))
     print(f"  popart / rnn         : {params.get('use_popart')} / {params.get('rnn_type')}")
+    _pbrs = env_data["gym"].get("reward", {}).get(
+        "knowledge_increment_potential_based", False
+    )
     print(f"  knowledge reward     : "
-          f"{'potential-based' if cfg.potential_knowledge_reward else 'HC-v1 legacy (floored)'}")
+          f"{'potential-based' if _pbrs else 'HC-v1 legacy (floored)'}")
     print(f"  init checkpoint      : {cfg.init_checkpoint or '(from scratch)'}")
     print(f"  checkpoints          : {checkpoint_dir}")
     print(f"  mca encoder          : {env_data['gym'].get('use_mca_encoder')}")
