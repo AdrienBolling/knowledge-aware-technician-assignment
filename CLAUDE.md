@@ -57,11 +57,20 @@ Thesis: RL dispatching with human-centric reward (fleet knowledge growth + fatig
 
 ## Next steps
 
-1. **Check the v4 train chain** (`reports/v4_train_queue.log` on serval; was 204/600 on 2026-07-30, serval unreachable at last check 2026-08-03). On DONE: plateau gate + auto-benchmark merge into `hvp_eval_v4` ran from the queue — read the merged tables. Decisive: does TRAINING under decay teach knowledge maintenance (v3 family's 5M knowledge is *below* heuristics in the v4 world)?
-2. **Lift the serval sync embargo** (local commits e8e8300…f3c3358 change `conf/train.yaml` discounting defaults — syncing mid-v4 would flip any plateau-extension run's objective), sync, then **launch v5**: `train_hydra.py env=train_multiscale_v5 ...` (γ^Δt 0.9999 + reward package are defaults; BC-init `checkpoints/bc_topsis_v4`, same protocol as v4 — reward/discounting is the only variable).
-3. **Fix §6/§7 false claims + abstract** with the final best agent's numbers (user-deferred); wire `table_footnote.tex` under result tables. §7.4 anchors now exist (trained in queue: `checkpoints/anchors/`, old-world pair in `anchors_oldworld`).
-4. Notation fix package (λ_c vs λ_i, β triple-use, `s` scale vs state, Q_t vs 𝒬(t)); write §3 formalization body; `zhangGraphNeuralNetworks2022`→`zhangReinforcementLearningMethod2022` swap (verified, awaiting sign-off).
-5. **Push both repos** (large local commit pile since 2026-07-21 push — awaiting user's word).
+1. **Monitor the v5 queue** (armed 2026-08-03 08:46Z, serval pid 3829639; log `reports/v5_train_queue.log`, train log `reports/train_hc_v5.log` marker `DONE_TRAIN_V5`, wandb `xb7yx45l`; ETA ~5–8 h + benchmarks). Auto-runs plateau gate → canonicalise `checkpoints/hc_v5_final` → benchmark hc_v5/hc_v5_last merged into `hvp_eval_v4` → analysis. On DONE: hc_v5 vs hc_v4 isolates the reward/discounting package; the target is the 5M throughput gap (hc_v4 107.8k vs greedy‡ 124.2k / TOPSIS† 122.4k).
+2. **Fix §6/§7 false claims + abstract** with the final best agent's numbers (user-deferred); wire `table_footnote.tex` under result tables. §7.4 anchors now exist (trained in queue: `checkpoints/anchors/`, old-world pair in `anchors_oldworld`).
+3. Notation fix package (λ_c vs λ_i, β triple-use, `s` scale vs state, Q_t vs 𝒬(t)); write §3 formalization body; `zhangGraphNeuralNetworks2022`→`zhangReinforcementLearningMethod2022` swap (verified, awaiting sign-off).
+4. **Push both repos** (large local commit pile since 2026-07-21 push — awaiting user's word).
+
+## Session notes (2026-08-03 — v4 verdict, sync, v5 launch)
+
+- **v4 train chain DONE** (2026-07-30 14:33Z, all rc=0): 600 eps in ~5.2 h, plateau confirmed first try (last-quarter return −0.37 vs −0.01, no extensions), best+last canonicalised, all 4 scenarios merged into `hvp_eval_v4`, analysis clean.
+- **DECISIVE: training under decay DOES teach knowledge maintenance.** 5M final fleet knowledge: hc_v4_last 76.4k / hc_v4 76.1k = top-tier (batch_milp/Hungarian† 76.3k, SPT† 75.6k, greedy‡ 75.1k; gaefix 77.1k #1) vs v3 family 56.6–59.5k. Mechanism: v3 family peaks HIGHEST (~80–81k) then decays away — builds but never maintains; hc_v4 peaks 79k and keeps it.
+- **Illness blowup fixed at 5M**: hc_v4 ~50.0k events ≈ best heuristics (TOPSIS† 49.9k) vs v3's 81k. Remaining gap = **5M throughput**: hc_v4 107.8k vs greedy‡ 124.2k / TOPSIS† 122.4k / SPT† 120.8k, also below gaefix 117.6k + human 115.3k — exactly what v5 targets. 5M is n=1 (noise caveat); best-learned at 5M by mean rank is gaefix (9.8) > hc_v4_last (11.8).
+- **Industrial**: hc_v3_last stays best learned (2268, mean rank 8.2); hc_v4 2210 / hc_v4_last 2171. Overall mean rank: TOPSIS† 7.5 > empirical_topsis 7.9 (best honest) > greedy‡ 8.5 … hc_v3_last 11.3 best learned. Quality quirk: at 5M hc_v4 best-ckpt quality 0.32 vs hc_v4_last 0.70 — best/last split keeps paying.
+- **Embargo lifted + synced** (tar-over-ssh; serval has NO rsync): local e8e8300…532d1dc code state on serval, checksum-verified incl. `conf/env` symlinks. New commit 532d1dc = `scripts/serval_v5_train_queue.sh` + hc_v5/hc_v5_last eval keys (`checkpoints/hc_v5_final/`).
+- **v5 LAUNCHED** (armed 2026-08-03 08:46Z, pid 3829639, wandb `xb7yx45l`): BC-init `bc_topsis_v4` (reused — same world), exact v4 recipe, only variable = objective (PBRS knowledge credit + workload_balance 0.5 + fleet_availability 0.5 + γ^Δt 0.9999). Pre-launch on serval: 13 tests green (test_gae + test_hydra_configs), all 4 queue entry points `--help` OK under PYTHONPATH, dry-run compose verified (γ 0.9999 semi-MDP, λ 0.98, PopArt, potential-based knowledge). GPU was fully free at launch.
+- Ops: launching `nohup ... &` through ssh holds the channel open (child inherits the pipe) — background the ssh locally or add `</dev/null`; the remote queue survives killing the local ssh.
 
 ## Session notes (2026-07-27→30 — v3/v4 benchmark generations, FT verdict, v4 world, v5 package)
 
