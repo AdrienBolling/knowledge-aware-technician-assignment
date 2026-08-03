@@ -122,6 +122,11 @@ CHECKPOINTS = {
     # world (knowledge decay + Kijima imperfect repair, alpha=0.25).
     "hc_v4": Path("checkpoints/hc_v4_final/set_transformer_best.pt"),
     "hc_v4_last": Path("checkpoints/hc_v4_final/set_transformer_last.pt"),
+    # v5: v4 world + v4 recipe, reward/discounting the only variable —
+    # PBRS knowledge credit, workload_balance, fleet_availability, and
+    # semi-MDP gamma**dt (0.9999 per sim-t.u.) discounting.
+    "hc_v5": Path("checkpoints/hc_v5_final/set_transformer_best.pt"),
+    "hc_v5_last": Path("checkpoints/hc_v5_final/set_transformer_last.pt"),
 }
 
 # Token-stream RL anchors (section 7.4): standard architectures trained
