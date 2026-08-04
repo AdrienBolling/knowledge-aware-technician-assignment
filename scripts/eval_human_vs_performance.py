@@ -127,6 +127,11 @@ CHECKPOINTS = {
     # semi-MDP gamma**dt (0.9999 per sim-t.u.) discounting.
     "hc_v5": Path("checkpoints/hc_v5_final/set_transformer_best.pt"),
     "hc_v5_last": Path("checkpoints/hc_v5_final/set_transformer_last.pt"),
+    # v6: infra-clean retrain (D1 LR-schedule fix, D2 dropout=0, D11
+    # boolean tokens visible) + D3 architecture (role-bound slot fusion
+    # + feature-context view).  Fresh BC (architecture change).
+    "hc_v6": Path("checkpoints/hc_v6_final/set_transformer_best.pt"),
+    "hc_v6_last": Path("checkpoints/hc_v6_final/set_transformer_last.pt"),
 }
 
 # Token-stream RL anchors (section 7.4): standard architectures trained
@@ -163,6 +168,15 @@ SCENARIOS = {
     # One episode per agent; step cap sized to stay non-binding.
     "very_long": dict(
         cfg="run_configs/benchmark_suite/massive_scale.json",
+        n_eps=1, sim=5_000_000.0, steps=1_500_000,
+    ),
+    # Lifecycle study: 5M horizon with mid-episode fleet/park mutations
+    # (senior retirements, novice hires, machine additions/renewals) —
+    # see gym.lifecycle_events in the config.  Slightly smaller initial
+    # fleet/park than massive_scale so hires/additions fit the
+    # max_techs/max_machines caps.
+    "lifecycle": dict(
+        cfg="run_configs/benchmark_suite/lifecycle.json",
         n_eps=1, sim=5_000_000.0, steps=1_500_000,
     ),
 }
@@ -281,8 +295,17 @@ def build_agents(env_cfg, scenario_factory, n_techs,
         if imp.get("use_popart"):
             params["use_popart"] = True
             params["normalize_rewards"] = False  # mutually exclusive
+        # D3 architecture toggles (absent in historical checkpoints)
+        if imp.get("slot_role_binding"):
+            params["slot_role_binding"] = True
+        if imp.get("use_feature_context"):
+            params["use_feature_context"] = True
+            params["tech_slot_length"] = int(imp.get("tech_slot_length", 16))
         agent = SetTransformerAgent(**params)
         agent.load(ckpt)
+        # Benchmark forwards must not sample dropout masks (defect D2);
+        # the agent also guards deterministic acting itself.
+        agent.net.eval()
         env = make_env(env_cfg, scenario_factory, "set", tokenizer=tok)
         agents[label] = (agent, env)
     # Token-stream anchors: rebuilt with the runner's exact vocab recipe
@@ -310,6 +333,11 @@ def build_agents(env_cfg, scenario_factory, n_techs,
             try:
                 agent = TOKEN_AGENT_CLASSES[label](**params)
                 agent.load(ckpt)
+                net = getattr(agent, "net", None) or getattr(
+                    agent, "online_net", None
+                )
+                if net is not None:
+                    net.eval()  # no dropout/noisy-net noise at benchmark (D2)
             except Exception as exc:  # fixed head/vocab: wrong scale
                 print(f"  (skipping {label}: checkpoint incompatible with "
                       f"this scenario — {type(exc).__name__}: {exc})",

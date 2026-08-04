@@ -935,6 +935,110 @@ class GymEnvConfig(BaseModel):
             "always exists."
         ),
     )
+    lifecycle_events: list["LifecycleEventConfig"] = Field(
+        default_factory=list,
+        description=(
+            "Scheduled mid-episode fleet/park mutations (the 'lifecycle' "
+            "evaluation scenario): technicians hired or retired, machines "
+            "added, retired or replaced, at fixed simulated times.  Empty "
+            "(default) = the historical static world.  Events are "
+            "executed by a dedicated SimPy process, exactly at their "
+            "scheduled sim time (a machine retirement/replacement is "
+            "deferred while the target is broken or mid-repair).  "
+            "Designed for single-env evaluation; vectorised training "
+            "with a growing fleet is untested.  Constraints: the fleet "
+            "must stay within ``max_techs`` and the park within "
+            "``max_machines`` (set mode truncates beyond the caps), and "
+            "add templates must already exist in the frozen set vocab "
+            "or their TEMPLATE/M_TYPE tokens degrade to <UNK>."
+        ),
+    )
+
+
+class LifecycleEventConfig(BaseModel):
+    """One scheduled fleet/park mutation.
+
+    ``kind``:
+      * ``add_technician`` — hire ``count`` techs from ``template``
+        (fresh knowledge profile per the template).
+      * ``retire_technician`` — ``count`` techs become permanently
+        unavailable (tombstoned: they keep their slot so action indices
+        and history stay aligned, but are masked out of observations,
+        the action mask, and the fleet-knowledge mean; an in-flight
+        repair completes first).
+      * ``add_machine`` — add ``count`` machines built from
+        ``template`` (must be a machine type already present in the
+        park so the routing/feeder chain exists).
+      * ``retire_machine`` — permanently stop ``count`` machines
+        (production + breakdown processes end; no further tickets).
+      * ``replace_machine`` — retire ``count`` machines and add fresh
+        ones of the same template (component ages reset — 'good as
+        new' renewal).
+
+    ``select`` picks targets for retire/replace:
+      ``random`` (seeded), ``by_name`` (use ``name``),
+      ``highest_knowledge`` / ``lowest_knowledge`` (technicians),
+      ``most_breakdowns`` (machines).
+    """
+
+    time: float = Field(gt=0.0, description="Sim time (t.u.) to fire at.")
+    kind: str = Field(
+        description=(
+            "add_technician | retire_technician | add_machine | "
+            "retire_machine | replace_machine"
+        )
+    )
+    count: int = Field(default=1, ge=1)
+    template: str | None = Field(
+        default=None,
+        description="Technician/machine template for add_* events.",
+    )
+    name: str | None = Field(
+        default=None, description="Target entity name for select='by_name'."
+    )
+    select: str = Field(
+        default="random",
+        description=(
+            "Target selection for retire/replace: random | by_name | "
+            "highest_knowledge | lowest_knowledge | most_breakdowns"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> "LifecycleEventConfig":
+        kinds = {
+            "add_technician",
+            "retire_technician",
+            "add_machine",
+            "retire_machine",
+            "replace_machine",
+        }
+        if self.kind not in kinds:
+            msg = f"lifecycle kind must be one of {sorted(kinds)}, got {self.kind!r}"
+            raise ValueError(msg)
+        selects = {
+            "random",
+            "by_name",
+            "highest_knowledge",
+            "lowest_knowledge",
+            "most_breakdowns",
+        }
+        if self.select not in selects:
+            msg = f"lifecycle select must be one of {sorted(selects)}"
+            raise ValueError(msg)
+        if (
+            self.kind in ("add_technician", "add_machine", "replace_machine")
+            and not self.template
+        ):
+            msg = f"{self.kind} requires a template"
+            raise ValueError(msg)
+        if self.select == "by_name" and not self.name:
+            msg = "select='by_name' requires a name"
+            raise ValueError(msg)
+        return self
+
+
+GymEnvConfig.model_rebuild()
 
 
 class RandomizedScenarioConfig(BaseModel):

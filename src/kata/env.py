@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import logging
 import math
 from collections.abc import Callable
 from typing import Any
@@ -15,6 +16,8 @@ from kata.core.config import GymEnvConfig
 from kata.core.reward_normalizer import RewardNormalizer
 from kata.core.tokenizer import StateTokenizer
 from kata.metrics import EPISODE_METRICS, STEP_METRICS
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Value bucketing helpers – keep vocabulary bounded for Transformer input
@@ -145,6 +148,9 @@ def _bucket_count(n: int) -> str:
 
 
 def _bool_token(v: bool) -> str:
+    # Flat token-stream convention (standalone TRUE/FALSE tokens,
+    # registered by ``build_vocab``).  The SET stream uses ``KEY=T`` /
+    # ``KEY=F`` — see ``_SetEmitter.bool`` (defect D11).
     return "TRUE" if v else "FALSE"
 
 
@@ -339,7 +345,13 @@ class _SetEmitter(_Emitter):
         self._emit(f"{key}={value}", 0.0, self._CAT)
 
     def bool(self, key: str, value: bool) -> None:
-        self._emit(f"{key}={_bool_token(value)}", 0.0, self._CAT)
+        # The frozen set vocab registers ``KEY=T`` / ``KEY=F``
+        # (tokenizer.build_set_vocab) — the historical use of
+        # ``_bool_token`` here (TRUE/FALSE, the FLAT-stream spelling)
+        # made every boolean set-obs token <UNK>: no trained agent ever
+        # saw BUSY/DISRUPT/BROKEN/PROC/IS_CURRENT/HAS_T (defect D11,
+        # found + fixed 2026-08-04).
+        self._emit(f"{key}={'T' if value else 'F'}", 0.0, self._CAT)
 
     def ratio(self, key: str, value: float) -> None:
         # The categorical key marks the *semantic role* of the
@@ -1134,6 +1146,15 @@ class KataEnv(gym.Env):
 
         for idx, tech in enumerate(techs):
             slot = ([], [], [])
+            if getattr(tech, "retired", False):
+                # Lifecycle tombstone: keep the slot (action index i must
+                # stay aligned with dispatcher.techs[i]) but emit it
+                # empty — the mask below marks it invalid, so the
+                # encoder treats it as padding.
+                tech_tokens.append(slot[0])
+                tech_vals.append(slot[1])
+                tech_kinds.append(slot[2])
+                continue
             emitter.open_slot(slot)
             # --- profile / template ----------------------------------
             emitter.cat("TEMPLATE", self._technician_template(tech))
@@ -1329,7 +1350,8 @@ class KataEnv(gym.Env):
             tech_ids[i] = ids
             tech_cv[i] = cv
             tech_ck[i] = ck
-            tech_mask[i] = 1
+            # Retired techs keep their (empty) slot but stay masked out.
+            tech_mask[i] = 0 if getattr(techs[i], "retired", False) else 1
 
         mach_ids = np.full((max_m, L_m), PAD_ID, dtype=np.int64)
         mach_cv = np.zeros((max_m, L_m), dtype=np.float32)
@@ -1363,8 +1385,17 @@ class KataEnv(gym.Env):
         }
 
     def _machine_id_from_machine(self, machine: Any) -> int:
-        """Return a stable machine identifier, defaulting to ``id()``."""
-        mid = getattr(machine, "id", None)
+        """Return a stable machine identifier, defaulting to ``id()``.
+
+        ``Machine`` stores its identifier as ``machine_id`` (a bare
+        ``id`` annotation on the base class is never assigned) — reading
+        ``.id`` fell back to CPython ``id()`` and disconnected the
+        set-obs BD_COUNT/DOWNTIME/MEAN_TBF features from the tracking
+        dicts keyed by ``machine_id`` (defect D12, found 2026-08-04).
+        """
+        mid = getattr(machine, "machine_id", None)
+        if mid is None:
+            mid = getattr(machine, "id", None)
         if mid is None:
             mid = id(machine)
         try:
@@ -1640,7 +1671,12 @@ class KataEnv(gym.Env):
         ticket = self.current_request
         busy = np.asarray(
             [
-                1 if getattr(tech, "busy", False) else 0
+                1
+                if (
+                    getattr(tech, "busy", False)
+                    or getattr(tech, "retired", False)
+                )
+                else 0
                 for tech in self.dispatcher.techs
             ],
             dtype=np.int8,
@@ -1711,6 +1747,7 @@ class KataEnv(gym.Env):
                 if (
                     bool(getattr(t, "busy", False))
                     or bool(getattr(t, "_in_disruption", False))
+                    or bool(getattr(t, "retired", False))
                 )
                 else 1
                 for t in techs
@@ -1718,7 +1755,18 @@ class KataEnv(gym.Env):
             dtype=np.int8,
         )
         if mask.size == 0 or int(mask.sum()) == 0:
-            mask = np.ones(len(techs), dtype=np.int8)
+            # All-unavailable fallback: the agent must still pick
+            # someone to enqueue — but never a retired technician
+            # (lifecycle tombstones are permanent, not merely busy).
+            active = np.asarray(
+                [0 if getattr(t, "retired", False) else 1 for t in techs],
+                dtype=np.int8,
+            )
+            mask = (
+                active
+                if int(active.sum()) > 0
+                else np.ones(len(techs), dtype=np.int8)
+            )
         return mask
 
     def _obs(self) -> dict[str, Any]:
@@ -1760,7 +1808,7 @@ class KataEnv(gym.Env):
             )
             assignment_counts[label] = count
 
-        return {
+        info: dict[str, Any] = {
             "episode_step": self.episode_step,
             "sim_time": self._sim_time(),
             "has_open_ticket": self.current_request is not None,
@@ -1770,6 +1818,11 @@ class KataEnv(gym.Env):
             "assignment_counts": assignment_counts,
             "machine_stats": self._per_machine_episode_stats(),
         }
+        if getattr(self, "_lifecycle_pending", None) or getattr(
+            self, "_lifecycle_log", None
+        ):
+            info["lifecycle_events"] = list(self._lifecycle_log)
+        return info
 
     def _reward_component(self, name: str, raw: float) -> float:
         """Apply coefficient and enabled flag for a named reward component.
@@ -1981,6 +2034,9 @@ class KataEnv(gym.Env):
         ``0.0`` if the fleet is empty.
         """
         techs = getattr(self.dispatcher, "techs", None) or []
+        # Retired technicians left the fleet — their (frozen) knowledge
+        # must not count toward the fleet aggregate.
+        techs = [t for t in techs if not getattr(t, "retired", False)]
         if not techs:
             return 0.0
         total = 0.0
@@ -2211,6 +2267,155 @@ class KataEnv(gym.Env):
                     decay()
             self._last_knowledge_decay += interval
 
+    # ------------------------------------------------------------------
+    # Lifecycle events (mid-episode fleet/park mutations)
+    # ------------------------------------------------------------------
+
+    def _lifecycle_scheduler(self):
+        """SimPy process executing the configured lifecycle schedule.
+
+        Spawned at reset when ``config.lifecycle_events`` is non-empty.
+        Fires each event exactly at its sim time (machine retirement /
+        replacement defers while the target is broken or mid-repair —
+        the successor event waits behind it by design).
+        """
+        for ev in self._lifecycle_pending:
+            delay = float(ev.time) - float(self.sim_env.now)
+            if delay > 0:
+                yield self.sim_env.timeout(delay)
+            yield from self._execute_lifecycle_event(ev)
+
+    def _execute_lifecycle_event(self, ev):
+        """Generator applying one event (may yield to defer)."""
+        for _ in range(int(ev.count)):
+            if ev.kind == "add_technician":
+                tech = self._lifecycle_add_technician(ev.template)
+                self._lifecycle_note(ev, tech.name)
+            elif ev.kind == "retire_technician":
+                tech = self._select_technician_for_event(ev)
+                if tech is None:
+                    break
+                tech.retired = True
+                self._lifecycle_note(ev, tech.name)
+            elif ev.kind == "add_machine":
+                m = self._lifecycle_add_machine(ev.template)
+                self._lifecycle_note(ev, getattr(m, "name", m.machine_id))
+            elif ev.kind in ("retire_machine", "replace_machine"):
+                m = self._select_machine_for_event(ev)
+                if m is None:
+                    break
+                while getattr(m, "broken", False):
+                    yield self.dispatcher.wait_until_repaired(m)
+                from kata.scenario import retire_machine_from_factory
+
+                template = ev.template
+                retire_machine_from_factory(self.dispatcher, m)
+                self._lifecycle_note(ev, getattr(m, "name", m.machine_id))
+                if ev.kind == "replace_machine" and template:
+                    m2 = self._lifecycle_add_machine(template)
+                    self._lifecycle_note(
+                        ev, f"replacement:{getattr(m2, 'name', m2.machine_id)}"
+                    )
+        self._lifecycle_invalidate_caches()
+
+    def _lifecycle_add_technician(self, template: str):
+        from kata.EntityFactories.technician_factory import (
+            create_config_from_template,
+        )
+        from kata.entities.technicians.GymTechnician import GymTechnician
+
+        self._lifecycle_seq += 1
+        # Numeric-only suffix: the TEMPLATE observation token is derived
+        # by stripping a trailing ``_<digits>`` from the name, so
+        # ``junior_901`` still reads as template ``junior`` (a non-
+        # numeric suffix would degrade the token to <UNK>).
+        name = f"{template}_{900 + self._lifecycle_seq}"
+        tcfg = create_config_from_template(template, name=name)
+        tech = GymTechnician(tech_conf=tcfg)
+        seed = int(self._lifecycle_rng.integers(0, 2**31))
+        self.dispatcher.add_technician(tech, rng_seed=seed)
+        self._tech_assignment_counts.append(0)
+        self._tech_last_assignment_time.append(-1.0)
+        return tech
+
+    def _lifecycle_add_machine(self, template: str):
+        from kata.scenario import add_machine_to_factory
+
+        self._lifecycle_seq += 1
+        label = f"{template}_lc{self._lifecycle_seq}"
+        return add_machine_to_factory(
+            self.sim_env, self.dispatcher, template, label
+        )
+
+    def _select_technician_for_event(self, ev):
+        techs = [
+            t
+            for t in (self.dispatcher.techs or [])
+            if not getattr(t, "retired", False)
+        ]
+        if not techs:
+            return None
+        if ev.select == "by_name":
+            return next(
+                (t for t in techs if getattr(t, "name", None) == ev.name), None
+            )
+        if ev.select in ("highest_knowledge", "lowest_knowledge"):
+            scored = [
+                (float(self._tech_knowledge_features(t)["volume"]), i, t)
+                for i, t in enumerate(techs)
+            ]
+            scored.sort(reverse=(ev.select == "highest_knowledge"))
+            return scored[0][2]
+        return techs[int(self._lifecycle_rng.integers(len(techs)))]
+
+    def _select_machine_for_event(self, ev):
+        machines = [
+            m
+            for m in self._factory_machines()
+            if not getattr(m, "retired", False)
+        ]
+        if not machines:
+            return None
+        if ev.select == "by_name":
+            return next(
+                (m for m in machines if getattr(m, "name", None) == ev.name),
+                None,
+            )
+        if ev.select == "most_breakdowns":
+            counts = getattr(self, "_machine_breakdown_counts", {}) or {}
+            scored = [
+                (
+                    int(counts.get(self._machine_id_from_machine(m), 0)),
+                    i,
+                    m,
+                )
+                for i, m in enumerate(machines)
+            ]
+            scored.sort(reverse=True)
+            return scored[0][2]
+        return machines[int(self._lifecycle_rng.integers(len(machines)))]
+
+    def _lifecycle_invalidate_caches(self) -> None:
+        """Invalidate fleet-shaped caches after a fleet/park mutation."""
+        self._eta_cache = None
+        # Re-baseline the knowledge-delta bookkeeping: hiring a seeded
+        # profile (or retiring a knowledgeable tech) steps the fleet
+        # mean discontinuously; without re-baselining, the next
+        # knowledge_increment / PBRS term would pay a large spurious
+        # (de-)reward for a change no assignment caused.
+        self._prev_fleet_knowledge = self._fleet_mean_knowledge_volume()
+
+    def _lifecycle_note(self, ev, target) -> None:
+        entry = {
+            "time": float(self.sim_env.now),
+            "kind": ev.kind,
+            "target": str(target),
+        }
+        self._lifecycle_log.append(entry)
+        logger.info(
+            "lifecycle @%.0f: %s -> %s", entry["time"], ev.kind, target
+        )
+
     def _on_repair_completed(
         self, request: Any, repair_duration: float, tech: Any = None
     ) -> None:
@@ -2363,6 +2568,22 @@ class KataEnv(gym.Env):
         self._recent_repair_durations.clear()
         self._repair_log = []
         self._last_knowledge_decay = float(self._sim_time())
+        # Lifecycle schedule: re-materialised every episode; executed by
+        # a dedicated SimPy process so events fire exactly at their sim
+        # times (not just at decision boundaries).
+        self._lifecycle_pending = sorted(
+            getattr(self.config, "lifecycle_events", []) or [],
+            key=lambda e: float(e.time),
+        )
+        self._lifecycle_log: list[dict[str, Any]] = []
+        self._lifecycle_seq = 0
+        if self._lifecycle_pending:
+            # Derived from the harness-seeded global stream so target
+            # selection is reproducible per episode seed.
+            self._lifecycle_rng = np.random.default_rng(
+                int(np.random.randint(0, 2**31))
+            )
+            self.sim_env.process(self._lifecycle_scheduler())
         # Per-episode horizon: fixed, or sampled uniformly when the
         # config declares a [min, max] range (np.random is seeded by the
         # harness at reset time, so the draw is reproducible).
@@ -2417,6 +2638,13 @@ class KataEnv(gym.Env):
 
         action = int(action)
         invalid_action = action < 0 or action >= len(self.dispatcher.techs)
+        if not invalid_action and getattr(
+            self.dispatcher.techs[action], "retired", False
+        ):
+            # A retired technician (lifecycle tombstone) holds no
+            # resource, so queueing behind them would silently run the
+            # job — retirement must make them permanently unassignable.
+            invalid_action = True
         if invalid_action:
             if self.config.invalid_action_mode == "raise":
                 message = f"Invalid technician index: {action}"

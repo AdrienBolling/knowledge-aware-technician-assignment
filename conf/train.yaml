@@ -42,6 +42,12 @@ max_steps: 25000
 episodes_per_scenario: 5
 parallel_envs: 6
 rollout_steps: 2048
+# Measured decision density (sim t.u. per decision) used to size the LR
+# schedule's total_updates: rounds ~= episodes/worker * (mean_sim /
+# tu_per_decision) / rollout_steps.  Multiscale event-driven world
+# measures ~24 (2026-07-22 probe); the old hard-coded 60 under-counted
+# rounds ~3x and parked the cosine schedule at its tail mid-run (D1).
+tu_per_decision: 24.0
 
 # null = take the value from the agent config group.
 # NOTE: with time_based_discount=true, gamma is the discount PER

@@ -15,6 +15,7 @@ Usage
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 import simpy
@@ -34,6 +35,130 @@ from kata.features.breakdown.simple_breakdown import (
     SimpleBreakdownProcess,
     WeibullBreakdownProcess,
 )
+
+
+@dataclass
+class FactoryHandles:
+    """Live references to the routing infrastructure of a built factory.
+
+    Historically every intermediate (router, feeders, route buffer, …)
+    was a discarded local of ``ScenarioBuilder.build`` — mid-episode
+    lifecycle events (add/retire machines) need these handles, so the
+    builder now attaches them to the dispatcher as
+    ``dispatcher.factory_handles``.
+    """
+
+    builder: "ScenarioBuilder"
+    route_buffer: Buffer
+    sink_buffer: Buffer
+    type_queues: dict[str, Buffer]
+    router: Router
+    feeders: dict[str, MachineFeeder]
+    machines_by_type: dict[str, list[Machine]] = field(default_factory=dict)
+
+
+def next_free_machine_id(dispatcher: GymTechDispatcher) -> int:
+    """Smallest id strictly above every registered machine id.
+
+    The builder derives ids as ``hash(name) % 10000``; lifecycle adds
+    must not collide with those (or each other), so they allocate above
+    the current maximum.
+    """
+    machines = getattr(dispatcher, "machines", {}) or {}
+    return (max(machines.keys()) + 1) if machines else 10_000
+
+
+def add_machine_to_factory(
+    env: simpy.Environment,
+    dispatcher: GymTechDispatcher,
+    template: str,
+    label: str,
+) -> Machine:
+    """Build a machine from *template* and wire it into the live factory.
+
+    Restricted to machine types already present in the park: the
+    router/feeder chain for a brand-new type does not exist and no
+    product route would visit it.
+    """
+    handles: FactoryHandles | None = getattr(
+        dispatcher, "factory_handles", None
+    )
+    if handles is None:
+        msg = (
+            "dispatcher has no factory_handles — the scenario predates "
+            "lifecycle support (rebuild via ScenarioBuilder.build)"
+        )
+        raise RuntimeError(msg)
+    from kata.EntityFactories.machine_factory import (
+        create_config_from_template,
+    )
+
+    mcfg = create_config_from_template(template)
+    mtype = mcfg.machine_type
+    feeder = handles.feeders.get(mtype)
+    if feeder is None:
+        msg = (
+            f"lifecycle add_machine: type {mtype!r} (template "
+            f"{template!r}) is not present in the park — adds are "
+            "restricted to existing machine types"
+        )
+        raise ValueError(msg)
+
+    in_buf = Buffer(env, f"BUF_{label}_IN", capacity=50)
+    out_buf = Buffer(env, f"BUF_{label}_OUT", capacity=50)
+    b = handles.builder
+    if mcfg.components:
+        machine = b._build_complex_machine(
+            env, label, mcfg, in_buf, out_buf, dispatcher
+        )
+    else:
+        machine = b._build_simple_machine(
+            env, label, mcfg, in_buf, out_buf, dispatcher
+        )
+    # Replace the hash-derived id with a guaranteed-unique one before
+    # any registry sees it.
+    machine.machine_id = next_free_machine_id(dispatcher)
+    machine.name = label  # type: ignore[attr-defined]
+
+    feeder.machines.append(machine)
+    feeder.machine_input_buffers.append(in_buf)
+    ScenarioBuilder._create_conveyor(env, out_buf, handles.route_buffer)
+    dispatcher.machines[machine.machine_id] = machine  # type: ignore[attr-defined]
+    # ``feeder.machines`` IS ``machines_by_type[mtype]`` (the builder
+    # hands the list by reference) — only append separately if a copy
+    # was made somewhere upstream.
+    by_type = handles.machines_by_type.setdefault(mtype, [])
+    if by_type is not feeder.machines:
+        by_type.append(machine)
+    return machine
+
+
+def retire_machine_from_factory(
+    dispatcher: GymTechDispatcher, machine: Machine
+) -> None:
+    """Permanently stop *machine* and unwire it from the live factory.
+
+    The caller must ensure the machine is not broken / mid-repair (the
+    env's lifecycle scheduler defers retirement until repaired).
+    Products already in its input buffer are stranded — deliberate:
+    scrapping WIP is part of a machine swap.
+    """
+    handles: FactoryHandles | None = getattr(
+        dispatcher, "factory_handles", None
+    )
+    machine.retired = True
+    if handles is not None:
+        feeder = handles.feeders.get(machine.mtype)
+        if feeder is not None and machine in feeder.machines:
+            i = feeder.machines.index(machine)
+            feeder.machines.pop(i)
+            feeder.machine_input_buffers.pop(i)
+        by_type = handles.machines_by_type.get(machine.mtype)
+        if by_type and machine in by_type:
+            by_type.remove(machine)
+    machines = getattr(dispatcher, "machines", None)
+    if machines is not None:
+        machines.pop(machine.machine_id, None)
 
 
 class ScenarioBuilder:
@@ -116,11 +241,12 @@ class ScenarioBuilder:
 
         # Router: route_buffer -> type queues (and sink)
         type_to_buffer: dict[str, Buffer] = {**type_queues, "__SINK__": sink_buffer}
-        Router(env, "MainRouter", route_buffer, type_to_buffer)
+        router = Router(env, "MainRouter", route_buffer, type_to_buffer)
 
         # Feeders: type queue -> machine input buffers
+        feeders: dict[str, MachineFeeder] = {}
         for mtype, bufs in machine_input_buffers.items():
-            MachineFeeder(
+            feeders[mtype] = MachineFeeder(
                 env,
                 f"{mtype}Feeder",
                 mtype,
@@ -154,6 +280,16 @@ class ScenarioBuilder:
             m.machine_id: m for machines in machines_by_type.values() for m in machines
         }
         dispatcher.sinks = [main_sink]  # type: ignore[attr-defined]
+        # Live routing handles for mid-episode lifecycle events.
+        dispatcher.factory_handles = FactoryHandles(  # type: ignore[attr-defined]
+            builder=self,
+            route_buffer=route_buffer,
+            sink_buffer=sink_buffer,
+            type_queues=type_queues,
+            router=router,
+            feeders=feeders,
+            machines_by_type=machines_by_type,
+        )
 
         return env, dispatcher
 

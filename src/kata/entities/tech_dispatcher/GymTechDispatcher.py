@@ -110,6 +110,41 @@ class GymTechDispatcher:
         for tech, child in zip(self.techs, seed_seq.spawn(len(self.techs))):
             tech._rng = _np.random.default_rng(child)
 
+    def add_technician(
+        self, tech: Technician, *, rng_seed: int | None = None
+    ) -> Technician:
+        """Register a technician mid-episode (lifecycle 'hire').
+
+        Performs every registration step the constructor does for the
+        initial fleet: env injection, idle-anchor stamping, RNG
+        seeding, id/resource maps, and one disruption process per
+        configured disruption type.
+        """
+        import numpy as _np
+
+        tech.env = self.env
+        # Fresh hire: anchor fatigue-recovery bookkeeping at 'now', not
+        # at t=0 (otherwise the first repair sees a huge bogus idle
+        # interval).
+        tech._last_idle_since = float(self.env.now)
+        if rng_seed is not None:
+            tech._rng = _np.random.default_rng(int(rng_seed))
+        self.techs.append(tech)
+        self._tech_by_id[tech.id] = tech
+        self._tech_resource[tech.id] = simpy.PreemptiveResource(
+            self.env, capacity=1
+        )
+        for dis_name, dis_cfg in CONFIG.sim.disruptions.dis_dict.items():
+            _ = self.env.process(
+                generator=tech.run_disruption_process(
+                    env=self.env,
+                    tech_resource=self._tech_resource[tech.id],
+                    dis_name=dis_name,
+                    dis_cfg=dis_cfg,
+                )
+            )
+        return tech
+
     # -- Internal helpers -----------------------------------------------------
 
     def _get_tech(self, tech_id: int) -> Technician:

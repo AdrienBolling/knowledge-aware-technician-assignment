@@ -104,6 +104,8 @@ class _SlotFuser(nn.Module):
         count_ple: PiecewiseLinearEncoding,
         time2vec: Time2Vec,
         fourier: FourierFeatures,
+        *,
+        role_binding: bool = False,
     ) -> None:
         super().__init__()
         self.token_embedding = token_embedding
@@ -111,6 +113,23 @@ class _SlotFuser(nn.Module):
         self.count_ple = count_ple
         self.time2vec = time2vec
         self.fourier = fourier
+        # Role binding (defect D3): the historical fuser ZEROED the
+        # categorical embedding at continuous positions, discarding the
+        # role tokens (<RATIO:FATIGUE> vs <RATIO:MATCH>) — and because
+        # the kind-encoders are shared, the subsequent within-slot mean
+        # made same-kind features permutation-indistinguishable.  With
+        # role_binding=True the role embedding is kept at every
+        # position AND a per-position nonlinear binder is applied
+        # before pooling: additive role info alone would still cancel
+        # in the mean (sum of roles is slot-constant), so the MLP must
+        # bind role↔value nonlinearly for identity to survive pooling.
+        self.role_binding = bool(role_binding)
+        self.binder: nn.Module | None = None
+        if self.role_binding:
+            d = token_embedding.embedding_dim
+            self.binder = nn.Sequential(
+                nn.Linear(d, d), nn.GELU(), nn.Linear(d, d)
+            )
 
     def forward(
         self,
@@ -122,8 +141,11 @@ class _SlotFuser(nn.Module):
         # cont_values: (..., L) float32
         # cont_kinds: (..., L) int (small)
         x_cat = self.token_embedding(token_ids)  # (..., L, D)
-        m_cat = (cont_kinds == ContKind.CATEGORICAL).unsqueeze(-1).float()
-        out = x_cat * m_cat
+        if self.role_binding:
+            out = x_cat  # role/categorical embedding at EVERY position
+        else:
+            m_cat = (cont_kinds == ContKind.CATEGORICAL).unsqueeze(-1).float()
+            out = x_cat * m_cat
 
         m_r = cont_kinds == ContKind.RATIO_PLE
         if m_r.any():
@@ -143,6 +165,8 @@ class _SlotFuser(nn.Module):
         if m_f.any():
             out = out + self.fourier(cont_values) * m_f.unsqueeze(-1).float()
 
+        if self.binder is not None:
+            out = out + self.binder(out)
         return out
 
 
@@ -331,6 +355,9 @@ class SetTransformerEncoder(nn.Module):
         fourier_sigma: float = 1.0,
         d_core: int | None = None,
         use_cross_attention: bool = True,
+        slot_role_binding: bool = False,
+        use_feature_context: bool = False,
+        tech_slot_length: int = 16,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -340,6 +367,9 @@ class SetTransformerEncoder(nn.Module):
         self.pad_token_id = pad_token_id
         self.d_core = int(d_core if d_core is not None else d_model)
         self.use_cross_attention = bool(use_cross_attention)
+        self.slot_role_binding = bool(slot_role_binding)
+        self.use_feature_context = bool(use_feature_context)
+        self.tech_slot_length = int(tech_slot_length)
 
         # Shared embedding + continuous encoders across all 3 streams.
         self.token_embedding = nn.Embedding(
@@ -365,6 +395,7 @@ class SetTransformerEncoder(nn.Module):
             count_ple=self.count_ple,
             time2vec=self.time2vec,
             fourier=self.fourier,
+            role_binding=self.slot_role_binding,
         )
 
         # Cross-slot encoders, one per slot-set.
@@ -403,9 +434,23 @@ class SetTransformerEncoder(nn.Module):
             else None
         )
 
+        # Feature-context view (two-view pooling, defect D3 follow-up):
+        # alongside the per-technician pooling (slot = one tech, mean
+        # over its features), pool per FEATURE across technicians (one
+        # vector per slot position = the fleet's distribution of that
+        # feature), flatten the fixed-order layout and project.  Gives
+        # the context a fleet-level per-feature summary — e.g. "overall
+        # fatigue level" — that per-slot pooling cannot represent.
+        self.feature_context_proj: nn.Linear | None = (
+            nn.Linear(self.tech_slot_length * d_model, d_model)
+            if self.use_feature_context
+            else None
+        )
+
         # Concat → norm → 2-layer MLP → policy state ``s``.
+        n_ctx = 4 if self.use_feature_context else 3
         self.context_proj = _ContextProjection(
-            d_in=3 * d_model, d_out=self.d_core
+            d_in=n_ctx * d_model, d_out=self.d_core
         )
 
     @property
@@ -465,17 +510,35 @@ class SetTransformerEncoder(nn.Module):
           Passed through unchanged so the action head can mask
           invalid logits to ``-inf``.
         """
-        tech_pooled = self._pool_slot(
+        tech_mask = obs["tech_mask"].bool()
+        machine_mask = obs["machine_mask"].bool()
+
+        # Tech stream: fuse once, pool twice (per-slot always; per-
+        # feature across slots when the feature-context view is on).
+        tech_embeds = self._fuser(
             obs["tech_token_ids"], obs["tech_cont_values"], obs["tech_cont_kinds"]
+        )  # (B, S, L, D)
+        pos_valid = (
+            (obs["tech_token_ids"] != self.pad_token_id).float().unsqueeze(-1)
         )
+        denom = pos_valid.sum(dim=-2).clamp(min=1.0)
+        tech_pooled = (tech_embeds * pos_valid).sum(dim=-2) / denom
+
+        feature_ctx: torch.Tensor | None = None
+        if self.feature_context_proj is not None:
+            # Masked mean across technician slots per feature position:
+            # slot layouts are fixed-order, so position ℓ is the same
+            # feature for every technician.
+            slot_valid = tech_mask.float()[:, :, None, None]  # (B, S, 1, 1)
+            slot_denom = slot_valid.sum(dim=1).clamp(min=1.0)  # (B, 1, 1)
+            per_feature = (tech_embeds * slot_valid).sum(dim=1) / slot_denom
+            feature_ctx = self.feature_context_proj(per_feature.flatten(1))
+
         machine_pooled = self._pool_slot(
             obs["machine_token_ids"],
             obs["machine_cont_values"],
             obs["machine_cont_kinds"],
         )
-
-        tech_mask = obs["tech_mask"].bool()
-        machine_mask = obs["machine_mask"].bool()
 
         tech_cls, tech_slots = self.tech_encoder(tech_pooled, tech_mask)
         machine_cls, machine_slots = self.machine_encoder(
@@ -515,8 +578,10 @@ class SetTransformerEncoder(nn.Module):
             denom = valid.sum(dim=-2).clamp(min=1.0)
             tech_cls = (tech_slots * valid).sum(dim=-2) / denom
 
-        context_raw = torch.cat([tech_cls, machine_cls, env_summary], dim=-1)
-        context = self.context_proj(context_raw)
+        parts = [tech_cls, machine_cls, env_summary]
+        if feature_ctx is not None:
+            parts.append(feature_ctx)
+        context = self.context_proj(torch.cat(parts, dim=-1))
         return context, tech_slots, tech_mask
 
 

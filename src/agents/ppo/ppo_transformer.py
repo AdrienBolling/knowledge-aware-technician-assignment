@@ -36,8 +36,9 @@ What's inside
 
 from __future__ import annotations
 
+import logging
 import math
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,8 @@ from agents.base import Agent, resolve_device
 from agents.networks.hybrid_encoder import HybridTokenEncoder
 from agents.networks.modern_transformer import ModernTransformerEncoder
 from agents.networks.running_stats import RunningMeanStd
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -129,15 +132,26 @@ class ActorCritic(nn.Module):
 # ---------------------------------------------------------------------------
 
 
-def _cosine_warmup_lr(step: int, warmup_steps: int, total_steps: int) -> float:
-    """Multiplier ∈ [0, 1] applied to the base LR."""
+def _cosine_warmup_lr(
+    step: int,
+    warmup_steps: int,
+    total_steps: int,
+    min_factor: float = 0.0,
+) -> float:
+    """Multiplier ∈ [``min_factor``, 1] applied to the base LR.
+
+    ``min_factor`` floors the post-warmup multiplier so that a run whose
+    true update count exceeds ``total_steps`` (the schedule length is an
+    *estimate* — see the launchers' decisions-per-t.u. heuristic) keeps
+    learning instead of silently freezing at lr=0.
+    """
     if total_steps <= 0:
         return 1.0
     if warmup_steps > 0 and step < warmup_steps:
         return float(step + 1) / float(warmup_steps)
     progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
     progress = min(max(progress, 0.0), 1.0)
-    return 0.5 * (1.0 + math.cos(math.pi * progress))
+    return max(float(min_factor), 0.5 * (1.0 + math.cos(math.pi * progress)))
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +159,59 @@ def _cosine_warmup_lr(step: int, warmup_steps: int, total_steps: int) -> float:
 # ---------------------------------------------------------------------------
 
 
-class PPOTransformerAgent(Agent):
+class PPOAgentInfraMixin:
+    """Infra shared by :class:`PPOTransformerAgent` and the set-transformer
+    agent (which does NOT subclass it — keep single-source helpers here so
+    fixes cannot strand in one copy, as the 2026-07 GAE fix did).
+
+    Expects ``self.net`` (nn.Module), ``self.optimizer``,
+    ``self.lr_scheduler`` (LambdaLR), ``self.total_updates``,
+    ``self.warmup_updates`` and ``self._lr_lambda``.
+    """
+
+    @contextmanager
+    def _eval_mode_if(self, flag: bool):
+        """Temporarily switch the net to eval mode (disables dropout).
+
+        Deterministic acting — inline eval and the benchmark harness —
+        must not sample dropout masks: an "argmax" over dropout-noisy
+        logits is stochastic across calls (defect D2).
+        """
+        was_training = self.net.training
+        if flag and was_training:
+            self.net.eval()
+        try:
+            yield
+        finally:
+            if flag and was_training:
+                self.net.train()
+
+    def _rearm_lr_schedule_if_exhausted(self) -> None:
+        """Re-arm the LR schedule when a restored checkpoint outlives it.
+
+        A checkpoint resumed past its schedule end (e.g. a plateau
+        extension restarting from a late round) would otherwise spend
+        its entire budget at the cosine tail.  Rewind the schedule to
+        just past warmup and re-apply the corresponding LR to the
+        optimizer's param groups (the restored optimizer state carries
+        the tail LR).
+        """
+        if self.lr_scheduler.last_epoch < self.total_updates:
+            return
+        logger.warning(
+            "Restored LR schedule is exhausted (step %d >= total_updates %d)"
+            " — re-arming a fresh post-warmup schedule.",
+            self.lr_scheduler.last_epoch,
+            self.total_updates,
+        )
+        self.lr_scheduler.last_epoch = int(self.warmup_updates)
+        for group, base in zip(
+            self.optimizer.param_groups, self.lr_scheduler.base_lrs
+        ):
+            group["lr"] = base * self._lr_lambda(int(self.warmup_updates))
+
+
+class PPOTransformerAgent(PPOAgentInfraMixin, Agent):
     """PPO agent with a Transformer encoder backbone."""
 
     def __init__(
@@ -180,6 +246,7 @@ class PPOTransformerAgent(Agent):
         minibatch_size: int = 256,
         total_updates: int = 200,
         warmup_updates: int = 10,
+        lr_min_factor: float = 0.05,
         # Action masking
         use_action_mask: bool = True,
         # Reward normalization (Schulman/SB3 VecNormalize-style)
@@ -235,11 +302,17 @@ class PPOTransformerAgent(Agent):
             eps=1e-5,
             betas=(0.9, 0.999),
         )
+        self.total_updates = int(total_updates)
+        self.warmup_updates = int(warmup_updates)
+        self.lr_min_factor = float(lr_min_factor)
+        self._lr_lambda = lambda step: _cosine_warmup_lr(
+            step,
+            warmup_steps=self.warmup_updates,
+            total_steps=self.total_updates,
+            min_factor=self.lr_min_factor,
+        )
         self.lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.optimizer,
-            lr_lambda=lambda step: _cosine_warmup_lr(
-                step, warmup_steps=warmup_updates, total_steps=total_updates
-            ),
+            self.optimizer, lr_lambda=self._lr_lambda
         )
 
         # -- Mixed precision --
@@ -392,7 +465,7 @@ class PPOTransformerAgent(Agent):
         }
         mask_tensor = torch.from_numpy(mask).unsqueeze(0).to(self.device)
 
-        with torch.no_grad(), self._autocast_ctx:
+        with self._eval_mode_if(deterministic), torch.no_grad(), self._autocast_ctx:
             logits, value = self.net(obs_batch)
         # Apply mask in fp32 so masked positions stay -inf under softmax
         masked_logits = logits.float().masked_fill(~mask_tensor, float("-inf"))
@@ -638,18 +711,26 @@ class PPOTransformerAgent(Agent):
         dones: np.ndarray,
         last_value: float,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Generalised Advantage Estimation."""
+        """Generalised Advantage Estimation.
+
+        ``dones[t]`` flags that transition *t* ended its episode, i.e.
+        ``s_{t+1}`` is terminal: it must mask transition t's OWN
+        bootstrap and sever its λ-chain.  The historical variant
+        deferred the mask by one step (transition t consumed
+        ``dones[t+1]``) — the off-by-one fixed in the set-transformer
+        subclass on 2026-07-20 and here on 2026-08-04 (defect D6:
+        terminal credit severed at n−2, cross-episode λ-leakage).
+        """
         n = len(rewards)
         advantages = np.zeros(n, dtype=np.float32)
         gae = 0.0
         next_value = float(last_value)
-        next_non_terminal = 0.0 if dones[-1] else 1.0
         for t in reversed(range(n)):
-            delta = rewards[t] + self.gamma * next_value * next_non_terminal - values[t]
-            gae = delta + self.gamma * self.gae_lambda * next_non_terminal * gae
+            non_terminal = 0.0 if dones[t] else 1.0
+            delta = rewards[t] + self.gamma * next_value * non_terminal - values[t]
+            gae = delta + self.gamma * self.gae_lambda * non_terminal * gae
             advantages[t] = gae
             next_value = values[t]
-            next_non_terminal = 0.0 if dones[t] else 1.0
         returns = advantages + values
         return advantages, returns
 
@@ -681,6 +762,8 @@ class PPOTransformerAgent(Agent):
                 self.lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
             except (ValueError, KeyError):
                 pass
+            else:
+                self._rearm_lr_schedule_if_exhausted()
         if "return_rms" in ckpt:
             try:
                 self._return_rms.load_state_dict(ckpt["return_rms"])

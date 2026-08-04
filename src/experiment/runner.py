@@ -346,6 +346,9 @@ class Experiment:
             params.setdefault("max_machines", int(self.env_cfg.gym.max_machines))
             params.setdefault("env_length", int(self.env_cfg.gym.set_env_length))
             params.setdefault(
+                "tech_slot_length", int(self.env_cfg.gym.set_tech_slot_length)
+            )
+            params.setdefault(
                 "sim_time_scale", float(self.env_cfg.gym.max_sim_time)
             )
         else:
