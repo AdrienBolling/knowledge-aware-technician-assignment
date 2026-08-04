@@ -236,9 +236,18 @@ def load_set_tokenizer(checkpoint: Path, env_cfg) -> StateTokenizer:
     raise RuntimeError(f"no vocab for checkpoint {checkpoint}")
 
 
-def make_env(env_cfg, scenario_factory, representation, tokenizer=None) -> KataEnv:
+def make_env(env_cfg, scenario_factory, representation, tokenizer=None,
+             legacy_obs=False) -> KataEnv:
     gym_cfg = env_cfg.gym.model_copy(
-        update={"observation_representation": representation}
+        update={
+            "observation_representation": representation,
+            # Checkpoints trained before the 2026-08-04 D11/D12 obs
+            # fixes must be evaluated on the encoding they trained
+            # with (UNK boolean tokens, zeroed machine history) or
+            # they run off-distribution through never-trained
+            # embedding rows.
+            "legacy_obs_quirks": bool(legacy_obs),
+        }
     )
     with quiet():
         return KataEnv(
@@ -306,7 +315,12 @@ def build_agents(env_cfg, scenario_factory, n_techs,
         # Benchmark forwards must not sample dropout masks (defect D2);
         # the agent also guards deterministic acting itself.
         agent.net.eval()
-        env = make_env(env_cfg, scenario_factory, "set", tokenizer=tok)
+        # Pre-v6 checkpoints (no D3 keys in the improvements dict)
+        # trained under the D11/D12 observation bugs — evaluate them
+        # under the legacy encoding for faithfulness.
+        legacy = "slot_role_binding" not in imp
+        env = make_env(env_cfg, scenario_factory, "set", tokenizer=tok,
+                       legacy_obs=legacy)
         agents[label] = (agent, env)
     # Token-stream anchors: rebuilt with the runner's exact vocab recipe
     # (deterministic given identical config/pools, so checkpoint ids
@@ -344,11 +358,20 @@ def build_agents(env_cfg, scenario_factory, n_techs,
                       flush=True)
                 continue
             env = make_env(env_cfg, scenario_factory, "token_ids",
-                           tokenizer=tok)
+                           tokenizer=tok, legacy_obs=True)  # pre-fix anchors
             agents[label] = (agent, env)
+    # Under a lifecycle scenario the fleet list can grow past the
+    # initial n_techs (tombstones keep their slots) — size the
+    # heuristics' action space to the cap so their per-tech arrays
+    # cover every reachable index.
+    heur_n_actions = (
+        int(env_cfg.gym.max_techs)
+        if getattr(env_cfg.gym, "lifecycle_events", None)
+        else n_techs
+    )
     for name, cls in HEURISTICS.items():
         env = make_env(env_cfg, scenario_factory, "structured")
-        agent = cls(n_actions=n_techs)
+        agent = cls(n_actions=heur_n_actions)
         # Skill/optimisation baselines read the env's decision-support API
         # (expected repair times, batch cost matrix); harmless no-op for the
         # obs-only rules.

@@ -147,18 +147,30 @@ def retire_machine_from_factory(
         dispatcher, "factory_handles", None
     )
     machine.retired = True
+    in_buf = None
     if handles is not None:
         feeder = handles.feeders.get(machine.mtype)
         if feeder is not None and machine in feeder.machines:
             i = feeder.machines.index(machine)
             feeder.machines.pop(i)
-            feeder.machine_input_buffers.pop(i)
+            in_buf = feeder.machine_input_buffers.pop(i)
         by_type = handles.machines_by_type.get(machine.mtype)
         if by_type and machine in by_type:
             by_type.remove(machine)
     machines = getattr(dispatcher, "machines", None)
     if machines is not None:
         machines.pop(machine.machine_id, None)
+    if in_buf is not None:
+        # Drain the retired machine's input buffer: a feeder blocked on
+        # put() into this (full) buffer would otherwise starve its whole
+        # type forever.  Consuming items completes any pending put and
+        # scraps the WIP (deliberate — part of a machine swap).
+        def _drain(buf=in_buf):
+            store = getattr(buf, "store", buf)
+            while store.items or store.put_queue:
+                yield store.get()
+
+        dispatcher.env.process(_drain())
 
 
 class ScenarioBuilder:

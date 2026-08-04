@@ -935,6 +935,20 @@ class GymEnvConfig(BaseModel):
             "always exists."
         ),
     )
+    legacy_obs_quirks: bool = Field(
+        default=False,
+        description=(
+            "Reproduce the pre-2026-08-04 observation encodings for "
+            "faithful evaluation of checkpoints trained before the "
+            "D11/D12 fixes: set-mode boolean tokens revert to the "
+            "TRUE/FALSE spelling (which the frozen vocab maps to <UNK> "
+            "— what those policies actually trained on), and the "
+            "machine-history features (BD_COUNT/DOWNTIME/MEAN_TBF) "
+            "revert to the id()-fallback that made them read "
+            "0/0/sim_time.  The eval harness enables this "
+            "automatically for checkpoints predating the fixes."
+        ),
+    )
     lifecycle_events: list["LifecycleEventConfig"] = Field(
         default_factory=list,
         description=(
@@ -1026,12 +1040,13 @@ class LifecycleEventConfig(BaseModel):
         if self.select not in selects:
             msg = f"lifecycle select must be one of {sorted(selects)}"
             raise ValueError(msg)
-        if (
-            self.kind in ("add_technician", "add_machine", "replace_machine")
-            and not self.template
-        ):
+        if self.kind in ("add_technician", "add_machine") and not self.template:
             msg = f"{self.kind} requires a template"
             raise ValueError(msg)
+        # replace_machine MAY omit the template: the replacement is then
+        # like-for-like (a template matching the retiree's machine type
+        # is inferred), which also sidesteps the route-starvation hazard
+        # of cross-type replacement.
         if self.select == "by_name" and not self.name:
             msg = "select='by_name' requires a name"
             raise ValueError(msg)

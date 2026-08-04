@@ -257,3 +257,31 @@ def test_machine_id_uses_machine_id_attribute(base_cfg, fixed_scenario):
     env.reset(seed=11)
     for mid, machine in env.dispatcher.machines.items():
         assert env._machine_id_from_machine(machine) == mid
+
+
+def test_replace_machine_without_template_is_like_for_like(
+    base_cfg, fixed_scenario
+):
+    """replace_machine may omit the template: the replacement machine
+    must then match the retiree's machine type."""
+    events = [
+        LifecycleEventConfig(
+            time=300.0, kind="replace_machine", select="most_breakdowns"
+        )
+    ]
+    env = _make_env(base_cfg, fixed_scenario, events)
+    env.reset(seed=11)
+    types_before = sorted(
+        {m.mtype for m in env.dispatcher.machines.values()}
+    )
+    n0 = len(env.dispatcher.machines)
+    _run_past(env, 1400.0)
+    assert len(env.dispatcher.machines) == n0
+    assert (
+        sorted({m.mtype for m in env.dispatcher.machines.values()})
+        == types_before
+    )
+    entries = [
+        e for e in env._lifecycle_log if e["kind"] == "replace_machine"
+    ]
+    assert any(e["target"].startswith("replacement:") for e in entries)
