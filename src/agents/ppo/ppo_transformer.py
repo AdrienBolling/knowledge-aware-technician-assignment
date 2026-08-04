@@ -204,10 +204,14 @@ class PPOAgentInfraMixin:
             self.lr_scheduler.last_epoch,
             self.total_updates,
         )
+        # Use the CONSTRUCTOR's lr, not lr_scheduler.base_lrs: the
+        # scheduler's load_state_dict has just restored the CHECKPOINT's
+        # base_lrs, which would silently override a deliberately
+        # changed lr on resume (e.g. a halved fine-tune LR).
+        base = float(getattr(self, "_ctor_lr", self.lr_scheduler.base_lrs[0]))
+        self.lr_scheduler.base_lrs = [base] * len(self.optimizer.param_groups)
         self.lr_scheduler.last_epoch = int(self.warmup_updates)
-        for group, base in zip(
-            self.optimizer.param_groups, self.lr_scheduler.base_lrs
-        ):
+        for group in self.optimizer.param_groups:
             group["lr"] = base * self._lr_lambda(int(self.warmup_updates))
 
 
@@ -305,6 +309,7 @@ class PPOTransformerAgent(PPOAgentInfraMixin, Agent):
         self.total_updates = int(total_updates)
         self.warmup_updates = int(warmup_updates)
         self.lr_min_factor = float(lr_min_factor)
+        self._ctor_lr = float(lr)
         self._lr_lambda = lambda step: _cosine_warmup_lr(
             step,
             warmup_steps=self.warmup_updates,

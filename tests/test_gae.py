@@ -276,3 +276,30 @@ def test_observe_transition_records_sim_time_deltas():
     step(329.5, done=True)  # dt = 200, then stamp cleared
     step(13.0)           # new episode: fallback again
     assert agent._streams[0]["dt"] == [0.0, 22.5, 200.0, 0.0]
+
+
+def test_rearm_uses_constructor_lr_not_checkpoint_base(tmp_path):
+    """A resumed run with a deliberately changed LR must keep it: the
+    re-arm must not resurrect the checkpoint's base_lrs (which
+    lr_scheduler.load_state_dict restores)."""
+    import torch
+
+    def make(lr, total):
+        return PPOTransformerAgent(
+            n_actions=3, vocab_size=8, d_model=16, n_heads=2, n_layers=1,
+            max_seq_len=8, lr=lr, total_updates=total, warmup_updates=2,
+            device="cpu",
+        )
+
+    a = make(3e-4, 10)
+    for _ in range(15):
+        a.lr_scheduler.step()  # exhaust the schedule
+    p = tmp_path / "ck.pt"
+    a.save(p)
+
+    b = make(1.5e-4, 10)  # fine-tune at half LR
+    b.load(p)
+    lrs = [g["lr"] for g in b.optimizer.param_groups]
+    expected = 1.5e-4 * b._lr_lambda(b.warmup_updates)
+    assert all(abs(x - expected) < 1e-9 for x in lrs), lrs
+    assert all(abs(x - 1.5e-4) < 1e-9 for x in b.lr_scheduler.base_lrs)

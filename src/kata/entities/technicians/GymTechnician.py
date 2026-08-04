@@ -253,6 +253,11 @@ class GymTechnician(Technician):
         because the fatigue property only checks ``busy`` (which is
         repair-only), not ``_in_disruption``.
         """
+        if self.retired:
+            # A loop sleeping through the retirement moment may reach
+            # here — retirees must not generate disruption events (the
+            # illness KPI would count phantom post-retirement events).
+            return
         with tech_resource.request(priority=0, preempt=bool(dis_cfg.preemptive)) as req:
             yield req
             self._in_disruption = True
@@ -286,6 +291,8 @@ class GymTechnician(Technician):
             return
         scale = 1.0 / rate
         while True:
+            if self.retired:
+                return
             yield env.timeout(float(self._rng.exponential(scale)))
             yield from self._take_disruption(env, tech_resource, dis_name, dis_cfg)
 
@@ -302,6 +309,8 @@ class GymTechnician(Technician):
         if coef <= 0.0:
             return
         while True:
+            if self.retired:
+                return
             yield env.timeout(poll)
             p = min(1.0, coef * float(self.fatigue) * poll)
             if p > 0.0 and self._rng.random() < p:
@@ -323,6 +332,8 @@ class GymTechnician(Technician):
         # multiple technicians don't all vacation at sim time = interval.
         yield env.timeout(float(self._rng.uniform(0.0, interval)))
         while True:
+            if self.retired:
+                return
             yield from self._take_disruption(env, tech_resource, dis_name, dis_cfg)
             wait = interval
             if jitter > 0.0:

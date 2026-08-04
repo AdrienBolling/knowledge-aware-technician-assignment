@@ -198,6 +198,7 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         self.total_updates = int(total_updates)
         self.warmup_updates = int(warmup_updates)
         self.lr_min_factor = float(lr_min_factor)
+        self._ctor_lr = float(lr)
         self._lr_lambda = lambda step: _cosine_warmup_lr(
             step,
             warmup_steps=self.warmup_updates,

@@ -81,6 +81,11 @@ class MachineFeeder(MachineFeederBase):
         while True:
             product = yield self.in_buffer.get()
 
+            # Lifecycle: the type may (transiently or permanently) have
+            # zero machines — park the product back in the type queue
+            # and idle instead of crashing the argmin below.
+            while not self.machine_input_buffers:
+                yield self.env.timeout(60.0)
             indices = range(len(self.machine_input_buffers))
             if self.machines is not None:
                 working = [i for i in indices if not self.machines[i].broken]

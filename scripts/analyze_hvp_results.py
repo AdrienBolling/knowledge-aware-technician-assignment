@@ -26,7 +26,8 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path("reports/hvp_eval")
-SCENARIOS = ["massive_scale", "small_scale", "baseline", "very_long"]
+SCENARIOS = ["massive_scale", "small_scale", "baseline", "very_long",
+             "lifecycle"]
 
 # Display labels.  Markers flag the information level of each baseline:
 #   \dagger  = informed / oracle (reads the simulator's ground-truth

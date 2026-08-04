@@ -300,7 +300,6 @@
         "time": 2000000.0,
         "kind": "replace_machine",
         "count": 3,
-        "template": "assembly_mixed",
         "select": "most_breakdowns"
       },
       {
@@ -325,7 +324,6 @@
         "time": 3800000.0,
         "kind": "replace_machine",
         "count": 2,
-        "template": "cnc_weibull",
         "select": "most_breakdowns"
       },
       {

@@ -103,6 +103,10 @@ say "final ckpts: best=$BEST last=$LAST_CKPT"
 # ---------- 4. Benchmark v6 into the generation ----------
 vl() {
   local A=$1
+  if [ -s "$PARTS/$A/very_long/episodes.csv" ]; then
+    say "vl $A cached (part exists)"
+    return
+  fi
   say "vl $A start"
   nice -n 10 uv run python scripts/eval_human_vs_performance.py \
     --scenario very_long --agents "$A" --eval-seed "$SEED" \
@@ -136,6 +140,10 @@ say "vl merge rc=$?"
 LC_AGENTS="hc_v6 hc_v6_last hc_v5 hc_v5_last hc_v4 hc_v4_last hc_v3 hc_v3_last gaefix human topsis empirical_topsis empirical_spt shortest_processing optimal_assignment batch_milp greedy_reward shortest_queue least_busy least_fatigued round_robin random train_weakest reserve_specialist"
 lc() {
   local A=$1
+  if [ -s "$LC_PARTS/$A/lifecycle/episodes.csv" ]; then
+    say "lifecycle $A cached (part exists)"
+    return
+  fi
   say "lifecycle $A start"
   nice -n 10 uv run python scripts/eval_human_vs_performance.py \
     --scenario lifecycle --agents "$A" --eval-seed "$SEED" \
@@ -151,7 +159,7 @@ for A in $LC_AGENTS; do
 done
 wait
 nice -n 10 uv run python scripts/merge_hvp_parts.py \
-  --parts "$LC_PARTS" --dest "$OUTROOT/lifecycle" \
+  --parts "$LC_PARTS" --dest "$OUTROOT/lifecycle" --scenario lifecycle \
   >> reports/v6_eval_merge.log 2>&1
 say "lifecycle merge rc=$?"
 

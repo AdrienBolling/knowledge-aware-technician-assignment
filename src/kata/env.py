@@ -306,7 +306,7 @@ class _SetEmitter(_Emitter):
     truncation after emission completes.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, legacy_bool_tokens: bool = False) -> None:
         from agents.networks.continuous_features import ContKind
 
         self._CAT = ContKind.CATEGORICAL
@@ -314,6 +314,10 @@ class _SetEmitter(_Emitter):
         self._COUNT = ContKind.COUNT_PLE
         self._TIME = ContKind.TIME2VEC
         self._HAZARD = ContKind.FOURIER
+        # legacy_obs_quirks: emit the historical TRUE/FALSE spellings
+        # (which the frozen vocab maps to <UNK>) so pre-D11 checkpoints
+        # are evaluated on the encoding they trained with.
+        self._legacy_bool = bool(legacy_bool_tokens)
         # tuple of three parallel lists: (tokens, cont_values, cont_kinds)
         self._slot: tuple[list[str], list[float], list[int]] | None = None
 
@@ -350,8 +354,12 @@ class _SetEmitter(_Emitter):
         # ``_bool_token`` here (TRUE/FALSE, the FLAT-stream spelling)
         # made every boolean set-obs token <UNK>: no trained agent ever
         # saw BUSY/DISRUPT/BROKEN/PROC/IS_CURRENT/HAS_T (defect D11,
-        # found + fixed 2026-08-04).
-        self._emit(f"{key}={'T' if value else 'F'}", 0.0, self._CAT)
+        # found + fixed 2026-08-04).  ``legacy_bool_tokens`` reproduces
+        # the bug for faithful evaluation of pre-fix checkpoints.
+        if self._legacy_bool:
+            self._emit(f"{key}={_bool_token(value)}", 0.0, self._CAT)
+        else:
+            self._emit(f"{key}={'T' if value else 'F'}", 0.0, self._CAT)
 
     def ratio(self, key: str, value: float) -> None:
         # The categorical key marks the *semantic role* of the
@@ -1107,7 +1115,11 @@ class KataEnv(gym.Env):
         L_m = int(self.config.set_machine_slot_length)
         L_e = int(self.config.set_env_length)
 
-        emitter = _SetEmitter()
+        emitter = _SetEmitter(
+            legacy_bool_tokens=bool(
+                getattr(self.config, "legacy_obs_quirks", False)
+            )
+        )
         ticket = self.current_request
         ticket_machine = getattr(ticket, "machine", None)
         ticket_machine_id = (
@@ -1393,6 +1405,18 @@ class KataEnv(gym.Env):
         set-obs BD_COUNT/DOWNTIME/MEAN_TBF features from the tracking
         dicts keyed by ``machine_id`` (defect D12, found 2026-08-04).
         """
+        if getattr(self.config, "legacy_obs_quirks", False):
+            # Pre-D12 behaviour: ``.id`` is never set on machines, so
+            # this falls to CPython ``id()`` and every tracking-dict
+            # lookup misses — BD_COUNT/DOWNTIME read 0 and MEAN_TBF
+            # reads sim_time, exactly what pre-fix checkpoints saw.
+            mid = getattr(machine, "id", None)
+            if mid is None:
+                mid = id(machine)
+            try:
+                return int(mid)
+            except (TypeError, ValueError):
+                return int(hash(mid))
         mid = getattr(machine, "machine_id", None)
         if mid is None:
             mid = getattr(machine, "id", None)
@@ -2309,14 +2333,64 @@ class KataEnv(gym.Env):
                 from kata.scenario import retire_machine_from_factory
 
                 template = ev.template
+                if ev.kind == "replace_machine" and not template:
+                    # Like-for-like renewal: infer a template matching
+                    # the retiree's machine type.
+                    template = self._template_for_machine_type(m.mtype)
+                    if template is None:
+                        self._lifecycle_note(
+                            ev,
+                            f"SKIPPED:{getattr(m, 'name', m.machine_id)}"
+                            f" (no template for type {m.mtype})",
+                        )
+                        continue
+                # Close open downtime/processing intervals BEFORE the
+                # machine leaves the registry — the periodic tracking
+                # update only sees registered machines, so a retired
+                # machine's open interval would otherwise accrue
+                # phantom downtime for the rest of the episode.
+                self._close_machine_tracking_for(m)
                 retire_machine_from_factory(self.dispatcher, m)
                 self._lifecycle_note(ev, getattr(m, "name", m.machine_id))
-                if ev.kind == "replace_machine" and template:
+                if ev.kind == "replace_machine":
                     m2 = self._lifecycle_add_machine(template)
                     self._lifecycle_note(
                         ev, f"replacement:{getattr(m2, 'name', m2.machine_id)}"
                     )
         self._lifecycle_invalidate_caches()
+
+    def _template_for_machine_type(self, mtype: str) -> str | None:
+        from kata.EntityFactories.machine_factory import (
+            create_config_from_template,
+            list_templates,
+        )
+
+        for t in list_templates():
+            try:
+                if create_config_from_template(t).machine_type == mtype:
+                    return t
+            except Exception:  # noqa: BLE001 — skip malformed templates
+                continue
+        return None
+
+    def _close_machine_tracking_for(self, machine: Any) -> None:
+        """Finalise downtime/processing intervals for a departing machine."""
+        mid = getattr(machine, "machine_id", None)
+        if mid is None:
+            return
+        now = float(self._sim_time())
+        if mid in self._machine_down_since:
+            elapsed = now - self._machine_down_since.pop(mid)
+            self._total_downtime += elapsed
+            self._machine_total_downtime[mid] = (
+                self._machine_total_downtime.get(mid, 0.0) + elapsed
+            )
+        since = getattr(self, "_machine_processing_since", None)
+        if since is not None and mid in since:
+            elapsed = now - since.pop(mid)
+            totals = getattr(self, "_machine_total_processing_time", None)
+            if totals is not None:
+                totals[mid] = totals.get(mid, 0.0) + elapsed
 
     def _lifecycle_add_technician(self, template: str):
         from kata.EntityFactories.technician_factory import (
@@ -2374,6 +2448,34 @@ class KataEnv(gym.Env):
             for m in self._factory_machines()
             if not getattr(m, "retired", False)
         ]
+        # Last-of-type guard: retiring the only machine of a type
+        # starves its route (and crashes the feeder's argmin).  A
+        # replacement is exempt only when it is like-for-like (no
+        # template, or a template of the same type).
+        counts: dict[str, int] = {}
+        for m in machines:
+            counts[m.mtype] = counts.get(m.mtype, 0) + 1
+
+        def _removable(m) -> bool:
+            if counts.get(m.mtype, 0) > 1:
+                return True
+            if ev.kind != "replace_machine":
+                return False
+            if not ev.template:
+                return True  # like-for-like keeps the type alive
+            try:
+                from kata.EntityFactories.machine_factory import (
+                    create_config_from_template,
+                )
+
+                return (
+                    create_config_from_template(ev.template).machine_type
+                    == m.mtype
+                )
+            except Exception:  # noqa: BLE001
+                return False
+
+        machines = [m for m in machines if _removable(m)]
         if not machines:
             return None
         if ev.select == "by_name":
@@ -2578,12 +2680,23 @@ class KataEnv(gym.Env):
         self._lifecycle_log: list[dict[str, Any]] = []
         self._lifecycle_seq = 0
         if self._lifecycle_pending:
-            # Derived from the harness-seeded global stream so target
-            # selection is reproducible per episode seed.
-            self._lifecycle_rng = np.random.default_rng(
-                int(np.random.randint(0, 2**31))
-            )
-            self.sim_env.process(self._lifecycle_scheduler())
+            if self._scenario_factory is None:
+                # A reused sim_env (no factory) would accumulate one
+                # zombie scheduler per reset and compound mutations
+                # across episodes — refuse rather than corrupt.
+                logger.warning(
+                    "lifecycle_events configured but no scenario_factory: "
+                    "schedule disabled (a fresh sim world per episode is "
+                    "required)."
+                )
+                self._lifecycle_pending = []
+            else:
+                # Derived from the harness-seeded global stream so target
+                # selection is reproducible per episode seed.
+                self._lifecycle_rng = np.random.default_rng(
+                    int(np.random.randint(0, 2**31))
+                )
+                self.sim_env.process(self._lifecycle_scheduler())
         # Per-episode horizon: fixed, or sampled uniformly when the
         # config declares a [min, max] range (np.random is seeded by the
         # harness at reset time, so the draw is reproducible).
