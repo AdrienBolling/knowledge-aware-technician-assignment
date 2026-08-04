@@ -136,7 +136,9 @@ def main() -> int:
     params["rollout_steps"] = int(args.rollout_steps)
     # LR schedule sized to the actual update budget:
     # rounds ~= episodes/worker * steps/episode / rollout_steps.
-    est_steps_per_ep = args.sim_time / 60.0  # ~1 decision / 60 t.u. at baseline scale
+    # ~24 t.u./decision measured on the multiscale event-driven world
+    # (the old 60-t.u. constant under-estimated rounds ~3x).
+    est_steps_per_ep = args.sim_time / 24.0
     est_rounds = max(
         200,
         int(args.episodes / max(1, args.parallel_envs)

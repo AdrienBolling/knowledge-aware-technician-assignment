@@ -80,14 +80,18 @@ def main(cfg: DictConfig) -> int:
     if cfg.gae_lambda is not None:
         params["gae_lambda"] = float(cfg.gae_lambda)
     params["rollout_steps"] = int(cfg.rollout_steps)
-    # LR schedule sized to the actual update budget (same heuristic as
-    # train_hc_improved.py: ~1 decision / 60 t.u. at baseline scale).
+    # LR schedule sized to the actual update budget.  Decision density is
+    # configurable (``tu_per_decision``): the multiscale event-driven world
+    # measures ~24 t.u./decision (2026-07-22 probe: 8,249 decisions per
+    # 200k t.u.); the historical 60-t.u. constant under-estimated rounds
+    # ~3x and let the cosine schedule hit its (now floored) tail mid-run.
     mean_sim = (
         (float(cfg.sim_time_min) + float(cfg.sim_time_max)) / 2.0
         if cfg.get("sim_time_min") is not None and cfg.get("sim_time_max") is not None
         else float(cfg.sim_time)
     )
-    est_steps_per_ep = mean_sim / 60.0
+    tu_per_decision = float(cfg.get("tu_per_decision") or 24.0)
+    est_steps_per_ep = mean_sim / tu_per_decision
     est_rounds = max(
         200,
         int(

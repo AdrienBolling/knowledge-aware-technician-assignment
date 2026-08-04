@@ -60,6 +60,15 @@ class GymTechnician(Technician):
         # treat the tech as unavailable for new assignments.
         self._in_disruption: bool = False
 
+        # Lifecycle tombstone: a retired technician keeps their slot in
+        # the dispatcher's fleet list (so action indices, assignment
+        # counts and repair-log history stay aligned) but is
+        # permanently excluded from the action mask, the set-obs tech
+        # slots and the fleet-knowledge aggregates.  Distinct from
+        # ``_in_disruption`` on purpose — retirement must not pollute
+        # the illness metrics or the DISRUPT observation token.
+        self.retired: bool = False
+
         # Per-technician RNG used by the stochastic-disruption loops.
         # Seeded by the dispatcher via ``seed_disruptions`` so that
         # ``env.reset(seed=…)`` produces deterministic disruption

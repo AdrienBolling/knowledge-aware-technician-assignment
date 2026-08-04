@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from agents.ppo.ppo_set_transformer import SetTransformerAgent
+from agents.ppo.ppo_transformer import PPOTransformerAgent
 
 GAMMA = 0.99
 LAM = 0.95
@@ -182,6 +183,65 @@ def test_disabled_flag_ignores_dts():
     )
     ref, _ = _gae(rewards, values, dones, 0.0)
     np.testing.assert_allclose(adv, ref, rtol=1e-5, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Parent class (PPOTransformerAgent — the §7.4 anchor agent) must share the
+# same episode-boundary semantics.  Its GAE is a separate implementation;
+# the 2026-07-20 fix originally landed only in the subclass (defect D6).
+# ---------------------------------------------------------------------------
+
+
+def _gae_parent(rewards, values, dones, last_value, gamma=GAMMA, lam=LAM):
+    stub = SimpleNamespace(gamma=gamma, gae_lambda=lam)
+    return PPOTransformerAgent._compute_gae(
+        stub,
+        np.asarray(rewards, dtype=np.float32),
+        np.asarray(values, dtype=np.float32),
+        np.asarray(dones, dtype=bool),
+        float(last_value),
+    )
+
+
+def test_parent_matches_reference_with_interior_dones():
+    rng = np.random.default_rng(17)
+    n = 64
+    rewards = rng.normal(size=n)
+    values = rng.normal(size=n)
+    dones = np.zeros(n, dtype=bool)
+    dones[[9, 30, 47]] = True
+    adv, ret = _gae_parent(rewards, values, dones, last_value=1.7)
+    ref_adv, ref_ret = _gae_reference(rewards, values, dones, last_value=1.7)
+    np.testing.assert_allclose(adv, ref_adv, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(ret, ref_ret, rtol=1e-5, atol=1e-5)
+
+
+def test_parent_second_to_last_transition_keeps_bootstrap():
+    # The exact symptom of the off-by-one: with a terminal-only reward,
+    # transitions before the last must chain to the terminal advantage.
+    rewards = [0.0, 0.0, 10.0]
+    values = [0.0, 0.0, 0.0]
+    dones = [False, False, True]
+    adv, _ = _gae_parent(rewards, values, dones, last_value=0.0)
+    assert adv[2] == pytest.approx(10.0)
+    assert adv[1] == pytest.approx(GAMMA * LAM * 10.0, rel=1e-5)
+    assert adv[0] == pytest.approx((GAMMA * LAM) ** 2 * 10.0, rel=1e-5)
+
+
+def test_parent_episode_boundary_isolates_episodes():
+    rng = np.random.default_rng(5)
+    r1, v1 = rng.normal(size=5), rng.normal(size=5)
+    r2, v2 = rng.normal(size=4), rng.normal(size=4)
+    d1 = [False] * 4 + [True]
+    d2 = [False] * 3 + [True]
+    adv_joint, _ = _gae_parent(
+        np.concatenate([r1, r2]),
+        np.concatenate([v1, v2]),
+        np.asarray(d1 + d2),
+        last_value=0.0,
+    )
+    adv_solo, _ = _gae_parent(r1, v1, d1, last_value=123.0)
+    np.testing.assert_allclose(adv_joint[:5], adv_solo, rtol=1e-5, atol=1e-5)
 
 
 def test_observe_transition_records_sim_time_deltas():

@@ -112,6 +112,8 @@ class ComplexMachine(Machine):
             yield from self._breakdown_driver_event()
             return
         while True:
+            if self.retired:
+                return
             yield self.env.timeout(self.dt)
             if self.broken:
                 continue

@@ -42,7 +42,7 @@ from agents.networks.set_transformer import (
     SetTransformerActorCritic,
     SetTransformerEncoder,
 )
-from agents.ppo.ppo_transformer import _cosine_warmup_lr
+from agents.ppo.ppo_transformer import PPOAgentInfraMixin, _cosine_warmup_lr
 
 
 _SET_OBS_KEYS: tuple[str, ...] = (
@@ -60,7 +60,7 @@ _SET_OBS_KEYS: tuple[str, ...] = (
 )
 
 
-class SetTransformerAgent(Agent):
+class SetTransformerAgent(PPOAgentInfraMixin, Agent):
     """PPO over the three-stream Set observation.
 
     The class is parallel to :class:`PPOTransformerAgent` but with a
@@ -112,6 +112,7 @@ class SetTransformerAgent(Agent):
         minibatch_size: int = 256,
         total_updates: int = 200,
         warmup_updates: int = 10,
+        lr_min_factor: float = 0.05,
         # Reward normalisation
         normalize_rewards: bool = False,
         # Action masking
@@ -130,6 +131,16 @@ class SetTransformerAgent(Agent):
         # the rollout are treated as constants; no BPTT across steps).
         rnn_type: str = "none",
         rnn_hidden: int = 128,
+        # D3 architecture toggles (default OFF = pre-2026-08 behaviour,
+        # so historical checkpoints rebuild identically):
+        # role-bound slot fusion — keep the per-feature role embedding
+        # at continuous positions and bind role↔value with a nonlinear
+        # per-position MLP before within-slot pooling.
+        slot_role_binding: bool = False,
+        # two-view pooling — add a per-feature-across-technicians
+        # context vector alongside the per-technician pooling.
+        use_feature_context: bool = False,
+        tech_slot_length: int = 16,
         # Number of parallel environment streams feeding this agent.
         # 1 = classic single-env behaviour (fully backward compatible).
         n_envs: int = 1,
@@ -162,7 +173,13 @@ class SetTransformerAgent(Agent):
             max_machines=max_machines,
             env_length=env_length,
             sim_time_scale=sim_time_scale,
+            slot_role_binding=slot_role_binding,
+            use_feature_context=use_feature_context,
+            tech_slot_length=tech_slot_length,
         )
+        self.slot_role_binding = bool(slot_role_binding)
+        self.use_feature_context = bool(use_feature_context)
+        self.tech_slot_length = int(tech_slot_length)
         self.net = SetTransformerActorCritic(
             encoder,
             value_hidden=value_hidden,
@@ -178,11 +195,17 @@ class SetTransformerAgent(Agent):
             eps=1e-5,
             betas=(0.9, 0.999),
         )
+        self.total_updates = int(total_updates)
+        self.warmup_updates = int(warmup_updates)
+        self.lr_min_factor = float(lr_min_factor)
+        self._lr_lambda = lambda step: _cosine_warmup_lr(
+            step,
+            warmup_steps=self.warmup_updates,
+            total_steps=self.total_updates,
+            min_factor=self.lr_min_factor,
+        )
         self.lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.optimizer,
-            lr_lambda=lambda step: _cosine_warmup_lr(
-                step, warmup_steps=warmup_updates, total_steps=total_updates
-            ),
+            self.optimizer, lr_lambda=self._lr_lambda
         )
 
         self._amp_enabled = bool(use_amp and self.device.type == "cuda")
@@ -413,7 +436,7 @@ class SetTransformerAgent(Agent):
         }
         mask_tensor = torch.from_numpy(mask).unsqueeze(0).to(self.device)
         hidden_pre = self._rnn_state.get(env_id)
-        with torch.no_grad(), self._autocast_ctx:
+        with self._eval_mode_if(deterministic), torch.no_grad(), self._autocast_ctx:
             logits, value, hidden_post = self.net(obs_batch, hidden_pre)
         if self.rnn_type != "none":
             self._rnn_state[env_id] = hidden_post
@@ -471,7 +494,7 @@ class SetTransformerAgent(Agent):
             hidden_batch = self._stack_hidden(
                 [self._rnn_state.get(i) for i in env_ids], len(env_ids)
             )
-        with torch.no_grad(), self._autocast_ctx:
+        with self._eval_mode_if(deterministic), torch.no_grad(), self._autocast_ctx:
             logits, values, hidden_post = self.net(obs_batch, hidden_batch)
         masked_logits = logits.float().masked_fill(~mask_tensor, float("-inf"))
         dist = Categorical(logits=masked_logits)
@@ -870,6 +893,11 @@ class SetTransformerAgent(Agent):
                 "popart_initialized": bool(self._popart_initialized),
                 "rnn_type": self.rnn_type,
                 "rnn_hidden": self.rnn_hidden,
+                # D3 architecture toggles — the eval loader rebuilds the
+                # matching encoder from these.
+                "slot_role_binding": self.slot_role_binding,
+                "use_feature_context": self.use_feature_context,
+                "tech_slot_length": self.tech_slot_length,
             },
         }
         vocab = getattr(self, "_vocab", None)
@@ -936,6 +964,8 @@ class SetTransformerAgent(Agent):
                 self.lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
             except (ValueError, KeyError):
                 pass
+            else:
+                self._rearm_lr_schedule_if_exhausted()
         if "return_rms" in ckpt:
             try:
                 self._return_rms.load_state_dict(ckpt["return_rms"])

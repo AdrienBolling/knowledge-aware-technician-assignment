@@ -45,6 +45,11 @@ class Machine(Mach):
         self.broken = False
         self.total_processed = 0
         self.last_failed_at = None
+        # Lifecycle stop-flag: when True both long-running processes
+        # (production loop + breakdown driver) end at their next loop
+        # head — SimPy ends a process when its generator returns.  Set
+        # via the env's lifecycle machinery, never directly.
+        self.retired = False
         self.event_driven = (
             EVENT_DRIVEN_DEFAULT if event_driven is None else bool(event_driven)
         )
@@ -66,6 +71,8 @@ class Machine(Mach):
 
     def _run(self):
         while True:
+            if self.retired:
+                return
             # Check if the machine is broken, if so wait for a repair
             if self.broken:
                 self._log("is broken, waiting for repair")
@@ -126,6 +133,8 @@ class Machine(Mach):
             yield from self._breakdown_driver_event()
             return
         while True:
+            if self.retired:
+                return
             yield self.env.timeout(self.dt)
             if self.broken:
                 continue
@@ -158,6 +167,8 @@ class Machine(Mach):
 
     def _breakdown_driver_event(self):
         while True:
+            if self.retired:
+                return
             if self.broken:
                 yield self.tech_dispatcher.wait_until_repaired(self)
                 continue
@@ -176,6 +187,11 @@ class Machine(Mach):
                 self._trigger_breakdown()
 
     def _trigger_breakdown(self):
+        if self.retired:
+            # A breakdown driver sleeping through the retirement moment
+            # may wake and reach here — a retired machine must never
+            # file a ticket.
+            return
         self.broken = True
         self.last_failed_at = self.env.now
         self._log("BREAKDOWN occurred!")
