@@ -2,6 +2,11 @@
 # v6 training on dgy-serval — run INSIDE tmux (long run; survives ssh drops).
 #
 # v6 = v5 objective/world UNCHANGED (env=train_multiscale_v5) + the
+#
+# NOTE: uv run uses --no-sync everywhere — the dgy venv carries a
+# deliberate torch downgrade (2.7.1+cu126: the lockfile's cu130 build
+# has no sm_70 kernels for these V100s); a bare `uv run` would re-sync
+# the lockfile and silently reinstall the incompatible torch.
 # 2026-08-04 fix package (D1 LR schedule, D2 dropout, D3 role-bound
 # fusion + feature-context, D6 shared GAE, D11 boolean tokens, D12
 # machine ids).  SINGLE environment (user decision: no SimPy env
@@ -26,7 +31,7 @@ say "V6 DGY TRAIN ARMED (pid $$, CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES)"
 # ---------- 1. BC warm-start with the v6 architecture ----------
 if [ ! -f checkpoints/bc_topsis_v6/set_transformer_bc.pt ]; then
   say "BC collection start (v6 architecture)"
-  uv run python scripts/warmstart_bc.py \
+  uv run --no-sync python scripts/warmstart_bc.py \
     --env-config run_configs/benchmark_suite/train_multiscale_v5.json \
     --agent-config run_configs/agents/set_transformer_v6.json \
     --episodes 25 --sim-time 200000 --seed 7 \
@@ -41,7 +46,7 @@ fi
 
 # ---------- 2. Train (single env, 600 eps) ----------
 say "v6 training start (600 eps, parallel_envs=1)"
-uv run python scripts/train_hydra.py \
+uv run --no-sync python scripts/train_hydra.py \
   env=train_multiscale_v5 agent=set_transformer_v6 \
   episodes=600 parallel_envs=1 \
   sim_time=275000 sim_time_min=200000 sim_time_max=350000 \
