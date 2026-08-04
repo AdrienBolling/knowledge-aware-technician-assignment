@@ -17,6 +17,7 @@
 # at single-env speed; every 50 rounds would burn ~1 day of the run).
 # Best/last checkpoints canonicalised at the end (D5: keep as-is).
 set -u
+export PATH="$HOME/.local/bin:$PATH"  # uv lives here on dgy (tmux shells are non-login)
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
 export WANDB_MODE=offline
