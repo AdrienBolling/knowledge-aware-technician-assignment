@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import random
 import sys
 import time
 from collections import defaultdict
@@ -56,6 +57,7 @@ from experiment.reports import ReportWriter
 from kata.core.config import KATAConfig
 from kata.core.tokenizer import StateTokenizer
 from kata.env import KataEnv
+from kata.funcs import seed_numba_rng
 from kata.scenario import ScenarioBuilder
 
 # ======================================================================
@@ -178,6 +180,10 @@ class Experiment:
         if self.agent_cfg.checkpoint:
             self.agent.load(self.agent_cfg.checkpoint)
             logger.info("Loaded checkpoint: %s", self.agent_cfg.checkpoint)
+            # Vocab drift between generations re-indexes shared keys
+            # (not append-only): a stale-vocab checkpoint would silently
+            # corrupt token semantics.  Fail fast in BOTH loops.
+            self._resolve_agent_vocab()
 
         # -- Report writer (CSV episode + step metrics, config.json) --
         self._report_writer = self._init_report_writer()
@@ -1168,6 +1174,42 @@ class Experiment:
     # Episode runner
     # ------------------------------------------------------------------
 
+    def _resolve_agent_vocab(self) -> dict[str, int] | None:
+        """Cross-check the agent's (checkpoint) vocab against the
+        canonical tokenizer and return the vocabulary to tokenize with.
+
+        Vocab drift between generations re-indexes shared keys rather
+        than appending, so a divergent checkpoint vocab silently splits
+        token ids between the embedding rows and the observations.
+        Called after every checkpoint load and before vec-worker
+        construction; raises rather than guessing.
+        """
+        canonical_vocab = (
+            self.tokenizer.get_vocab() if self.tokenizer is not None else None
+        )
+        agent_vocab = getattr(self.agent, "_vocab", None)
+        if (
+            canonical_vocab is not None
+            and agent_vocab is not None
+            and agent_vocab != canonical_vocab
+        ):
+            only_agent = sorted(set(agent_vocab) - set(canonical_vocab))[:5]
+            only_canon = sorted(set(canonical_vocab) - set(agent_vocab))[:5]
+            reindexed = sorted(
+                k
+                for k in set(agent_vocab) & set(canonical_vocab)
+                if agent_vocab[k] != canonical_vocab[k]
+            )[:5]
+            msg = (
+                "vocab mismatch between the agent checkpoint "
+                f"({len(agent_vocab)} entries) and the canonical tokenizer "
+                f"({len(canonical_vocab)} entries); "
+                f"agent-only e.g. {only_agent}, tokenizer-only e.g. {only_canon}, "
+                f"re-indexed e.g. {reindexed}"
+            )
+            raise RuntimeError(msg)
+        return canonical_vocab if canonical_vocab is not None else agent_vocab
+
     def _train_loop_vec(self) -> dict[str, list[float]]:
         """Vectorised training: step-based PPO rounds over parallel envs.
 
@@ -1176,7 +1218,10 @@ class Experiment:
         (with per-stream GAE bootstrapping at the round boundary)
         instead of at each episode end.  Episode accounting, periodic
         deterministic evaluation, checkpointing, and W&B logging are
-        preserved.  Per-step report rows are not written in this mode.
+        preserved: eval and checkpoint intervals count EPISODES, as in
+        the episode-based loop, and fire at the first round boundary
+        after a new multiple is crossed.  Per-step report rows are not
+        written in this mode.
 
         Requires an agent exposing ``select_actions`` /
         ``observe_transition(..., env_id=)`` / ``reset_stream`` —
@@ -1196,9 +1241,7 @@ class Experiment:
             )
             raise NotImplementedError(msg)
 
-        vocab = getattr(agent, "_vocab", None) or (
-            self.tokenizer.get_vocab() if self.tokenizer is not None else None
-        )
+        vocab = self._resolve_agent_vocab()
         venv = build_vector_env(
             self.env_cfg,
             self.agent_cfg.agent_type,
@@ -1227,7 +1270,8 @@ class Experiment:
             ep_len = _np.zeros(n, dtype=_np.int64)
             episodes_done = 0
             round_idx = 0
-            best_eval = float("-inf")
+            last_eval_ep = 0
+            last_ckpt_ep = 0
             while episodes_done < cfg.n_episodes:
                 for _step in range(rollout_steps):
                     obs_list = unbatch_obs(obs, n)
@@ -1282,31 +1326,49 @@ class Experiment:
                 history["entropy"].append(
                     update_metrics.get("entropy", float("nan"))
                 )
-                self._log_wandb(
-                    {f"update/{k}": v for k, v in update_metrics.items()},
-                    episodes_done,
+                round_log: dict[str, Any] = {
+                    f"update/{k}": v for k, v in update_metrics.items()
+                }
+                # Mirror the episode-based loop's key names so dashboards
+                # keyed on train/* work in both modes.
+                round_log["train/loss"] = update_metrics.get("loss", float("nan"))
+                round_log["train/entropy"] = update_metrics.get(
+                    "entropy", float("nan")
                 )
+                self._log_wandb(round_log, episodes_done)
                 # Periodic deterministic eval on the fixed eval scenario —
                 # metric-based monitoring (finished products, MTTR, ...)
                 # lives here, not in the training reward.
+                eval_interval = max(1, cfg.eval.interval)
                 if (
                     cfg.eval.enabled
-                    and round_idx % max(1, cfg.eval.interval) == 0
+                    and episodes_done // eval_interval > last_eval_ep // eval_interval
                 ):
+                    last_eval_ep = episodes_done
                     eval_stats = self._inline_eval(episodes_done)
+                    self._log_wandb(eval_stats, episodes_done)
                     mean_ret = float(eval_stats.get("eval/return_mean", float("nan")))
+                    std_ret = float(eval_stats.get("eval/return_std", float("nan")))
+                    logger.info(
+                        f"  [eval] mean={mean_ret:+8.2f}  std={std_ret:.2f}"
+                    )
                     if (
                         cfg.checkpoint.enabled
                         and cfg.checkpoint.save_best
-                        and mean_ret > best_eval
+                        and mean_ret > self._best_eval_return
                     ):
-                        best_eval = mean_ret
+                        self._best_eval_return = mean_ret
                         self._save_checkpoint("best")
+                ckpt_interval = max(1, cfg.checkpoint.interval)
                 if (
                     cfg.checkpoint.enabled
-                    and round_idx % max(1, cfg.checkpoint.interval) == 0
+                    and episodes_done // ckpt_interval > last_ckpt_ep // ckpt_interval
                 ):
+                    last_ckpt_ep = episodes_done
                     self._save_checkpoint(f"round{round_idx:05d}")
+            # Final checkpoint
+            if cfg.checkpoint.enabled:
+                self._save_checkpoint("final")
         finally:
             progress.close()
             venv.close()
@@ -1337,6 +1399,15 @@ class Experiment:
         env = self.env if training else self.eval_env
         agent = self.agent
         deterministic = not training
+
+        if seed is not None:
+            # Same process-global seeding as the vec workers
+            # (``vec_env.SeededResetWrapper``) and the benchmark harness:
+            # the horizon draw and the machine-failure draws read the
+            # global RNGs, not an env-local generator.
+            np.random.seed(seed)
+            random.seed(seed)
+            seed_numba_rng(seed & 0xFFFFFFFF)
 
         obs, info = env.reset(seed=seed)
 
