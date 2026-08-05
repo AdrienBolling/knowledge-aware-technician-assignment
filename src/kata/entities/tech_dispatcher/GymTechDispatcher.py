@@ -6,15 +6,13 @@ from typing import TYPE_CHECKING
 
 import simpy
 
-from kata import get_config
+from kata.core.config import SimEnvConfig
 from kata.entities.requests.RepairRequest import RepairRequest
 from kata.entities.tech_dispatcher.config import TechDispatcherConfig
 from kata.entities.technicians.GymTechnician import GymTechnician as Technician
 
 if TYPE_CHECKING:
     from kata.entities.machines.machine import Machine
-
-CONFIG = get_config()
 
 
 class GymTechDispatcher:
@@ -24,11 +22,21 @@ class GymTechDispatcher:
         self,
         env: simpy.Environment,
         technicians: list[Technician],
+        sim_cfg: SimEnvConfig,
         config: TechDispatcherConfig | None = None,
     ) -> None:
-        """Initialise the dispatcher with technicians and optional config."""
+        """Initialise the dispatcher with technicians and the run's ``sim`` config.
+
+        ``sim_cfg`` is **required** and kept public: the env's
+        lifecycle-hire path reads it back off the dispatcher when it
+        builds a mid-episode technician.  It replaces a module-level
+        ``CONFIG = get_config()`` snapshot that was captured at import
+        time and therefore never carried the per-run JSON's ``sim.*``
+        values (see :class:`~kata.entities.technicians.GymTechnician`).
+        """
         self.env: simpy.Environment = env
         self.techs: list[Technician] = technicians
+        self.sim_cfg: SimEnvConfig = sim_cfg
         self._tech_by_id: dict[int, Technician] = {t.id: t for t in technicians}
 
         cfg = config or TechDispatcherConfig()
@@ -65,7 +73,7 @@ class GymTechDispatcher:
         # inter-arrival behaviour governed by the type's trigger
         # (random Poisson, fatigue-driven Bernoulli, or strict periodic).
         for t in technicians:
-            for dis_name, dis_cfg in CONFIG.sim.disruptions.dis_dict.items():
+            for dis_name, dis_cfg in self.sim_cfg.disruptions.dis_dict.items():
                 _ = env.process(
                     generator=t.run_disruption_process(
                         env=env,
@@ -134,7 +142,7 @@ class GymTechDispatcher:
         self._tech_resource[tech.id] = simpy.PreemptiveResource(
             self.env, capacity=1
         )
-        for dis_name, dis_cfg in CONFIG.sim.disruptions.dis_dict.items():
+        for dis_name, dis_cfg in self.sim_cfg.disruptions.dis_dict.items():
             _ = self.env.process(
                 generator=tech.run_disruption_process(
                     env=self.env,

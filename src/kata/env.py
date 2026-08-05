@@ -2405,7 +2405,9 @@ class KataEnv(gym.Env):
         # numeric suffix would degrade the token to <UNK>).
         name = f"{template}_{900 + self._lifecycle_seq}"
         tcfg = create_config_from_template(template, name=name)
-        tech = GymTechnician(tech_conf=tcfg)
+        # Same ``sim`` config the initial fleet was built with — the
+        # dispatcher keeps it public precisely for this path.
+        tech = GymTechnician(tech_conf=tcfg, sim_cfg=self.dispatcher.sim_cfg)
         seed = int(self._lifecycle_rng.integers(0, 2**31))
         self.dispatcher.add_technician(tech, rng_seed=seed)
         self._tech_assignment_counts.append(0)

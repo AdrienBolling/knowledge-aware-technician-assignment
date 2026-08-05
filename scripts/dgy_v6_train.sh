@@ -1,28 +1,32 @@
 #!/usr/bin/env bash
-# v6 training on dgy-serval — run INSIDE tmux (long run; survives ssh drops).
+# v6 training on dgy-serval — run INSIDE a zellij/tmux session (long
+# run; survives ssh drops).
 #
-# v6 = v5 objective/world UNCHANGED (env=train_multiscale_v5) + the
+# v6 relaunch (2026-08-05): v5 objective (env=train_multiscale_v5) +
+# the 2026-08-04 fix package (D1 LR schedule, D2 dropout, D3
+# role-bound fusion + feature-context, D6 shared GAE, D11 boolean
+# tokens, D12 machine ids) + the vec parity package (255560a) +
+# KATA-1 config DI (travel_time 15 and failure-wise knowledge now
+# genuinely active — corrected world, so BC re-collects fresh; the
+# 2026-08-04 serial attempt is archived as hc_v6_serial_partial).
+# parallel_envs=5: 5 CPU workers + the update process ≈ 6 cores, per
+# the machine-sharing budget.  GPU 0 only (GPU 3 is dead).
 #
 # NOTE: uv run uses --no-sync everywhere — the dgy venv carries a
 # deliberate torch downgrade (2.7.1+cu126: the lockfile's cu130 build
 # has no sm_70 kernels for these V100s); a bare `uv run` would re-sync
 # the lockfile and silently reinstall the incompatible torch.
-# 2026-08-04 fix package (D1 LR schedule, D2 dropout, D3 role-bound
-# fusion + feature-context, D6 shared GAE, D11 boolean tokens, D12
-# machine ids).  SINGLE environment (user decision: no SimPy env
-# parallelisation), so the classic serial training loop is used —
-# no AsyncVectorEnv machinery anywhere.
 #
-# eval_interval raised to 200 (a 5-episode inline eval costs ~20 min
-# at single-env speed; every 50 rounds would burn ~1 day of the run).
-# Best/last checkpoints canonicalised at the end (D5: keep as-is).
+# eval_interval=200 EPISODES (post-VEC-7 semantics; a 5-episode
+# inline eval is expensive at these horizons).  Best/last
+# canonicalised at the end (D5: keep as-is).
 set -u
-export PATH="$HOME/.local/bin:$PATH"  # uv lives here on dgy (tmux shells are non-login)
+export PATH="$HOME/.local/bin:$PATH"  # uv lives here on dgy (session shells are non-login)
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
 export WANDB_MODE=offline
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
-export OMP_NUM_THREADS=4
+export OMP_NUM_THREADS=2
 Q=reports/v6_dgy_queue.log
 say() { echo "$(date -u +%FT%TZ) [v6dgy] $*" | tee -a "$Q"; }
 mkdir -p reports checkpoints
@@ -45,11 +49,11 @@ if [ ! -f checkpoints/bc_topsis_v6/set_transformer_bc.pt ]; then
   exit 1
 fi
 
-# ---------- 2. Train (single env, 600 eps) ----------
-say "v6 training start (600 eps, parallel_envs=1)"
+# ---------- 2. Train (vec5, 600 eps) ----------
+say "v6 training start (600 eps, parallel_envs=5)"
 uv run --no-sync python scripts/train_hydra.py \
   env=train_multiscale_v5 agent=set_transformer_v6 \
-  episodes=600 parallel_envs=1 \
+  episodes=600 parallel_envs=5 \
   sim_time=275000 sim_time_min=200000 sim_time_max=350000 \
   eval_interval=200 checkpoint_interval=50 seed=42 \
   init_checkpoint=checkpoints/bc_topsis_v6/set_transformer_bc.pt \

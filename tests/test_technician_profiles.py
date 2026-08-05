@@ -14,13 +14,14 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 from ongoing import KnowledgeGrid
 
-from kata.core.config import TechnicianConfig
+from kata.core.config import KATAConfig, TechnicianConfig
 from kata.entities.technicians.GymTechnician import GymTechnician
 from kata.EntityFactories.technician_factory import get_template
 from kata.EntityFactories.technician_profile_builder import (
@@ -32,6 +33,13 @@ from kata.EntityFactories.technician_profile_builder import (
     gaussian_at,
     uniform_sampler,
 )
+
+BASELINE = Path("run_configs/benchmark_suite/baseline.json")
+
+
+def _sim_cfg():
+    """A real ``sim`` config — KATA-1 makes it a required ctor argument."""
+    return KATAConfig(**json.loads(BASELINE.read_text())).sim
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +70,7 @@ class TestTechnicianConfigGridPath:
 
 class TestGymTechnicianGridLoad:
     def test_no_path_yields_empty_grid(self):
-        tech = GymTechnician(TechnicianConfig())
+        tech = GymTechnician(TechnicianConfig(), sim_cfg=_sim_cfg())
         # A freshly-built grid has zero accumulated experience.
         assert tech.knowledge_grid.get_max_experiences() == 0.0
 
@@ -87,7 +95,7 @@ class TestGymTechnicianGridLoad:
             knowledge_learning_rate=0.7,
             initial_knowledge_grid_path=str(out),
         )
-        tech = GymTechnician(cfg)
+        tech = GymTechnician(cfg, sim_cfg=_sim_cfg())
         assert tech.knowledge_grid.get_max_experiences() > 0.0
         assert tech.knowledge_grid.knowledge_volume() > 0.0
 
@@ -96,7 +104,7 @@ class TestGymTechnicianGridLoad:
             initial_knowledge_grid_path=str(tmp_path / "does_not_exist.npz")
         )
         with pytest.warns(RuntimeWarning, match="does not exist"):
-            tech = GymTechnician(cfg)
+            tech = GymTechnician(cfg, sim_cfg=_sim_cfg())
         # Fell back to an empty grid rather than raising.
         assert tech.knowledge_grid.get_max_experiences() == 0.0
 
@@ -121,7 +129,7 @@ class TestGymTechnicianGridLoad:
             initial_knowledge_grid_path=str(out),
         )
         with pytest.raises(ValueError, match="shape"):
-            GymTechnician(cfg)
+            GymTechnician(cfg, sim_cfg=_sim_cfg())
 
     def test_parameter_mismatch_raises(self, tmp_path):
         # Save with learning_rate=0.7 but configure the tech for 0.6.
@@ -144,7 +152,7 @@ class TestGymTechnicianGridLoad:
             initial_knowledge_grid_path=str(out),
         )
         with pytest.raises(ValueError, match="learning_rate"):
-            GymTechnician(cfg)
+            GymTechnician(cfg, sim_cfg=_sim_cfg())
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +180,7 @@ class TestBundledProfiles:
         path = tpl.get("initial_knowledge_grid_path")
         assert path is not None, f"template {template_name} has no grid path"
         cfg = TechnicianConfig(**tpl)
-        tech = GymTechnician(cfg)
+        tech = GymTechnician(cfg, sim_cfg=_sim_cfg())
         # Every profile should carry *some* accumulated knowledge —
         # the threshold is loose to accommodate the trainee profile
         # whose tiny propagation sigma keeps single-bump peaks just

@@ -9,15 +9,13 @@ import numpy as np
 import simpy
 from ongoing import KnowledgeGrid
 
-from kata.core.config import TechnicianConfig, get_config
+from kata.core.config import SimEnvConfig, TechnicianConfig
 from kata.entities.technicians.base import Technician
 
 if TYPE_CHECKING:
     from kata.entities.encoder.base import RequestEncoder
     from kata.entities.machines.base import Machine
     from kata.entities.requests.RepairRequest import RepairRequest
-
-CONFIG = get_config()
 
 
 class GymTechnician(Technician):
@@ -28,9 +26,21 @@ class GymTechnician(Technician):
     def __init__(
         self,
         tech_conf: TechnicianConfig,
+        sim_cfg: SimEnvConfig,
         encoder: RequestEncoder | None = None,
     ) -> None:
-        """Initialise from a TechnicianConfig, optionally injecting an encoder."""
+        """Initialise from a TechnicianConfig and the run's ``sim`` config.
+
+        ``sim_cfg`` is **required** and injected by the caller (the
+        :class:`~kata.scenario.ScenarioBuilder`, or the env's lifecycle
+        hire path).  It used to be read from a module-level
+        ``CONFIG = get_config()`` snapshot taken at *import* time — which
+        every launcher rendered inert (``KATA_CONF_PATH`` points at a
+        nonexistent file), so the per-run JSON's ``sim.*`` values never
+        reached this class.  Keep it required: a default here would
+        silently resurrect that class of bug.
+        """
+        self._sim_cfg: SimEnvConfig = sim_cfg
         self.id = GymTechnician._id_counter
         GymTechnician._id_counter += 1
         self.name = tech_conf.name
@@ -190,13 +200,13 @@ class GymTechnician(Technician):
     def travel_time(self, machine: Machine) -> int:
         """Return the travel time to the given machine."""
         _ = machine
-        return CONFIG.sim.technicians.travel_time
+        return self._sim_cfg.technicians.travel_time
 
     # ------------------------------------------------------------------
     # Stochastic disruptions
     # ------------------------------------------------------------------
     #
-    # Each named disruption type configured in ``CONFIG.sim.disruptions.dis_dict``
+    # Each named disruption type configured in ``sim.disruptions.dis_dict``
     # is realised as its own long-running SimPy process per technician.
     # The dispatcher is responsible for spawning these processes (one
     # per (tech, type) pair) at construction time; here we expose the
@@ -363,9 +373,9 @@ class GymTechnician(Technician):
         dispatcher consumes this directly.
         """
         base: float = float(base_repair_time)
-        if CONFIG.sim.repair.knowledge_enabled:
+        if self._sim_cfg.repair.knowledge_enabled:
             base *= self.get_knowledge_multiplier(request)
-        if CONFIG.sim.repair.fatigue_enabled:
+        if self._sim_cfg.repair.fatigue_enabled:
             base *= self.get_fatigue_multiplier()
         return max(0.0, base)
 
@@ -421,7 +431,7 @@ class GymTechnician(Technician):
             knowledge = float(self.knowledge_grid.get_knowledge(embedding))
             cache[cache_key] = knowledge
 
-        cfg = CONFIG.sim.repair
+        cfg = self._sim_cfg.repair
         min_floor = float(cfg.min_repair_fraction)
         alpha = float(cfg.knowledge_sensitivity)
 
@@ -457,8 +467,8 @@ class GymTechnician(Technician):
         1 = exhausted).  At ``fatigue = 0`` both models give ``1`` so a
         fresh technician's repair time is unchanged from the base.
         """
-        model = CONFIG.sim.technicians.fatigue_model
-        alpha = CONFIG.sim.technicians.fatigue_alpha
+        model = self._sim_cfg.technicians.fatigue_model
+        alpha = self._sim_cfg.technicians.fatigue_alpha
 
         if model == "linear":
             return 1.0 + self.fatigue
