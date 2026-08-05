@@ -88,20 +88,14 @@ def build_env(env_path: Path, max_sim_time: float | None, seed: int):
     if max_sim_time is not None:
         cfg.gym = cfg.gym.model_copy(update={"max_sim_time": float(max_sim_time)})
     # ---------------------------------------------------------------
-    # IMPORTANT: the simulator's module-level ``CONFIG = get_config()``
-    # imports cache the singleton at import time.  Any code path that
-    # reads ``CONFIG.sim.…`` (e.g. ``GymTechnician`` constructor,
-    # ``GymTechDispatcher`` disruption spawn loop) sees whatever the
-    # singleton points to AT THAT MOMENT, not the local ``cfg`` we
-    # just loaded.  Two failure modes if you forget:
-    #   1. Mutating the singleton with ``cached.sim = cfg.sim`` works
-    #      (in-place attribute replacement); ``model_copy(...)`` does
-    #      NOT because it returns a new object the cached singleton
-    #      doesn't reference.
-    #   2. Forgetting to sync entirely silently uses defaults.
-    # If you ever refactor away the singleton, delete this whole
-    # block and pass ``cfg`` explicitly through the simulator's
-    # construction APIs.
+    # KATA-1 (2026-08-05): ``GymTechnician`` / ``GymTechDispatcher`` no
+    # longer read a module-level ``CONFIG = get_config()`` snapshot —
+    # ``ScenarioBuilder`` injects ``cfg.sim`` into both, so the ``sim``
+    # block below is already live without any singleton sync.  The sync
+    # is kept only for the remaining call-time singleton readers
+    # (``KataEnv`` falls back to ``get_config().gym`` when constructed
+    # without a config, ``ScenarioBuilder`` to ``get_config()``), and is
+    # a no-op for anything constructed from ``cfg`` explicitly.
     cached = get_config()
     cached.sim = cfg.sim
     cached.gym = cfg.gym

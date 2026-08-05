@@ -1,8 +1,11 @@
 """Tests for GymTechDispatcher."""
 
+import json
+from pathlib import Path
+
 import simpy
 
-from kata.core.config import TechnicianConfig
+from kata.core.config import KATAConfig, TechnicianConfig
 from kata.entities.machines.machine import Machine
 from kata.entities.requests.RepairRequest import RepairRequest
 from kata.entities.tech_dispatcher.config import TechDispatcherConfig
@@ -10,11 +13,22 @@ from kata.entities.tech_dispatcher.GymTechDispatcher import GymTechDispatcher
 from kata.entities.technicians.GymTechnician import GymTechnician
 from kata.features.breakdown.simple_breakdown import SimpleBreakdownProcess
 
+BASELINE = Path("run_configs/benchmark_suite/baseline.json")
 
-def _build_env_and_dispatcher(n_techs=2, config=None):
+
+def _sim_cfg():
+    """A fresh, real ``sim`` config (KATA-1: injected, never a singleton)."""
+    return KATAConfig(**json.loads(BASELINE.read_text())).sim
+
+
+def _build_env_and_dispatcher(n_techs=2, config=None, sim_cfg=None):
     env = simpy.Environment()
-    techs = [GymTechnician(TechnicianConfig(name=f"tech_{i}")) for i in range(n_techs)]
-    dispatcher = GymTechDispatcher(env, techs, config=config)
+    sim_cfg = sim_cfg if sim_cfg is not None else _sim_cfg()
+    techs = [
+        GymTechnician(TechnicianConfig(name=f"tech_{i}"), sim_cfg=sim_cfg)
+        for i in range(n_techs)
+    ]
+    dispatcher = GymTechDispatcher(env, techs, sim_cfg=sim_cfg, config=config)
     return env, techs, dispatcher
 
 
@@ -124,23 +138,24 @@ class TestDisruptionTriggers:
     """Per-trigger behaviour and preempt-then-requeue."""
 
     def _build(self, disruption_dict, n_techs=1):
-        """Build a dispatcher with a hand-crafted disruption pool."""
-        from kata import get_config
+        """Build a dispatcher with a hand-crafted disruption pool.
+
+        KATA-1: the pool is injected through the dispatcher's ``sim_cfg``
+        instead of being patched into the process-wide singleton, so
+        there is nothing left to save / restore.
+        """
         from kata.core.config import DisruptionConfig
 
-        # Mutate the cached singleton so the dispatcher's spawn loop
-        # sees our pool.  Save / restore around the test in a finalizer
-        # built by the caller.
-        cfg = get_config()
-        prev = cfg.sim.disruptions
-        cfg.sim.disruptions = DisruptionConfig(dis_dict=disruption_dict)
-        env, techs, dispatcher = _build_env_and_dispatcher(n_techs=n_techs)
-        return env, techs, dispatcher, prev
+        sim = _sim_cfg()
+        sim.disruptions = DisruptionConfig(dis_dict=disruption_dict)
+        env, techs, dispatcher = _build_env_and_dispatcher(
+            n_techs=n_techs, sim_cfg=sim
+        )
+        return env, techs, dispatcher, None
 
     def _restore(self, prev):
-        from kata import get_config
-
-        get_config().sim.disruptions = prev
+        """No-op: config is per-instance now (kept so call sites read the same)."""
+        _ = prev
 
     def test_periodic_disruption_fires_multiple_times(self):
         """A periodic disruption with short interval fires many times per episode."""
@@ -274,11 +289,10 @@ class TestFatigueTriggeredDisruption:
         a near-zero recovery rate ``mu`` (the validator forbids 0
         exactly).
         """
-        from kata import get_config
         from kata.core.config import DisruptionConfig, DisruptionTypeConfig
 
-        prev = get_config().sim.disruptions
-        get_config().sim.disruptions = DisruptionConfig(
+        sim = _sim_cfg()
+        sim.disruptions = DisruptionConfig(
             dis_dict={
                 "exhaustion": DisruptionTypeConfig(
                     trigger="fatigue",
@@ -290,29 +304,27 @@ class TestFatigueTriggeredDisruption:
                 ),
             }
         )
-        try:
-            env = simpy.Environment()
-            techs = [
-                GymTechnician(TechnicianConfig(name="tech_0", fatigue_mu=1e-6))
-            ]
-            disp = GymTechDispatcher(env, techs)
-            disp.seed_disruptions(42)
-            techs[0].fatigue = 1.0
-            env.run(until=2_000)
-            # Per-poll p = clip(0.5 * 1 * 10, 0, 1) = 1.0; every poll
-            # fires, separated by poll (10) + duration (5).  Expected
-            # ~ 2000 / 15 ≈ 130 events; conservative lower bound:
-            assert techs[0].disruption_count >= 50
-        finally:
-            get_config().sim.disruptions = prev
+        env = simpy.Environment()
+        techs = [
+            GymTechnician(
+                TechnicianConfig(name="tech_0", fatigue_mu=1e-6), sim_cfg=sim
+            )
+        ]
+        disp = GymTechDispatcher(env, techs, sim_cfg=sim)
+        disp.seed_disruptions(42)
+        techs[0].fatigue = 1.0
+        env.run(until=2_000)
+        # Per-poll p = clip(0.5 * 1 * 10, 0, 1) = 1.0; every poll
+        # fires, separated by poll (10) + duration (5).  Expected
+        # ~ 2000 / 15 ≈ 130 events; conservative lower bound:
+        assert techs[0].disruption_count >= 50
 
     def test_fatigue_trigger_does_not_fire_at_zero_fatigue(self):
         """At fatigue=0 the per-poll probability is identically zero."""
-        from kata import get_config
         from kata.core.config import DisruptionConfig, DisruptionTypeConfig
 
-        prev = get_config().sim.disruptions
-        get_config().sim.disruptions = DisruptionConfig(
+        sim = _sim_cfg()
+        sim.disruptions = DisruptionConfig(
             dis_dict={
                 "exhaustion": DisruptionTypeConfig(
                     trigger="fatigue",
@@ -324,25 +336,20 @@ class TestFatigueTriggeredDisruption:
                 ),
             }
         )
-        try:
-            env, techs, _disp = _build_env_and_dispatcher(n_techs=1)
-            _disp.seed_disruptions(0)
-            techs[0].fatigue = 0.0
-            env.run(until=5_000)
-            assert techs[0].disruption_count == 0
-        finally:
-            get_config().sim.disruptions = prev
+        env, techs, _disp = _build_env_and_dispatcher(n_techs=1, sim_cfg=sim)
+        _disp.seed_disruptions(0)
+        techs[0].fatigue = 0.0
+        env.run(until=5_000)
+        assert techs[0].disruption_count == 0
 
 
 class TestDisruptionReproducibility:
     """Same seed → identical disruption sequences across runs."""
 
     def test_same_seed_same_counts(self):
-        from kata import get_config
         from kata.core.config import DisruptionConfig, DisruptionTypeConfig
 
-        prev = get_config().sim.disruptions
-        get_config().sim.disruptions = DisruptionConfig(
+        pool = DisruptionConfig(
             dis_dict={
                 "injury": DisruptionTypeConfig(
                     trigger="random", rate=5e-3, duration_mu=5.0, duration_sig=0.0,
@@ -354,28 +361,25 @@ class TestDisruptionReproducibility:
                 ),
             }
         )
-        try:
-            results = []
-            for _trial in range(2):
-                env, techs, disp = _build_env_and_dispatcher(n_techs=2)
-                disp.seed_disruptions(1234)
-                env.run(until=2_000)
-                results.append(
-                    [(t.disruption_count, dict(t.disruption_counts_by_type)) for t in techs]
-                )
-            assert results[0] == results[1], (
-                f"Same seed produced different disruption sequences: "
-                f"{results[0]} vs {results[1]}"
+        results = []
+        for _trial in range(2):
+            sim = _sim_cfg()
+            sim.disruptions = pool
+            env, techs, disp = _build_env_and_dispatcher(n_techs=2, sim_cfg=sim)
+            disp.seed_disruptions(1234)
+            env.run(until=2_000)
+            results.append(
+                [(t.disruption_count, dict(t.disruption_counts_by_type)) for t in techs]
             )
-        finally:
-            get_config().sim.disruptions = prev
+        assert results[0] == results[1], (
+            f"Same seed produced different disruption sequences: "
+            f"{results[0]} vs {results[1]}"
+        )
 
     def test_different_seeds_diverge(self):
-        from kata import get_config
         from kata.core.config import DisruptionConfig, DisruptionTypeConfig
 
-        prev = get_config().sim.disruptions
-        get_config().sim.disruptions = DisruptionConfig(
+        pool = DisruptionConfig(
             dis_dict={
                 "injury": DisruptionTypeConfig(
                     trigger="random", rate=5e-3, duration_mu=5.0, duration_sig=0.0,
@@ -383,30 +387,28 @@ class TestDisruptionReproducibility:
                 ),
             }
         )
-        try:
-            counts = []
-            for seed in (1, 2, 3):
-                env, techs, disp = _build_env_and_dispatcher(n_techs=2)
-                disp.seed_disruptions(seed)
-                env.run(until=2_000)
-                counts.append(tuple(t.disruption_count for t in techs))
-            # At least one pair of seeds should give different counts.
-            assert len(set(counts)) > 1, (
-                f"Different seeds produced identical counts {counts}"
-            )
-        finally:
-            get_config().sim.disruptions = prev
+        counts = []
+        for seed in (1, 2, 3):
+            sim = _sim_cfg()
+            sim.disruptions = pool
+            env, techs, disp = _build_env_and_dispatcher(n_techs=2, sim_cfg=sim)
+            disp.seed_disruptions(seed)
+            env.run(until=2_000)
+            counts.append(tuple(t.disruption_count for t in techs))
+        # At least one pair of seeds should give different counts.
+        assert len(set(counts)) > 1, (
+            f"Different seeds produced identical counts {counts}"
+        )
 
 
 class TestDisruptionAvailability:
     """A technician in a disruption hold must be masked out of the action set."""
 
     def test_in_disruption_flag_set_during_hold(self):
-        from kata import get_config
         from kata.core.config import DisruptionConfig, DisruptionTypeConfig
 
-        prev = get_config().sim.disruptions
-        get_config().sim.disruptions = DisruptionConfig(
+        sim = _sim_cfg()
+        sim.disruptions = DisruptionConfig(
             dis_dict={
                 "vacation": DisruptionTypeConfig(
                     trigger="periodic", interval=5.0, jitter=0.0,
@@ -414,11 +416,8 @@ class TestDisruptionAvailability:
                 ),
             }
         )
-        try:
-            env, techs, _disp = _build_env_and_dispatcher(n_techs=1)
-            # Run just long enough for the vacation to start but not end.
-            env.run(until=50)
-            assert techs[0]._in_disruption is True
-            assert techs[0].disruption_count >= 1
-        finally:
-            get_config().sim.disruptions = prev
+        env, techs, _disp = _build_env_and_dispatcher(n_techs=1, sim_cfg=sim)
+        # Run just long enough for the vacation to start but not end.
+        env.run(until=50)
+        assert techs[0]._in_disruption is True
+        assert techs[0].disruption_count >= 1

@@ -1,11 +1,34 @@
 """Tests for GymTechnician fatigue, knowledge, and repair flow."""
 
+import json
 import math
+from pathlib import Path
 
 import pytest
 
-from kata.core.config import TechnicianConfig
-from kata.entities.technicians.GymTechnician import CONFIG, GymTechnician
+from kata.core.config import KATAConfig, TechnicianConfig
+from kata.entities.technicians.GymTechnician import GymTechnician
+
+BASELINE = Path("run_configs/benchmark_suite/baseline.json")
+
+
+def _sim_cfg():
+    """A fresh, real ``sim`` config.
+
+    KATA-1: ``GymTechnician`` no longer reads a module-level
+    ``CONFIG = get_config()`` snapshot — the ``sim`` sub-model is a
+    required constructor argument, so every test owns its own copy and
+    nothing leaks between tests.
+    """
+    return KATAConfig(**json.loads(BASELINE.read_text())).sim
+
+
+def _tech(tech_conf=None, sim_cfg=None):
+    """Build a technician with an explicit (injected) sim config."""
+    return GymTechnician(
+        tech_conf if tech_conf is not None else TechnicianConfig(),
+        sim_cfg=sim_cfg if sim_cfg is not None else _sim_cfg(),
+    )
 
 
 class _FakeMachine:
@@ -32,44 +55,44 @@ class _FakeRequest:
 
 class TestFatigue:
     def test_initial_fatigue_is_zero(self):
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(TechnicianConfig())
         assert tech.fatigue == 0.0
 
     def test_increase_fatigue_grows(self):
-        tech = GymTechnician(TechnicianConfig(fatigue_lambda=0.1))
+        tech = _tech(TechnicianConfig(fatigue_lambda=0.1))
         tech._increase_fatigue(10)
         assert tech.fatigue > 0.0
 
     def test_fatigue_clamped_to_one(self):
-        tech = GymTechnician(TechnicianConfig(fatigue_lambda=10.0))
+        tech = _tech(TechnicianConfig(fatigue_lambda=10.0))
         tech._increase_fatigue(1000)
         assert tech.fatigue <= 1.0
 
     def test_fatigue_clamped_to_zero(self):
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(TechnicianConfig())
         tech.fatigue = 0.5
         tech._recover_fatigue(100000)
         assert tech.fatigue >= 0.0
 
     def test_recover_fatigue_decreases(self):
-        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.1))
+        tech = _tech(TechnicianConfig(fatigue_mu=0.1))
         tech.fatigue = 0.8
         tech._recover_fatigue(10)
         assert tech.fatigue < 0.8
 
     def test_negative_work_time_raises(self):
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(TechnicianConfig())
         with pytest.raises(ValueError, match="non-negative"):
             tech._increase_fatigue(-1)
 
     def test_negative_idle_time_raises(self):
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(TechnicianConfig())
         with pytest.raises(ValueError, match="non-negative"):
             tech._recover_fatigue(-1)
 
     def test_exponential_fatigue_multiplier_is_slowdown(self):
         # Fresh tech: multiplier == 1 (no slowdown)
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(TechnicianConfig())
         assert tech.get_fatigue_multiplier() == 1.0
         # Tired tech: multiplier > 1 (repairs take longer)
         tech.fatigue = 0.5
@@ -83,7 +106,7 @@ class TestStartRepairAndRecovery:
     """``start_repair`` must drive idle-time fatigue recovery."""
 
     def test_first_repair_recovers_from_episode_start(self):
-        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.1))
+        tech = _tech(TechnicianConfig(fatigue_mu=0.1))
         tech.fatigue = 0.5  # forced fatigue carryover
         # No prior repair — _last_idle_since defaults to 0.0
         tech.start_repair(when=10.0)
@@ -91,7 +114,7 @@ class TestStartRepairAndRecovery:
         assert tech.busy is True
 
     def test_recovery_between_two_repairs(self):
-        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.1, fatigue_lambda=0.05))
+        tech = _tech(TechnicianConfig(fatigue_mu=0.1, fatigue_lambda=0.05))
         # First repair finishes at t=100 → fatigue increases, idle clock starts
         req = _FakeRequest(repair_time=20.0)
         tech.repair_finished(req, when=100.0)
@@ -105,7 +128,7 @@ class TestStartRepairAndRecovery:
         assert tech.busy is True
 
     def test_back_to_back_repairs_have_no_recovery(self):
-        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.1, fatigue_lambda=0.05))
+        tech = _tech(TechnicianConfig(fatigue_mu=0.1, fatigue_lambda=0.05))
         req = _FakeRequest(repair_time=20.0)
         tech.repair_finished(req, when=100.0)
         f_after_first = tech.fatigue
@@ -115,7 +138,7 @@ class TestStartRepairAndRecovery:
         assert tech.busy is True
 
     def test_long_idle_drives_fatigue_close_to_zero(self):
-        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.1))
+        tech = _tech(TechnicianConfig(fatigue_mu=0.1))
         tech.fatigue = 0.9
         tech._last_idle_since = 0.0
         tech.start_repair(when=1000.0)
@@ -125,20 +148,20 @@ class TestStartRepairAndRecovery:
 
 class TestRepairFinished:
     def test_sets_busy_false(self):
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(TechnicianConfig())
         tech.busy = True
         req = _FakeRequest(repair_time=10.0)
         tech.repair_finished(req, when=100.0)
         assert tech.busy is False
 
     def test_increases_fatigue_on_repair(self):
-        tech = GymTechnician(TechnicianConfig(fatigue_lambda=0.1))
+        tech = _tech(TechnicianConfig(fatigue_lambda=0.1))
         req = _FakeRequest(repair_time=50.0)
         tech.repair_finished(req, when=100.0)
         assert tech.fatigue > 0.0
 
     def test_increases_knowledge_on_repair(self):
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(TechnicianConfig())
         initial_knowledge = tech.knowledge_grid.get_max_knowledge()
         req = _FakeRequest(repair_time=10.0, component_type="motor")
         tech.repair_finished(req, when=100.0)
@@ -148,7 +171,7 @@ class TestRepairFinished:
 
 class TestComputeRepairTime:
     def test_returns_non_negative_float(self):
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(TechnicianConfig())
         req = _FakeRequest(repair_time=1.0)
         result = tech.compute_repair_time(1.0, req)
         # The function returns a non-negative float (no integer floor).
@@ -157,7 +180,7 @@ class TestComputeRepairTime:
 
     def test_fatigue_increases_repair_time(self):
         # Fresh tech with no knowledge: base time, no slowdown.
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(TechnicianConfig())
         req = _FakeRequest(repair_time=100.0)
         t_fresh = tech.compute_repair_time(100.0, req)
 
@@ -170,8 +193,8 @@ class TestComputeRepairTime:
 
 class TestAutoId:
     def test_ids_auto_increment(self):
-        t1 = GymTechnician(TechnicianConfig())
-        t2 = GymTechnician(TechnicianConfig())
+        t1 = _tech(TechnicianConfig())
+        t2 = _tech(TechnicianConfig())
         assert t2.id == t1.id + 1
 
 
@@ -208,38 +231,27 @@ class _FakeRequestWithOverrides:
 
 
 @pytest.fixture
-def repair_cfg_snapshot():
-    """Snapshot & restore ``CONFIG.sim.repair`` around a test.
+def sim_cfg():
+    """A fresh ``sim`` config the test may freely mutate.
 
-    GymTechnician reads ``sim.repair.{min_repair_fraction,
-    knowledge_sensitivity, failure_wise_knowledge_parameters}`` from the
-    cached singleton at *call* time, so tests that toggle these fields
-    must restore them or they leak across tests.
+    KATA-1: ``sim.repair.{min_repair_fraction, knowledge_sensitivity,
+    failure_wise_knowledge_parameters}`` are read off the technician's
+    *injected* config, so each test gets its own instance and there is
+    no process-wide state to snapshot / restore any more.
     """
-    cfg = CONFIG.sim.repair
-    saved = (
-        cfg.min_repair_fraction,
-        cfg.knowledge_sensitivity,
-        cfg.failure_wise_knowledge_parameters,
-    )
-    yield cfg
-    (
-        cfg.min_repair_fraction,
-        cfg.knowledge_sensitivity,
-        cfg.failure_wise_knowledge_parameters,
-    ) = saved
+    return _sim_cfg()
 
 
 class TestFailureWiseKnowledgeMultiplier:
     """``GymTechnician.get_knowledge_multiplier`` flag-gated override path."""
 
-    def test_flag_off_ignores_per_component_overrides(self, repair_cfg_snapshot):
+    def test_flag_off_ignores_per_component_overrides(self, sim_cfg):
         # Global params: floor=0.3, alpha=0.002.
-        repair_cfg_snapshot.min_repair_fraction = 0.3
-        repair_cfg_snapshot.knowledge_sensitivity = 0.002
-        repair_cfg_snapshot.failure_wise_knowledge_parameters = False
+        sim_cfg.repair.min_repair_fraction = 0.3
+        sim_cfg.repair.knowledge_sensitivity = 0.002
+        sim_cfg.repair.failure_wise_knowledge_parameters = False
 
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(sim_cfg=sim_cfg)
         req_no_override = _FakeRequestWithOverrides(component_type="motor")
         req_with_override = _FakeRequestWithOverrides(
             component_type="motor",
@@ -256,13 +268,13 @@ class TestFailureWiseKnowledgeMultiplier:
             req_no_override
         ) == tech.get_knowledge_multiplier(req_with_override)
 
-    def test_flag_on_uses_per_component_overrides(self, repair_cfg_snapshot):
+    def test_flag_on_uses_per_component_overrides(self, sim_cfg):
         # Global params: relatively gentle (high floor, low alpha).
-        repair_cfg_snapshot.min_repair_fraction = 0.7
-        repair_cfg_snapshot.knowledge_sensitivity = 0.01
-        repair_cfg_snapshot.failure_wise_knowledge_parameters = True
+        sim_cfg.repair.min_repair_fraction = 0.7
+        sim_cfg.repair.knowledge_sensitivity = 0.01
+        sim_cfg.repair.failure_wise_knowledge_parameters = True
 
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(sim_cfg=sim_cfg)
         # Earn some knowledge so the multiplier isn't pinned at 1.
         warmup = _FakeRequestWithOverrides(component_type="motor")
         for _ in range(5):
@@ -288,13 +300,13 @@ class TestFailureWiseKnowledgeMultiplier:
         assert m_override >= 0.2
         assert m_global >= 0.7
 
-    def test_flag_on_partial_override_only_floor(self, repair_cfg_snapshot):
+    def test_flag_on_partial_override_only_floor(self, sim_cfg):
         # Component overrides the floor but defers alpha to global.
-        repair_cfg_snapshot.min_repair_fraction = 0.5
-        repair_cfg_snapshot.knowledge_sensitivity = 0.3
-        repair_cfg_snapshot.failure_wise_knowledge_parameters = True
+        sim_cfg.repair.min_repair_fraction = 0.5
+        sim_cfg.repair.knowledge_sensitivity = 0.3
+        sim_cfg.repair.failure_wise_knowledge_parameters = True
 
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(sim_cfg=sim_cfg)
         warmup = _FakeRequestWithOverrides(component_type="motor")
         for _ in range(10):
             tech.repair_finished(warmup, when=10.0)
@@ -317,13 +329,13 @@ class TestFailureWiseKnowledgeMultiplier:
         assert m_override >= 0.1  # respects per-component floor
         assert m_global >= 0.5  # respects global floor
 
-    def test_flag_on_partial_override_only_alpha(self, repair_cfg_snapshot):
+    def test_flag_on_partial_override_only_alpha(self, sim_cfg):
         # Component overrides alpha but defers the floor to global.
-        repair_cfg_snapshot.min_repair_fraction = 0.4
-        repair_cfg_snapshot.knowledge_sensitivity = 0.01
-        repair_cfg_snapshot.failure_wise_knowledge_parameters = True
+        sim_cfg.repair.min_repair_fraction = 0.4
+        sim_cfg.repair.knowledge_sensitivity = 0.01
+        sim_cfg.repair.failure_wise_knowledge_parameters = True
 
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(sim_cfg=sim_cfg)
         warmup = _FakeRequestWithOverrides(component_type="motor")
         for _ in range(5):
             tech.repair_finished(warmup, when=10.0)
@@ -346,15 +358,15 @@ class TestFailureWiseKnowledgeMultiplier:
         assert m_fast >= 0.4
 
     def test_flag_on_no_failed_component_falls_back_to_global(
-        self, repair_cfg_snapshot
+        self, sim_cfg
     ):
         # Simulates a simple-machine request where get_knowledge_parameters
         # returns None outright (no failed component).
-        repair_cfg_snapshot.min_repair_fraction = 0.3
-        repair_cfg_snapshot.knowledge_sensitivity = 0.5
-        repair_cfg_snapshot.failure_wise_knowledge_parameters = True
+        sim_cfg.repair.min_repair_fraction = 0.3
+        sim_cfg.repair.knowledge_sensitivity = 0.5
+        sim_cfg.repair.failure_wise_knowledge_parameters = True
 
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(sim_cfg=sim_cfg)
         for _ in range(5):
             tech.repair_finished(
                 _FakeRequestWithOverrides(component_type="motor"), when=10.0
@@ -373,16 +385,16 @@ class TestFailureWiseKnowledgeMultiplier:
         assert math.isclose(m, expected, rel_tol=1e-9)
 
     def test_flag_on_request_missing_method_falls_back_to_global(
-        self, repair_cfg_snapshot
+        self, sim_cfg
     ):
         # A request that doesn't expose get_knowledge_parameters at all
         # must not crash — the multiplier should silently fall back to
         # the global params.
-        repair_cfg_snapshot.min_repair_fraction = 0.25
-        repair_cfg_snapshot.knowledge_sensitivity = 0.4
-        repair_cfg_snapshot.failure_wise_knowledge_parameters = True
+        sim_cfg.repair.min_repair_fraction = 0.25
+        sim_cfg.repair.knowledge_sensitivity = 0.4
+        sim_cfg.repair.failure_wise_knowledge_parameters = True
 
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(sim_cfg=sim_cfg)
 
         legacy = _FakeRequest(repair_time=10.0, component_type="motor")
         # Earn some knowledge first.
@@ -395,14 +407,14 @@ class TestFailureWiseKnowledgeMultiplier:
 class TestFailureWiseKnowledgeIntegration:
     """End-to-end test of MachineComponent → RepairRequest → multiplier."""
 
-    def test_repair_request_surfaces_component_overrides(self, repair_cfg_snapshot):
+    def test_repair_request_surfaces_component_overrides(self, sim_cfg):
         from kata.entities.components.component import MachineComponent
         from kata.entities.requests.RepairRequest import RepairRequest
         from kata.features.breakdown.simple_breakdown import SimpleBreakdownProcess
 
-        repair_cfg_snapshot.min_repair_fraction = 0.6
-        repair_cfg_snapshot.knowledge_sensitivity = 0.01
-        repair_cfg_snapshot.failure_wise_knowledge_parameters = True
+        sim_cfg.repair.min_repair_fraction = 0.6
+        sim_cfg.repair.knowledge_sensitivity = 0.01
+        sim_cfg.repair.failure_wise_knowledge_parameters = True
 
         comp = MachineComponent(
             component_id="belt_0",
@@ -431,7 +443,7 @@ class TestFailureWiseKnowledgeIntegration:
         # override's much steeper alpha=0.8, even a small amount of
         # knowledge should push the multiplier well below the global
         # floor (0.6) and toward the component-level floor (0.2).
-        tech = GymTechnician(TechnicianConfig())
+        tech = _tech(sim_cfg=sim_cfg)
         for _ in range(10):
             tech.repair_finished(req, when=10.0)
         m = tech.get_knowledge_multiplier(req)
@@ -469,7 +481,7 @@ class TestTimeAwareFatigue:
     """
 
     def test_no_env_falls_back_to_raw_base(self):
-        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.5))
+        tech = _tech(TechnicianConfig(fatigue_mu=0.5))
         tech.fatigue = 0.8
         assert tech.env is None
         # Without env, the property returns the raw base unchanged.
@@ -478,7 +490,7 @@ class TestTimeAwareFatigue:
     def test_idle_fatigue_decays_with_env_clock(self):
         import simpy
 
-        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.1))
+        tech = _tech(TechnicianConfig(fatigue_mu=0.1))
         tech.env = simpy.Environment()
         tech.fatigue = 0.9
         tech._last_idle_since = 0.0
@@ -495,7 +507,7 @@ class TestTimeAwareFatigue:
     def test_busy_freezes_recovery(self):
         import simpy
 
-        tech = GymTechnician(TechnicianConfig(fatigue_mu=1.0))
+        tech = _tech(TechnicianConfig(fatigue_mu=1.0))
         tech.env = simpy.Environment()
         tech.fatigue = 0.5
         tech._last_idle_since = 0.0
@@ -513,7 +525,7 @@ class TestTimeAwareFatigue:
         """Recovery during a vacation / sick leave is desired — modelled as rest."""
         import simpy
 
-        tech = GymTechnician(TechnicianConfig(fatigue_mu=0.5))
+        tech = _tech(TechnicianConfig(fatigue_mu=0.5))
         tech.env = simpy.Environment()
         tech.fatigue = 0.8
         tech._last_idle_since = 0.0
@@ -531,7 +543,7 @@ def test_knowledge_multiplier_cache_hits_and_invalidates():
     from kata.core.config import TechnicianConfig
     from kata.entities.technicians.GymTechnician import GymTechnician
 
-    tech = GymTechnician(TechnicianConfig(name="cache_t"))
+    tech = _tech(TechnicianConfig(name="cache_t"))
 
     class _M:
         mtype = "CNC"

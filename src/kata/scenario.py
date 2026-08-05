@@ -192,7 +192,11 @@ class ScenarioBuilder:
         technicians = self._build_technicians()
 
         # -- Dispatcher -------------------------------------------------------
-        dispatcher = GymTechDispatcher(env, technicians)
+        # ``sim`` is injected explicitly (no import-time singleton): this
+        # is the only path by which the run's JSON ``sim.*`` block
+        # (travel_time, failure-wise knowledge, disruption pool, …)
+        # reaches the simulated entities.
+        dispatcher = GymTechDispatcher(env, technicians, sim_cfg=self.config.sim)
 
         # -- Buffers & Machines -----------------------------------------------
         machines_by_type: dict[str, list[Machine]] = {}
@@ -311,7 +315,7 @@ class ScenarioBuilder:
         """Create GymTechnician instances from config."""
         techs: list[GymTechnician] = []
         for _name, tcfg in self.config.technicians.items():
-            techs.append(GymTechnician(tech_conf=tcfg))
+            techs.append(GymTechnician(tech_conf=tcfg, sim_cfg=self.config.sim))
         return techs
 
     def _build_simple_machine(
