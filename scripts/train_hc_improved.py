@@ -139,11 +139,16 @@ def main() -> int:
     # ~24 t.u./decision measured on the multiscale event-driven world
     # (the old 60-t.u. constant under-estimated rounds ~3x).
     est_steps_per_ep = args.sim_time / 24.0
-    est_rounds = max(
-        200,
-        int(args.episodes / max(1, args.parallel_envs)
-            * est_steps_per_ep / args.rollout_steps),
-    )
+    if int(args.parallel_envs) == 1:
+        # The classic (serial) loop updates once per EPISODE and never
+        # consults rollout_steps -- the round cadence only applies to vec.
+        est_rounds = int(args.episodes)
+    else:
+        est_rounds = max(
+            200,
+            int(args.episodes / max(1, args.parallel_envs)
+                * est_steps_per_ep / args.rollout_steps),
+        )
     params["total_updates"] = est_rounds
     params["warmup_updates"] = max(10, est_rounds // 25)
 

@@ -92,15 +92,20 @@ def main(cfg: DictConfig) -> int:
     )
     tu_per_decision = float(cfg.get("tu_per_decision") or 24.0)
     est_steps_per_ep = mean_sim / tu_per_decision
-    est_rounds = max(
-        200,
-        int(
-            int(cfg.episodes)
-            / max(1, int(cfg.parallel_envs))
-            * est_steps_per_ep
-            / int(cfg.rollout_steps)
-        ),
-    )
+    if int(cfg.parallel_envs) == 1:
+        # parallel_envs=1 dispatches to the serial loop, which updates
+        # exactly once per EPISODE and never consults ``rollout_steps``.
+        est_rounds = int(cfg.episodes)
+    else:
+        est_rounds = max(
+            200,
+            int(
+                int(cfg.episodes)
+                / max(1, int(cfg.parallel_envs))
+                * est_steps_per_ep
+                / int(cfg.rollout_steps)
+            ),
+        )
     params["total_updates"] = est_rounds
     params["warmup_updates"] = max(10, est_rounds // 25)
     if cfg.init_checkpoint:

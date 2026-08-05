@@ -61,11 +61,24 @@ echo "DONE_TRAIN_V6 rc=$RC $(date -u +%FT%TZ)" >> reports/train_hc_v6.log
 if [ "$RC" != "0" ]; then say "ABORT: training failed"; exit 1; fi
 
 # ---------- 3. Canonicalise best + last ----------
+# End-of-run checkpoint naming depends on the loop: the serial loop
+# (parallel_envs=1, this run) writes ep*.pt + final.pt, the vec loop
+# round*.pt + final.pt.
+pick_last() {  # $1 = checkpoint dir
+  local d=$1 p
+  if [ -f "$d/set_transformer_final.pt" ]; then
+    echo "$d/set_transformer_final.pt"
+    return
+  fi
+  p=$(ls -1 "$d"/set_transformer_round*.pt 2>/dev/null | sort | tail -1)
+  [ -z "$p" ] && p=$(ls -1 "$d"/set_transformer_ep*.pt 2>/dev/null | sort | tail -1)
+  [ -z "$p" ] && p="$d/set_transformer_best.pt"
+  echo "$p"
+}
 mkdir -p checkpoints/hc_v6_final
 cp checkpoints/hc_v6/set_transformer_best.pt \
    checkpoints/hc_v6_final/set_transformer_best.pt
-LAST=$(ls -1 checkpoints/hc_v6/set_transformer_round*.pt 2>/dev/null | sort | tail -1)
-[ -z "$LAST" ] && LAST=checkpoints/hc_v6/set_transformer_best.pt
+LAST=$(pick_last checkpoints/hc_v6)
 cp "$LAST" checkpoints/hc_v6_final/set_transformer_last.pt
 say "final ckpts: best + last=$(basename "$LAST")"
 say "V6 DGY TRAIN DONE (benchmarks + lifecycle eval run separately, later)"

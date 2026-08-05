@@ -9,6 +9,11 @@ isolated:
 2. **Twins**: two identically-seeded workers inside one pool produce
    identical fingerprints (no cross-talk), while differently-seeded
    workers produce different ones (no accidental seed sharing).
+
+Checks 1 and 2 fingerprint the first *two* episodes of every env
+separately, stepping through the NEXT_STEP autoreset: the post-autoreset
+episode is only reproducible because ``SeededResetWrapper`` derives a
+seed for unseeded resets instead of forwarding ``None``.
 3. **Scaling**: wall-clock for N parallel episodes vs N sequential.
 
 Usage::
@@ -57,57 +62,95 @@ def _vocab() -> dict[str, int] | None:
     return StateTokenizer.from_json(p, seq_length=64).get_vocab()
 
 
-def fingerprint_solo(worker_idx: int, base_seed: int, seed: int) -> tuple:
-    """Run one scripted episode on a standalone worker env."""
+def fingerprint_solo(
+    worker_idx: int, base_seed: int, seed: int, episodes: int = 2
+) -> list[tuple]:
+    """Run scripted episodes on a standalone worker env; fingerprint each.
+
+    Only the first reset carries ``seed``; the later ones are bare, which
+    is exactly what the async worker does on autoreset.  The action
+    schedule follows the pool's *global* step counter (one step slot is
+    burnt by the autoreset itself) so the scripted actions line up with
+    :func:`fingerprints_vector`.
+    """
     factory = _WorkerFactory(_cfg_json(), "set_transformer", worker_idx, base_seed, _vocab())
     env = factory()
     obs, _ = env.reset(seed=seed)
     n_act = env.action_space.n
-    total_r, obs_sum, steps = 0.0, 0.0, 0
-    while True:
-        a = steps % n_act
-        obs, r, term, trunc, info = env.step(a)
-        total_r += float(r)
-        obs_sum += float(np.sum(obs["env_cont_values"]))
-        steps += 1
-        if term or trunc:
-            break
-    fp = (steps, round(total_r, 6), round(obs_sum, 3))
+    fps: list[tuple] = []
+    t = 0
+    for ep in range(episodes):
+        if ep > 0:
+            t += 1  # the autoreset consumes a step slot in the pooled run
+            env.reset()
+        total_r, obs_sum, steps = 0.0, 0.0, 0
+        while True:
+            obs, r, term, trunc, info = env.step(t % n_act)
+            total_r += float(r)
+            obs_sum += float(np.sum(obs["env_cont_values"]))
+            steps += 1
+            t += 1
+            if term or trunc:
+                break
+        fps.append((steps, round(total_r, 6), round(obs_sum, 3)))
     env.close()
-    return fp
+    return fps
 
 
-def fingerprints_vector(worker_idxs: list[int], base_seed: int, seeds: list[int]) -> list[tuple]:
-    """Run scripted episodes on an async pool; fingerprint each env's first episode."""
+def fingerprints_vector(
+    worker_idxs: list[int], base_seed: int, seeds: list[int], episodes: int = 2
+) -> list[list[tuple]]:
+    """Run scripted episodes on an async pool; fingerprint each env's first
+    ``episodes`` episodes separately."""
     fns = [
         _WorkerFactory(_cfg_json(), "set_transformer", w, base_seed, _vocab())
         for w in worker_idxs
     ]
-    venv = gym.vector.AsyncVectorEnv(fns, shared_memory=False)
+    venv = gym.vector.AsyncVectorEnv(
+        fns,
+        shared_memory=False,
+        context="fork",
+        autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP,
+    )
     n = len(worker_idxs)
     obs, _ = venv.reset(seed=seeds)
     n_act = int(venv.single_action_space.n)
-    total_r = np.zeros(n)
-    obs_sum = np.zeros(n)
-    steps = np.zeros(n, dtype=int)
-    finished = np.zeros(n, dtype=bool)
+    total_r = np.zeros((n, episodes))
+    obs_sum = np.zeros((n, episodes))
+    steps = np.zeros((n, episodes), dtype=int)
+    ep = np.zeros(n, dtype=int)
+    prev_done = np.zeros(n, dtype=bool)
     t = 0
-    while not finished.all():
+    while (ep < episodes).any():
         actions = np.full(n, t % n_act, dtype=np.int64)
         obs, r, term, trunc, _info = venv.step(actions)
         per_env = unbatch_obs(obs, n)
         for i in range(n):
-            if finished[i]:
+            if prev_done[i]:
+                # NEXT_STEP autoreset: the action was ignored and this obs
+                # is the next episode's start — nothing to record.
+                prev_done[i] = False
                 continue
-            total_r[i] += float(r[i])
-            obs_sum[i] += float(np.sum(per_env[i]["env_cont_values"]))
-            steps[i] += 1
+            if ep[i] >= episodes:
+                continue
+            e = ep[i]
+            total_r[i, e] += float(r[i])
+            obs_sum[i, e] += float(np.sum(per_env[i]["env_cont_values"]))
+            steps[i, e] += 1
             if term[i] or trunc[i]:
-                finished[i] = True
+                prev_done[i] = True
+                ep[i] += 1
         t += 1
     venv.close()
     return [
-        (int(steps[i]), round(float(total_r[i]), 6), round(float(obs_sum[i]), 3))
+        [
+            (
+                int(steps[i, e]),
+                round(float(total_r[i, e]), 6),
+                round(float(obs_sum[i, e]), 3),
+            )
+            for e in range(episodes)
+        ]
         for i in range(n)
     ]
 
@@ -119,8 +162,8 @@ def main() -> int:
     print("== 1. solo vs vector env-0 (same worker seed, same reset seed) ==")
     solo = fingerprint_solo(0, base_seed, RESET_SEED)
     vec = fingerprints_vector([0, 1, 2, 3], base_seed, [RESET_SEED, 11, 12, 13])
-    print(f"   solo      : {solo}")
-    print(f"   vector[0] : {vec[0]}")
+    for e in range(len(solo)):
+        print(f"   episode {e + 1}: solo {solo[e]} | vector[0] {vec[0][e]}")
     match = solo == vec[0]
     ok &= match
     print(f"   -> {'IDENTICAL' if match else 'MISMATCH (cross-talk or nondeterminism!)'}")
@@ -129,7 +172,9 @@ def main() -> int:
     twins = fingerprints_vector([0, 0], base_seed, [RESET_SEED, RESET_SEED])
     same = twins[0] == twins[1]
     ok &= same
-    print(f"   {twins[0]} vs {twins[1]} -> {'IDENTICAL' if same else 'MISMATCH'}")
+    for e in range(len(twins[0])):
+        print(f"   episode {e + 1}: {twins[0][e]} vs {twins[1][e]}")
+    print(f"   -> {'IDENTICAL' if same else 'MISMATCH'}")
 
     print("== 2b. different seeds -> must differ ==")
     differ = len({str(f) for f in vec}) == len(vec)
@@ -142,10 +187,12 @@ def main() -> int:
     SIM, STEPS = 60_000.0, 6_000
     t0 = time.time()
     for i in range(4):
-        fingerprint_solo(i, base_seed, RESET_SEED + i)
+        fingerprint_solo(i, base_seed, RESET_SEED + i, episodes=1)
     seq = time.time() - t0
     t0 = time.time()
-    fingerprints_vector([0, 1, 2, 3], base_seed, [RESET_SEED + i for i in range(4)])
+    fingerprints_vector(
+        [0, 1, 2, 3], base_seed, [RESET_SEED + i for i in range(4)], episodes=1
+    )
     par = time.time() - t0
     print(f"   sequential: {seq:.1f}s   async pool: {par:.1f}s   speedup: {seq / par:.2f}x")
 

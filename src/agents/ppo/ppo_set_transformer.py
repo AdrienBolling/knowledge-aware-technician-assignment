@@ -383,27 +383,29 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         """Shallow snapshot of the per-stream episode state.
 
         Captures the RNN hiddens, pending step caches, bootstrap caches,
-        and running returns for every stream.  Pairs with
-        :meth:`restore_stream_state` so an inline evaluation --- which
-        borrows stream 0 via ``select_action``/``on_episode_start`` ---
-        cannot clobber a live training episode's state.  Shallow copies
-        suffice: streams rebind entries rather than mutating them.
+        running returns and sim-time anchors for every stream.  Pairs
+        with :meth:`restore_stream_state` so an inline evaluation ---
+        which borrows stream 0 via ``select_action``/``on_episode_start``
+        --- cannot clobber a live training episode's state.  Shallow
+        copies suffice: streams rebind entries rather than mutating them.
         """
         return (
             dict(self._rnn_state),
             dict(self._pending),
             dict(self._last),
             dict(self._return_running),
+            dict(self._last_sim_time),
         )
 
     def restore_stream_state(self, snap: tuple) -> None:
         """Restore the state captured by :meth:`snapshot_stream_state`."""
-        rnn, pending, last, running = snap
+        rnn, pending, last, running, sim_time = snap
         for live, saved in (
             (self._rnn_state, rnn),
             (self._pending, pending),
             (self._last, last),
             (self._return_running, running),
+            (self._last_sim_time, sim_time),
         ):
             live.clear()
             live.update(saved)
@@ -931,7 +933,11 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         state = ckpt["net"]
         # Detect and reconcile a row-count mismatch on the token
         # embedding before delegating to load_state_dict.
-        state = self._resize_token_embedding(state)
+        state = self._resize_token_embedding(
+            state,
+            ckpt_vocab=ckpt.get("vocab"),
+            live_vocab=getattr(self, "_vocab", None),
+        )
         try:
             self.net.load_state_dict(state)
         except RuntimeError:
@@ -980,7 +986,13 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
             self._popart_nu = float(imp.get("popart_nu", 1.0))
             self._popart_initialized = bool(imp.get("popart_initialized", False))
 
-    def _resize_token_embedding(self, state: dict) -> dict:
+    def _resize_token_embedding(
+        self,
+        state: dict,
+        *,
+        ckpt_vocab: dict[str, int] | None = None,
+        live_vocab: dict[str, int] | None = None,
+    ) -> dict:
         """Pad or refuse to load the token-embedding row count.
 
         Looks up every state-dict key whose tail matches
@@ -990,6 +1002,12 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         the replacement state-dict entry.  Larger-than-live mismatches
         raise — silently dropping trained rows is the kind of behaviour
         you want to know about, not paper over.
+
+        The leading-position copy is only meaningful if the checkpoint
+        vocab is an id-prefix of the live vocab.  Real vocab drift
+        re-indexes shared keys instead of appending, so when both
+        vocabularies are known the prefix property is verified and a
+        violation raises instead of silently scrambling token rows.
         """
         live = self.net.state_dict()
         out = dict(state)
@@ -1002,6 +1020,21 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
                 continue
             n_ckpt, d_ckpt = int(ckpt_w.shape[0]), int(ckpt_w.shape[1])
             n_live, d_live = int(live_w.shape[0]), int(live_w.shape[1])
+            if ckpt_vocab is not None and live_vocab is not None:
+                misplaced = sorted(
+                    t for t, i in ckpt_vocab.items()
+                    if live_vocab.get(t) != i
+                )[:5]
+                if misplaced:
+                    msg = (
+                        f"Cannot resize token embedding {n_ckpt} → "
+                        f"{n_live}: the checkpoint vocab is not an "
+                        f"id-prefix of the live vocab (e.g. {misplaced}). "
+                        f"A leading-row copy would scramble token "
+                        f"semantics; rebuild the agent with the "
+                        f"checkpoint's vocab instead."
+                    )
+                    raise RuntimeError(msg)
             if d_ckpt != d_live:
                 msg = (
                     f"Cannot load checkpoint: token_embedding d_model "

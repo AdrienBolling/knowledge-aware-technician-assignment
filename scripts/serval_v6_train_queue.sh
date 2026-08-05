@@ -33,6 +33,20 @@ OUTROOT=reports/hvp_eval_v4
 PARTS=reports/hvp_v6_vl_parts
 LC_PARTS=reports/hvp_lifecycle_parts
 say() { echo "$(date -u +%FT%TZ) [v6t] $*" >> "$Q"; }
+# End-of-run checkpoint naming depends on the loop: the vec loop writes
+# round*.pt + final.pt, the serial loop (parallel_envs=1) ep*.pt +
+# final.pt.
+pick_last() {  # $1 = checkpoint dir
+  local d=$1 p
+  if [ -f "$d/set_transformer_final.pt" ]; then
+    echo "$d/set_transformer_final.pt"
+    return
+  fi
+  p=$(ls -1 "$d"/set_transformer_round*.pt 2>/dev/null | sort | tail -1)
+  [ -z "$p" ] && p=$(ls -1 "$d"/set_transformer_ep*.pt 2>/dev/null | sort | tail -1)
+  [ -z "$p" ] && p="$d/set_transformer_best.pt"
+  echo "$p"
+}
 
 say "V6 TRAIN QUEUE ARMED (pid $$)"
 
@@ -78,8 +92,7 @@ for EXT in 1 2 3; do
   PL=$?
   if [ "$PL" = "0" ]; then say "plateau confirmed"; break; fi
   if [ "$PL" = "2" ]; then say "ALERT plateau indeterminate — proceeding"; break; fi
-  LAST_CKPT=$(ls -1 "$DIR"/set_transformer_round*.pt 2>/dev/null | sort | tail -1)
-  [ -z "$LAST_CKPT" ] && LAST_CKPT="$DIR/set_transformer_best.pt"
+  LAST_CKPT=$(pick_last "$DIR")
   NEWDIR="checkpoints/hc_v6_ext${EXT}"
   say "still improving — extension #$EXT (+200 eps) from $LAST_CKPT"
   train_v6 200 "$LAST_CKPT" "$NEWDIR"
@@ -94,8 +107,8 @@ done
 mkdir -p checkpoints/hc_v6_final
 BEST="$DIR/set_transformer_best.pt"
 [ -f "$BEST" ] || BEST=checkpoints/hc_v6/set_transformer_best.pt
-LAST_CKPT=$(ls -1 "$DIR"/set_transformer_round*.pt 2>/dev/null | sort | tail -1)
-[ -z "$LAST_CKPT" ] && LAST_CKPT="$BEST"
+LAST_CKPT=$(pick_last "$DIR")
+[ -f "$LAST_CKPT" ] || LAST_CKPT="$BEST"
 cp "$BEST" checkpoints/hc_v6_final/set_transformer_best.pt
 cp "$LAST_CKPT" checkpoints/hc_v6_final/set_transformer_last.pt
 say "final ckpts: best=$BEST last=$LAST_CKPT"
