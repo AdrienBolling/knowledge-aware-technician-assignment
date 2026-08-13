@@ -132,6 +132,15 @@ CHECKPOINTS = {
     # + feature-context view).  Fresh BC (architecture change).
     "hc_v6": Path("checkpoints/hc_v6_final/set_transformer_best.pt"),
     "hc_v6_last": Path("checkpoints/hc_v6_final/set_transformer_last.pt"),
+    # v6 reward fine-tunes (scripts/dgy_v6_ft_queue.sh): 100 eps from
+    # hc_v6 final.pt, one reward lever each — availability+balance
+    # (protect), fatigue_cost (fatigue), repair_quality (quality).
+    "ft_protect": Path("checkpoints/ft_protect/set_transformer_best.pt"),
+    "ft_protect_last": Path("checkpoints/ft_protect/set_transformer_last.pt"),
+    "ft_fatigue": Path("checkpoints/ft_fatigue/set_transformer_best.pt"),
+    "ft_fatigue_last": Path("checkpoints/ft_fatigue/set_transformer_last.pt"),
+    "ft_quality": Path("checkpoints/ft_quality/set_transformer_best.pt"),
+    "ft_quality_last": Path("checkpoints/ft_quality/set_transformer_last.pt"),
 }
 
 # Token-stream RL anchors (section 7.4): standard architectures trained
