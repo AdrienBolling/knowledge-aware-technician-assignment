@@ -61,25 +61,7 @@ def main(cfg: DictConfig) -> int:
     # ----- agent: composed group + improvement toggles -----------------
     agent_data = OmegaConf.to_container(cfg.agent, resolve=True)
     params = agent_data["params"]
-    params["use_popart"] = bool(cfg.use_popart)
-    if params.get("use_popart"):
-        params["normalize_rewards"] = False  # mutually exclusive
-    if not bool(cfg.use_gru):
-        params["rnn_type"] = "none"
-    if cfg.gamma is not None:
-        params["gamma"] = float(cfg.gamma)
-    params["time_based_discount"] = bool(cfg.get("time_based_discount", False))
-    if params["time_based_discount"] and params.get("gamma", 1.0) < 0.999:
-        raise ValueError(
-            "time_based_discount=true interprets gamma per sim-TIME-UNIT: "
-            f"gamma={params.get('gamma')} would give a ~"
-            f"{1.0 / (1.0 - float(params.get('gamma', 0.99))):.0f} t.u. "
-            "horizon (likely a per-decision value passed by mistake). "
-            "Use e.g. gamma=0.9999, or set time_based_discount=false."
-        )
-    if cfg.gae_lambda is not None:
-        params["gae_lambda"] = float(cfg.gae_lambda)
-    params["rollout_steps"] = int(cfg.rollout_steps)
+    agent_type = str(agent_data.get("agent_type", "set_transformer"))
     # LR schedule sized to the actual update budget.  Decision density is
     # configurable (``tu_per_decision``): the multiscale event-driven world
     # measures ~24 t.u./decision (2026-07-22 probe: 8,249 decisions per
@@ -92,22 +74,98 @@ def main(cfg: DictConfig) -> int:
     )
     tu_per_decision = float(cfg.get("tu_per_decision") or 24.0)
     est_steps_per_ep = mean_sim / tu_per_decision
-    if int(cfg.parallel_envs) == 1:
-        # parallel_envs=1 dispatches to the serial loop, which updates
-        # exactly once per EPISODE and never consults ``rollout_steps``.
-        est_rounds = int(cfg.episodes)
-    else:
-        est_rounds = max(
+
+    def _sized_rounds(rollout_steps: int) -> int:
+        if int(cfg.parallel_envs) == 1:
+            # The serial loop updates exactly once per EPISODE and
+            # never consults ``rollout_steps``.
+            return int(cfg.episodes)
+        # 1.25 safety inflation: the decision-density constant is an
+        # estimate (v5 corrected world measures ~20 t.u./decision vs
+        # the 24 configured) — a slightly slower cosine descent is
+        # benign, while undershooting parks the tail on the
+        # lr_min_factor floor for the last stretch of the run.
+        return max(
             200,
             int(
-                int(cfg.episodes)
+                1.25
+                * int(cfg.episodes)
                 / max(1, int(cfg.parallel_envs))
                 * est_steps_per_ep
-                / int(cfg.rollout_steps)
+                / rollout_steps
             ),
         )
-    params["total_updates"] = est_rounds
-    params["warmup_updates"] = max(10, est_rounds // 25)
+
+    if agent_type == "set_transformer":
+        params["use_popart"] = bool(cfg.use_popart)
+        if params.get("use_popart"):
+            params["normalize_rewards"] = False  # mutually exclusive
+        if not bool(cfg.use_gru):
+            params["rnn_type"] = "none"
+        if cfg.gamma is not None:
+            params["gamma"] = float(cfg.gamma)
+        params["time_based_discount"] = bool(
+            cfg.get("time_based_discount", False)
+        )
+        if params["time_based_discount"] and params.get("gamma", 1.0) < 0.999:
+            raise ValueError(
+                "time_based_discount=true interprets gamma per sim-TIME-UNIT: "
+                f"gamma={params.get('gamma')} would give a ~"
+                f"{1.0 / (1.0 - float(params.get('gamma', 0.99))):.0f} t.u. "
+                "horizon (likely a per-decision value passed by mistake). "
+                "Use e.g. gamma=0.9999, or set time_based_discount=false."
+            )
+        if cfg.gae_lambda is not None:
+            params["gae_lambda"] = float(cfg.gae_lambda)
+        params["rollout_steps"] = int(cfg.rollout_steps)
+        est_rounds = _sized_rounds(int(cfg.rollout_steps))
+        params["total_updates"] = est_rounds
+        params["warmup_updates"] = max(10, est_rounds // 25)
+    elif agent_type == "a2c_mlp":
+        # Traditional MLP baseline: no PopArt/GRU/semi-MDP injection —
+        # the JSON's per-decision gamma and rollout length rule.  The
+        # cosine schedule is sized with the AGENT's rollout length
+        # (128), not the PPO default 2048: A2C's single full-batch step
+        # makes the rollout the batch.
+        if cfg.gae_lambda is not None:
+            params["gae_lambda"] = float(cfg.gae_lambda)
+        est_rounds = _sized_rounds(int(params.get("rollout_steps", 128)))
+        params["total_updates"] = est_rounds
+        params["warmup_updates"] = max(10, est_rounds // 25)
+    elif agent_type == "grpo_mlp":
+        # One gradient phase per GROUP of complete episodes; the group
+        # must share one sampled scenario, so the sampler's rotation
+        # cadence is pinned to the group size regardless of the
+        # episodes_per_scenario trainer default.
+        group = int(params.get("group_size", 8))
+        est_rounds = max(4, int(cfg.episodes) // group)
+        params["total_updates"] = est_rounds
+        params["warmup_updates"] = max(3, est_rounds // 25)
+        env_data.setdefault("randomized_scenario", {})[
+            "episodes_per_scenario"
+        ] = group
+        # GRPO's outcome is the EPISODE-SUM of rewards z-scored within
+        # the group — a per-episode horizon draw U(min, max) would make
+        # the dominant term of that statistic an exogenous ±26% length
+        # spread the policy cannot influence (confirmed empirically:
+        # corr(horizon, return) ≈ −0.7 under the v5 reward drift).  Pin
+        # every episode to the fixed mean horizon instead; scenario
+        # SIZE stays multiscale.
+        env_data["gym"].pop("max_sim_time_min", None)
+        env_data["gym"].pop("max_sim_time_max", None)
+    elif agent_type == "dql_mlp":
+        # Constant LR, own gamma, cadence self-managed in
+        # observe_transition.  The agent's exploration/replay RNGs are
+        # PRIVATE streams (they must not perturb the simulator's seeded
+        # global stream), so the experiment seed has to reach the ctor
+        # explicitly or real runs draw from OS entropy.
+        params.setdefault("seed", int(cfg.seed))
+    else:
+        raise ValueError(
+            f"train_hydra has no parameter-injection policy for "
+            f"agent_type={agent_type!r}; add a branch before training "
+            "with it (unconditional PPO params would reach its ctor)."
+        )
     if cfg.init_checkpoint:
         agent_data["checkpoint"] = str(cfg.init_checkpoint)
 
@@ -142,9 +200,10 @@ def main(cfg: DictConfig) -> int:
 
     print("=== Hydra training configuration ===")
     print(f"  env group            : {cfg.env.get('name', '(group)')}")
+    print(f"  agent type           : {agent_type}")
     print(f"  episodes             : {int(cfg.episodes)}  @ {float(cfg.sim_time):,.0f} t.u.")
     print(f"  parallel envs        : {int(cfg.parallel_envs)}")
-    print(f"  gamma / gae_lambda   : {params['gamma']} / {params['gae_lambda']}"
+    print(f"  gamma / gae_lambda   : {params.get('gamma')} / {params.get('gae_lambda')}"
           + (" (semi-MDP: gamma per t.u.)" if params.get("time_based_discount") else " (per decision)"))
     print(f"  popart / rnn         : {params.get('use_popart')} / {params.get('rnn_type')}")
     _pbrs = env_data["gym"].get("reward", {}).get(
@@ -171,7 +230,7 @@ def main(cfg: DictConfig) -> int:
         experiment_config=experiment_config,
     )
     exp.run()
-    print(f"Training complete.  Best checkpoint: {checkpoint_dir}/set_transformer_best.pt")
+    print(f"Training complete.  Best checkpoint: {checkpoint_dir}/{agent_type}_best.pt")
     return 0
 
 

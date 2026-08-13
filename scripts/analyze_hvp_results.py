@@ -47,6 +47,8 @@ AGENT_LABELS = {
     "hc_v3_ft_mid": r"HTT-RL-v3-ft-mid (ours)",
     "hc_v4": r"HTT-RL-v4 (ours)",
     "hc_v4_last": r"HTT-RL-v4-last (ours)",
+    "hc_v5": r"HTT-RL-v5 (ours)",
+    "hc_v5_last": r"HTT-RL-v5-last (ours)",
     "hc_v6": r"HTT-RL-v6 (ours)",
     "hc_v6_last": r"HTT-RL-v6-last (ours)",
     "ft_protect": r"v6-ft-protect (ours)",
@@ -57,6 +59,14 @@ AGENT_LABELS = {
     "ft_quality_last": r"v6-ft-quality-last (ours)",
     "ppo_transformer": "PPO-TRF (anchor)",
     "rainbow_dqn": "Rainbow (anchor)",
+    # Traditional-architecture learned baselines: plain MLPs on the same
+    # set observation the HTT agent sees (honest information — unmarked).
+    "a2c_mlp": "A2C-MLP (anchor)",
+    "a2c_mlp_last": "A2C-MLP-last (anchor)",
+    "grpo_mlp": "GRPO-MLP (anchor)",
+    "grpo_mlp_last": "GRPO-MLP-last (anchor)",
+    "dql_mlp": "DQL-MLP (anchor)",
+    "dql_mlp_last": "DQL-MLP-last (anchor)",
     "random": "Random",
     "round_robin": "RoundRobin",
     "least_busy": "LeastBusy",

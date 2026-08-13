@@ -1,0 +1,26 @@
+{
+  "agent_type": "a2c_mlp",
+  "params": {
+    "hidden_sizes": [512, 512],
+    "machine_slot_length": 12,
+
+    "gamma": 0.997,
+    "gae_lambda": 0.95,
+    "entropy_coef": 0.01,
+    "value_coef": 0.5,
+    "normalize_advantages": true,
+
+    "lr": 0.0007,
+    "weight_decay": 0.0,
+    "max_grad_norm": 0.5,
+
+    "rollout_steps": 128,
+    "total_updates": 1500,
+    "warmup_updates": 50,
+    "lr_min_factor": 0.05,
+
+    "normalize_rewards": true,
+
+    "device": "auto"
+  }
+}

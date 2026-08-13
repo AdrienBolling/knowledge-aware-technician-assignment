@@ -27,11 +27,24 @@ class ReplayBuffer:
     ----------
     capacity:
         Maximum number of transitions stored.
+    rng:
+        Private generator the batch draw reads.  ``None`` builds an
+        unseeded :class:`random.Random` of the buffer's own — what must
+        NOT happen is reading the process-global ``random`` module: the
+        simulator's machine-failure draws come out of that same stream
+        (``kata.machine.Machine._breakdown_driver``), so a buffer that
+        samples from it makes the WORLD a function of the learner's
+        gradient cadence.  Owners that need reproducible batches
+        (:class:`agents.dqn.dql_mlp.DQLMLPAgent`) pass a seeded
+        generator and checkpoint its state.
 
     """
 
-    def __init__(self, capacity: int = 100_000) -> None:
+    def __init__(
+        self, capacity: int = 100_000, rng: random.Random | None = None
+    ) -> None:
         self._buffer: deque[Transition] = deque(maxlen=capacity)
+        self._rng = rng or random.Random()
 
     def push(
         self,
@@ -45,7 +58,7 @@ class ReplayBuffer:
 
     def sample(self, batch_size: int) -> dict[str, torch.Tensor]:
         """Sample a random batch and return it as stacked tensors."""
-        batch = random.sample(self._buffer, batch_size)
+        batch = self._rng.sample(self._buffer, batch_size)
         return {
             "obs": torch.from_numpy(np.stack([t.obs for t in batch])),
             "action": torch.tensor([t.action for t in batch], dtype=torch.long),

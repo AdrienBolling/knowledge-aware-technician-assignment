@@ -28,6 +28,19 @@ from pydantic import BaseModel, Field
 # Agent configuration
 # ======================================================================
 
+# Agent families that consume the grouped ``set`` observation (padded
+# ``max_techs``/``max_machines`` slot tensors + masks) rather than the
+# flat token stream or the structured dict.  Single source of truth for
+# the runner's injection/vocab logic AND the vec workers' representation
+# pick (``experiment.vec_env``) — membership here is what makes an agent
+# act on the padded ``Discrete(max_techs)`` head.
+SET_OBS_AGENT_TYPES = frozenset({
+    "set_transformer",
+    "a2c_mlp",
+    "grpo_mlp",
+    "dql_mlp",
+})
+
 
 class AgentConfig(BaseModel):
     """Which agent to instantiate and with what hyperparameters.
@@ -49,6 +62,9 @@ class AgentConfig(BaseModel):
         "ppo_transformer",
         "ppo_latent",
         "set_transformer",
+        "a2c_mlp",
+        "grpo_mlp",
+        "dql_mlp",
     ] = Field(description="Agent class to instantiate.")
 
     params: dict[str, Any] = Field(

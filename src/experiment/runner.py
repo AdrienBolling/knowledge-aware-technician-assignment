@@ -36,8 +36,11 @@ from tqdm.auto import tqdm
 logger = logging.getLogger(__name__)
 
 from agents import (
+    A2CMLPAgent,
     Agent,
+    DQLMLPAgent,
     GRPOAgent,
+    GRPOMLPAgent,
     LeastBusyAgent,
     LeastFatiguedAgent,
     PPOLatentAgent,
@@ -49,6 +52,7 @@ from agents import (
     ShortestQueueAgent,
 )
 from experiment.config import (
+    SET_OBS_AGENT_TYPES,
     AgentConfig,
     ExperimentConfig,
     load_json,
@@ -75,10 +79,14 @@ _AGENT_REGISTRY: dict[str, type[Agent]] = {
     "ppo_transformer": PPOTransformerAgent,
     "ppo_latent": PPOLatentAgent,
     "set_transformer": SetTransformerAgent,
+    "a2c_mlp": A2CMLPAgent,
+    "grpo_mlp": GRPOMLPAgent,
+    "dql_mlp": DQLMLPAgent,
 }
 
 _LEARNING_AGENTS = {
     "rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent", "set_transformer",
+    "a2c_mlp", "grpo_mlp", "dql_mlp",
 }
 _TOKEN_AGENTS = {
     "rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent", "set_transformer",
@@ -86,7 +94,9 @@ _TOKEN_AGENTS = {
 # Agents that consume the grouped ``set`` observation rather than the
 # flat token stream — their n_actions is the *padded* max_techs cap,
 # not the real fleet size, and the encoder needs max-slot sizes.
-_SET_OBS_AGENTS = {"set_transformer"}
+# Single-sourced from experiment.config so the vec workers pick the
+# same representation (vec_env imports the same constant).
+_SET_OBS_AGENTS = set(SET_OBS_AGENT_TYPES)
 
 
 def _ticket_context(ticket: Any, sim_time: float) -> dict[str, Any]:
@@ -160,6 +170,10 @@ class Experiment:
         self.quiet = quiet
 
         self._wandb_run: Any = None
+        # Monotonic W&B step for the vectorised loop.  Its natural axes
+        # (episodes / PPO rounds) both advance many times per rollout, so
+        # neither is injective — see ``_next_vec_wandb_step``.
+        self._vec_wandb_step: int = 0
         self._best_eval_return: float = -math.inf
 
         # -- Build environment --
@@ -329,11 +343,29 @@ class Experiment:
                     next_ticket_lookahead=gym_cfg.next_ticket_lookahead,
                 )
 
-        return KataEnv(
+        env = KataEnv(
             scenario_factory=factory,
             config=gym_cfg,
             tokenizer=self.tokenizer,
         )
+
+        # ``KataEnv.__init__`` bootstraps a scenario to size the
+        # observation / action spaces — that build is space setup only,
+        # yet it consumes one factory call and therefore ages the
+        # sampler's ``episodes_per_scenario`` cache.  Left alone, the
+        # rotation runs one build ahead of the episode counter: training
+        # episode 1 is already the sampler's SECOND build, and every
+        # k-block straddles two factories (k-1 episodes of one scenario
+        # + 1 of the next).  Dropping the cached scenario here re-aligns
+        # the blocks with the episode index, so resets 1..k share one
+        # scenario and reset k+1 opens the next block.
+        # ``hasattr`` guard: the static and fixed-eval factories are
+        # plain lambdas with no cache to reset.
+        reset_scenario_cache = getattr(factory, "reset_scenario_cache", None)
+        if callable(reset_scenario_cache):
+            reset_scenario_cache()
+
+        return env
 
     def _build_agent(self) -> Agent:
         """Instantiate the agent from the registry."""
@@ -354,6 +386,14 @@ class Experiment:
             params.setdefault(
                 "tech_slot_length", int(self.env_cfg.gym.set_tech_slot_length)
             )
+            if agent_type != "set_transformer":
+                # The MLP baselines parse the machine stream positionally;
+                # SetTransformerAgent does not take this kwarg (its slot
+                # fuser reads machine geometry from the obs itself).
+                params.setdefault(
+                    "machine_slot_length",
+                    int(self.env_cfg.gym.set_machine_slot_length),
+                )
             params.setdefault(
                 "sim_time_scale", float(self.env_cfg.gym.max_sim_time)
             )
@@ -525,11 +565,47 @@ class Experiment:
             reinit=True,
         )
 
+        # The vec loop logs against an opaque monotonic step (see
+        # ``_next_vec_wandb_step``); declare the real axes so panels plot
+        # against episodes / PPO rounds rather than that counter.  Only
+        # in that loop: the serial loop's step IS the episode index and
+        # never logs ``update/round``, so declaring axes there would
+        # point panels at a metric that is never written.  ``callable``
+        # guard because ``define_metric`` is a convenience, not a
+        # requirement — an older wandb must not break training.
+        define_metric = getattr(self._wandb_run, "define_metric", None)
+        if int(getattr(self.exp_cfg, "parallel_envs", 1) or 1) > 1 and callable(
+            define_metric
+        ):
+            define_metric("update/*", step_metric="update/round")
+            define_metric("eval/*", step_metric="train/episodes")
+            define_metric("train/return", step_metric="train/episodes")
+            define_metric("train/length", step_metric="train/episodes")
+            # The axes themselves, declared last so these exact-name
+            # definitions win over the globs above.
+            define_metric("train/episodes")
+            define_metric("update/round")
+
     def _finish_wandb(self) -> None:
         """Finalize the current W&B run."""
         if self._wandb_run is not None:
             self._wandb_run.finish()
             self._wandb_run = None
+
+    def _next_vec_wandb_step(self) -> int:
+        """Return a fresh, strictly increasing W&B step (vec loop only).
+
+        W&B keeps at most one value per ``step`` per key (last write
+        wins).  In the vectorised loop several episodes finish inside a
+        single rollout and each rollout also emits one update log, so
+        keying on ``episodes_done`` collides: with rollout_steps=128 at
+        vec5, ~18 PPO rounds share the same episode count and all but
+        the last are discarded.  Use an opaque monotonic counter as the
+        step and carry the meaningful axes (``train/episodes``,
+        ``update/round``) as DATA so panels can plot against them.
+        """
+        self._vec_wandb_step += 1
+        return self._vec_wandb_step
 
     def _log_wandb(self, data: dict[str, Any], step: int) -> None:
         """Log a dict to W&B if active."""
@@ -1312,8 +1388,9 @@ class Experiment:
                                     "train/return": float(ep_return[i]),
                                     "train/length": float(ep_len[i]),
                                     "train/episodes": episodes_done,
+                                    "update/round": round_idx,
                                 },
-                                episodes_done,
+                                self._next_vec_wandb_step(),
                             )
                             ep_return[i] = 0.0
                             ep_len[i] = 0
@@ -1335,7 +1412,11 @@ class Experiment:
                 round_log["train/entropy"] = update_metrics.get(
                     "entropy", float("nan")
                 )
-                self._log_wandb(round_log, episodes_done)
+                # Real axes travel as data — the step is opaque and
+                # monotonic so no round overwrites another's metrics.
+                round_log["update/round"] = round_idx
+                round_log["train/episodes"] = episodes_done
+                self._log_wandb(round_log, self._next_vec_wandb_step())
                 # Periodic deterministic eval on the fixed eval scenario —
                 # metric-based monitoring (finished products, MTTR, ...)
                 # lives here, not in the training reward.
@@ -1346,7 +1427,9 @@ class Experiment:
                 ):
                     last_eval_ep = episodes_done
                     eval_stats = self._inline_eval(episodes_done)
-                    self._log_wandb(eval_stats, episodes_done)
+                    eval_stats["train/episodes"] = episodes_done
+                    eval_stats["update/round"] = round_idx
+                    self._log_wandb(eval_stats, self._next_vec_wandb_step())
                     mean_ret = float(eval_stats.get("eval/return_mean", float("nan")))
                     std_ret = float(eval_stats.get("eval/return_std", float("nan")))
                     logger.info(

@@ -52,6 +52,9 @@ from agents import (
     EmpiricalSPTAgent,
     EmpiricalTopsisAgent,
     GreedyRewardAgent,
+    A2CMLPAgent,
+    DQLMLPAgent,
+    GRPOMLPAgent,
     LeastBusyAgent,
     LeastFatiguedAgent,
     OptimalAssignmentAgent,
@@ -157,6 +160,26 @@ TOKEN_CHECKPOINTS = {
     ),
 }
 
+# Traditional-architecture learned baselines (section 7.4): plain MLPs
+# over the flattened SET observation — same information as the HTT
+# agent, traditional network.  Unlike the token anchors they carry a
+# fleet-independent vocab and a padded Discrete(max_techs) head, so
+# best+last evaluate on every scenario.  Post-D11/D12 training:
+# legacy_obs is ALWAYS False for this family.
+MLP_AGENT_CLASSES = {
+    "a2c_mlp": A2CMLPAgent,
+    "grpo_mlp": GRPOMLPAgent,
+    "dql_mlp": DQLMLPAgent,
+}
+MLP_CHECKPOINTS = {
+    key if tag == "best" else f"{key}_last": (
+        Path(f"checkpoints/{key}_v1/{key}_{'best' if tag == 'best' else 'last'}.pt"),
+        Path(f"run_configs/agents/{key}.json"),
+    )
+    for key in MLP_AGENT_CLASSES
+    for tag in ("best", "last")
+}
+
 AGENT_CONFIG = Path("run_configs/agents/set_transformer.json")
 
 # Horizon profiles mirror benchmarks/_generate.py (Part 1 numbers).
@@ -230,8 +253,8 @@ def build_scenario(scenario: str, *, n_eps_override: int | None = None,
     return env_cfg, scenario_factory, n_techs, machine_types, component_types, n_eps
 
 
-def load_set_tokenizer(checkpoint: Path, env_cfg) -> StateTokenizer:
-    embedded = SetTransformerAgent.peek_vocab(checkpoint)
+def load_set_tokenizer(checkpoint: Path, env_cfg, peek=None) -> StateTokenizer:
+    embedded = (peek or SetTransformerAgent.peek_vocab)(checkpoint)
     if embedded:
         tok = StateTokenizer(seq_length=env_cfg.gym.tokenizer_seq_length)
         tok.load_vocab(embedded)
@@ -330,6 +353,39 @@ def build_agents(env_cfg, scenario_factory, n_techs,
         legacy = "slot_role_binding" not in imp
         env = make_env(env_cfg, scenario_factory, "set", tokenizer=tok,
                        legacy_obs=legacy)
+        agents[label] = (agent, env)
+    # Traditional MLP baselines (fleet-independent vocab + padded
+    # Discrete(max_techs) head — every scenario, best AND last).  Params
+    # come from each family's own agent JSON; ``load()`` raises loudly
+    # on any architecture/vocab mismatch rather than partially loading.
+    for label, (ckpt, cfg_path) in MLP_CHECKPOINTS.items():
+        if not ckpt.is_file():
+            print(f"  (skipping {label}: no checkpoint at {ckpt})", flush=True)
+            continue
+        base_key = label[:-5] if label.endswith("_last") else label
+        cls = MLP_AGENT_CLASSES[base_key]
+        tok = load_set_tokenizer(ckpt, env_cfg, peek=cls.peek_vocab)
+        acfg = AgentConfig(**json.loads(cfg_path.read_text()))
+        params = dict(acfg.params)
+        params["n_actions"] = int(env_cfg.gym.max_techs)
+        params.setdefault("max_techs", int(env_cfg.gym.max_techs))
+        params.setdefault("max_machines", int(env_cfg.gym.max_machines))
+        params.setdefault("env_length", int(env_cfg.gym.set_env_length))
+        params.setdefault(
+            "tech_slot_length", int(env_cfg.gym.set_tech_slot_length)
+        )
+        params.setdefault(
+            "machine_slot_length", int(env_cfg.gym.set_machine_slot_length)
+        )
+        params.setdefault("vocab", tok.get_vocab())
+        agent = cls(**params)
+        agent.load(ckpt)
+        net = getattr(agent, "net", None) or getattr(agent, "online_net", None)
+        if net is not None:
+            net.eval()  # no dropout/noise in benchmark forwards (D2)
+        # This family trained entirely post-D11/D12 — never legacy.
+        env = make_env(env_cfg, scenario_factory, "set", tokenizer=tok,
+                       legacy_obs=False)
         agents[label] = (agent, env)
     # Token-stream anchors: rebuilt with the runner's exact vocab recipe
     # (deterministic given identical config/pools, so checkpoint ids
@@ -503,7 +559,8 @@ def main() -> int:
                               machine_types=mtypes, component_types=ctypes)
         if args.agents != "all":
             if args.agents == "trained":
-                keep = set(CHECKPOINTS) | set(TOKEN_CHECKPOINTS)
+                keep = (set(CHECKPOINTS) | set(TOKEN_CHECKPOINTS)
+                        | set(MLP_CHECKPOINTS))
             elif args.agents == "heuristics":
                 keep = set(HEURISTICS)
             else:
