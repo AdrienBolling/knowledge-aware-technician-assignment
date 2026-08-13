@@ -14,6 +14,7 @@ from pathlib import Path
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
+from experiment.config import AgentConfig
 from kata.core.config import KATAConfig
 
 CONF_DIR = str(Path(__file__).resolve().parent.parent / "conf")
@@ -24,6 +25,18 @@ ENV_GROUPS = [
     "small_scale",
     "massive_scale",
     "train_multiscale",
+    "train_multiscale_v5",
+    "train_multiscale_v5_grpo",
+    "train_multiscale_v5_mlp",
+]
+
+AGENT_GROUPS = [
+    "set_transformer",
+    "set_transformer_gru",
+    "set_transformer_v6",
+    "a2c_mlp",
+    "grpo_mlp",
+    "dql_mlp",
 ]
 
 
@@ -37,6 +50,19 @@ def test_every_env_group_composes_and_validates():
         cfg = _compose([f"env={env}"])
         env_data = OmegaConf.to_container(cfg.env, resolve=True)
         KATAConfig(**env_data)  # pydantic is still the validator
+
+
+def test_every_agent_group_composes_and_validates():
+    for agent in AGENT_GROUPS:
+        cfg = _compose([f"agent={agent}"])
+        agent_data = OmegaConf.to_container(cfg.agent, resolve=True)
+        AgentConfig(**agent_data)  # agent_type Literal + params dict
+
+
+def test_grpo_env_group_pins_group_rotation():
+    cfg = _compose(["env=train_multiscale_v5_grpo"])
+    env_data = OmegaConf.to_container(cfg.env, resolve=True)
+    assert env_data["randomized_scenario"]["episodes_per_scenario"] == 8
 
 
 def test_deep_override_reaches_composed_tree():

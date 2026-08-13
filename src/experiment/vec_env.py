@@ -33,6 +33,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium.vector import AutoresetMode
 
+from experiment.config import SET_OBS_AGENT_TYPES
 from kata.funcs import seed_numba_rng
 
 
@@ -97,13 +98,21 @@ def _build_worker_env(
         tokenizer.load_vocab(vocab)
         tokenizer.freeze()
 
-    representation = "set" if agent_type == "set_transformer" else (
+    representation = "set" if agent_type in SET_OBS_AGENT_TYPES else (
         gym_cfg.observation_representation
     )
     gym_cfg = gym_cfg.model_copy(
         update={"observation_representation": representation}
     )
     env = KataEnv(scenario_factory=factory, config=gym_cfg, tokenizer=tokenizer)
+    # KataEnv.__init__ consumed one sampler build to bootstrap the
+    # observation/action spaces; forget it so the worker's first
+    # TRAINING episode opens a fresh episodes_per_scenario block
+    # (mirrors Experiment._build_env — otherwise every k-block is
+    # offset by one and straddles two sampled factories).
+    reset_scenario_cache = getattr(factory, "reset_scenario_cache", None)
+    if callable(reset_scenario_cache):
+        reset_scenario_cache()
     return SeededResetWrapper(env)
 
 
