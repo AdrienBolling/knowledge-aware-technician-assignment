@@ -22,7 +22,10 @@
 #
 # GPU plan: waits until GPUs 0/1/2 are all free (lifecycle + ft queues
 # may still be running when this is armed), then a2c->GPU0, grpo->GPU1,
-# dql->GPU2 in parallel.
+# dql->GPU2 in parallel.  TRAD_SKIP_GATE=1 skips the wait (explicit
+# co-scheduling authorization); TRAD_GPU_A2C/GRPO/DQL reassign lanes
+# when one of the default GPUs is occupied — the MLPs are small enough
+# that two serial trainings share a V100 without contention.
 #
 # uv --no-sync everywhere (dgy torch downgrade).
 set -u
@@ -37,21 +40,25 @@ EVAL_SEED=20260722
 OUTROOT=reports/hvp_eval_v6w
 PARTS=reports/hvp_v6w_parts
 KEYS="a2c_mlp a2c_mlp_last grpo_mlp grpo_mlp_last dql_mlp dql_mlp_last"
-SCENARIOS="baseline small_scale massive_scale very_long"
+SCENARIOS="baseline small_scale massive_scale very_long lifecycle"
 say() { echo "$(date -u +%FT%TZ) [trad] $*" | tee -a "$Q"; }
 mkdir -p reports
 
 say "TRAD BASELINES QUEUE ARMED (pid $$, seed $SEED)"
 
 # ----- gate: wait for all three GPUs to be free ----------------------
-while true; do
-  BUSY=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
-         | awk -F', ' '$1 <= 2 && $2 > 1000 {n++} END {print n+0}')
-  [ "$BUSY" = 0 ] && break
-  say "gate: $BUSY of GPUs 0-2 busy — waiting 10 min"
-  sleep 600
-done
-say "gate passed: GPUs 0-2 free"
+if [ "${TRAD_SKIP_GATE:-0}" = 1 ]; then
+  say "gate SKIPPED (TRAD_SKIP_GATE=1; lanes a2c=${TRAD_GPU_A2C:-0} grpo=${TRAD_GPU_GRPO:-1} dql=${TRAD_GPU_DQL:-2})"
+else
+  while true; do
+    BUSY=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
+           | awk -F', ' '$1 <= 2 && $2 > 1000 {n++} END {print n+0}')
+    [ "$BUSY" = 0 ] && break
+    say "gate: $BUSY of GPUs 0-2 busy — waiting 10 min"
+    sleep 600
+  done
+  say "gate passed: GPUs 0-2 free"
+fi
 
 canonicalise() {  # $1 agent_type — last=final; best falls back to final.
   local AT=$1 CKDIR=checkpoints/${1}_v1
@@ -87,9 +94,9 @@ train() {  # $1 agent_type, $2 gpu, $3 parallel_envs
   return $RC
 }
 
-train a2c_mlp  0 5 & P_A2C=$!
-train grpo_mlp 1 1 & P_GRPO=$!
-train dql_mlp  2 1 & P_DQL=$!
+train a2c_mlp  "${TRAD_GPU_A2C:-0}" 5 & P_A2C=$!
+train grpo_mlp "${TRAD_GPU_GRPO:-1}" 1 & P_GRPO=$!
+train dql_mlp  "${TRAD_GPU_DQL:-2}" 1 & P_DQL=$!
 FAILED=0
 wait "$P_A2C"  || { say "TRAIN FAILED a2c_mlp";  FAILED=1; }
 wait "$P_GRPO" || { say "TRAIN FAILED grpo_mlp"; FAILED=1; }
@@ -120,6 +127,7 @@ part() {  # $1 agent key, $2 scenario
   fi
   [ "$S" = massive_scale ] && EXTRA="--steps 25000 --n-eps 3"
   [ "$S" = very_long ] && EXTRA="--record-every 200"
+  [ "$S" = lifecycle ] && EXTRA="--record-every 200"
   say "part $A/$S start"
   nice -n 10 uv run --no-sync python scripts/eval_human_vs_performance.py \
     --scenario "$S" $EXTRA --agents "$A" --eval-seed "$EVAL_SEED" \
