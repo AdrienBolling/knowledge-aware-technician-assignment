@@ -53,6 +53,8 @@ AGENT_LABELS = {
     "hc_v6_last": r"HTT-RL-v6-last (ours)",
     "ft_protect": r"v6-ft-protect (ours)",
     "ft_protect_last": r"v6-ft-protect-last (ours)",
+    "ft_gini": r"v6-ft-gini (ours)",
+    "ft_gini_last": r"v6-ft-gini-last (ours)",
     "ft_fatigue": r"v6-ft-fatigue (ours)",
     "ft_fatigue_last": r"v6-ft-fatigue-last (ours)",
     "ft_quality": r"v6-ft-quality (ours)",

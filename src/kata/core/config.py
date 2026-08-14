@@ -462,6 +462,19 @@ class GymRewardConfig(BaseModel):
             "assignments have happened yet, the raw value is 1."
         ),
     )
+    knowledge_gini: RewardComponentConfig = Field(
+        default_factory=_disabled_reward_component,
+        description=(
+            "Penalizes knowledge CONCENTRATION across the active "
+            "fleet.  Raw value is minus the Gini coefficient of "
+            "per-technician knowledge volumes (retired technicians "
+            "excluded), in ``(-1, 0]``: 0 for a perfectly level fleet, "
+            "approaching -1 when one technician holds everything.  "
+            "Distinct from ``selection_diversity`` (assignment counts) "
+            "and ``workload_balance`` (fatigue spread): this prices "
+            "the knowledge distribution itself, i.e. key-person risk."
+        ),
+    )
     terminal_finished_products: RewardComponentConfig = Field(
         default_factory=_disabled_reward_component,
         description=(
