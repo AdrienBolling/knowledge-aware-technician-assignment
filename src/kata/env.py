@@ -1975,6 +1975,19 @@ class KataEnv(gym.Env):
                 "repair_quality", quality
             )
 
+        # --- knowledge_gini: penalize knowledge concentration ---
+        # Raw value is MINUS the Gini coefficient of per-technician
+        # knowledge volumes, so a level fleet pays 0 and a fleet where
+        # one technician holds everything pays -> -1.  The value is
+        # action-independent at the step it is paid (knowledge only
+        # changes when repairs complete between decisions), so credit
+        # flows through bootstrapping — same regime as
+        # fleet_availability/throughput_delta.
+        if self.config.reward.knowledge_gini.enabled:
+            breakdown["knowledge_gini"] = self._reward_component(
+                "knowledge_gini", -self._knowledge_gini()
+            )
+
         # --- knowledge_increment: dense fleet-knowledge growth ---
         # Computed as the delta in mean per-tech knowledge volume
         # since the previous decision step.  Between two consecutive
@@ -2050,20 +2063,18 @@ class KataEnv(gym.Env):
             return 0.0
         return float(math.tanh(mean_volume / scale))
 
-    def _fleet_mean_knowledge_volume(self) -> float:
-        """Return the fleet's current mean per-technician knowledge volume.
+    def _fleet_knowledge_volumes(self) -> list[float]:
+        """Per-technician knowledge volumes for the ACTIVE fleet.
 
-        Robust to several ``KnowledgeGrid`` API shapes and test fakes
-        (see ``_fleet_knowledge_raw`` for the fallback chain).  Returns
-        ``0.0`` if the fleet is empty.
+        Retired technicians left the fleet — their (frozen) knowledge
+        must not count toward fleet aggregates.  Robust to several
+        ``KnowledgeGrid`` API shapes and test fakes (see
+        ``_fleet_knowledge_raw`` for the fallback chain); non-finite
+        values count as 0.
         """
         techs = getattr(self.dispatcher, "techs", None) or []
-        # Retired technicians left the fleet — their (frozen) knowledge
-        # must not count toward the fleet aggregate.
         techs = [t for t in techs if not getattr(t, "retired", False)]
-        if not techs:
-            return 0.0
-        total = 0.0
+        volumes: list[float] = []
         for tech in techs:
             grid = getattr(tech, "knowledge_grid", None)
             if grid is not None and hasattr(grid, "knowledge_volume"):
@@ -2074,8 +2085,36 @@ class KataEnv(gym.Env):
                 value = float(getattr(tech, "knowledge", 0.0))
             if not math.isfinite(value):
                 value = 0.0
-            total += max(0.0, value)
-        return total / len(techs)
+            volumes.append(max(0.0, value))
+        return volumes
+
+    def _fleet_mean_knowledge_volume(self) -> float:
+        """Return the fleet's current mean per-technician knowledge volume.
+
+        Returns ``0.0`` if the fleet is empty.
+        """
+        volumes = self._fleet_knowledge_volumes()
+        if not volumes:
+            return 0.0
+        return sum(volumes) / len(volumes)
+
+    def _knowledge_gini(self) -> float:
+        """Gini coefficient of per-technician knowledge volumes, in [0, 1).
+
+        0 = perfectly level fleet; ``(n-1)/n`` = one technician holds
+        everything.  Returns ``0.0`` for empty or single-technician
+        fleets and for an all-zero fleet (no concentration to price).
+        Motivated by the 2026-08-14 lifecycle key-person finding: the
+        top-1 technician held 20-26% of total fleet knowledge under
+        every policy measured.
+        """
+        volumes = sorted(self._fleet_knowledge_volumes())
+        n = len(volumes)
+        total = sum(volumes)
+        if n < 2 or total <= 0.0:
+            return 0.0
+        weighted = sum(i * v for i, v in enumerate(volumes, start=1))
+        return float((2.0 * weighted) / (n * total) - (n + 1.0) / n)
 
     def _estimated_repair_time_raw(self, tech: Any, request: Any) -> float:
         """Return negative log-ratio of estimated vs base repair time.

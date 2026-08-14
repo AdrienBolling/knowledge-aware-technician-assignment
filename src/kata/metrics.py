@@ -286,6 +286,32 @@ class MeanTimeToRepairRolling(StepMetric):
         return float(sum(deque_)) / len(deque_)
 
 
+class KnowledgeGini(StepMetric):
+    """Gini coefficient of per-technician knowledge volumes.
+
+    Measures knowledge CONCENTRATION across the active fleet (retired
+    technicians excluded): ``0`` = perfectly level fleet,
+    ``(n-1)/n`` = one technician holds everything.  Delegates to
+    ``KataEnv._knowledge_gini`` so the metric and the
+    ``knowledge_gini`` reward component report the identical quantity.
+
+    Motivation (2026-08-14 lifecycle analysis): the top-1 technician
+    held 20-26% of total fleet knowledge under every measured policy,
+    which is what makes ``select=highest_knowledge`` retirements so
+    damaging.  This metric makes that key-person risk observable over
+    time instead of only arithmetically recoverable around events.
+    """
+
+    name = "knowledge_gini"
+
+    def compute(self, tech: Any, request: Any, env: Any) -> float:
+        _ = tech, request
+        fn = getattr(env, "_knowledge_gini", None)
+        if fn is None or not callable(fn):
+            return 0.0
+        return float(fn())
+
+
 class RepairQuality(StepMetric):
     """Skill-based repair quality of the chosen technician.
 
@@ -538,6 +564,7 @@ STEP_METRICS: list[StepMetric] = [
     RepairTimeDeltaPercent(),
     RepairQuality(),
     MeanTimeToRepairRolling(),
+    KnowledgeGini(),
     TechnicianKnowledge(),
     TechnicianFatigue(),
     TechnicianSpecializationIndex(),
