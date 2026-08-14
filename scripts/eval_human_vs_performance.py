@@ -458,13 +458,38 @@ def finished_products(env) -> int:
     return sum(int(getattr(s, "completed", 0)) for s in sinks)
 
 
+def _episode_kpis(final_metrics: dict, sums: dict, counts: dict) -> dict:
+    """Episode KPI dict: step metrics as episode MEANS, episode metrics as-is.
+
+    Step metrics (``repair_quality``, ``mttr_rolling``, ``repair_time_delta``,
+    ``repair_time_delta_per``) appear in ``info["metrics"]`` at every decision,
+    so their accumulated mean is the episode aggregate.  Episode metrics are
+    merged into the dict only at termination, so they were never accumulated
+    (``counts`` misses them) and pass through unchanged.
+
+    Historically the caller copied the TERMINAL step's dict verbatim, which
+    silently made every step-metric column in episodes.csv a single
+    last-decision snapshot — one assignment's quality, one rolling window out
+    of the whole episode (found 2026-08-14).  Existing artifacts are repaired
+    retroactively from steps.csv.gz by ``scripts/repair_stepmetric_columns.py``.
+    """
+    out = {}
+    for k, v in final_metrics.items():
+        if "/" in k:
+            continue
+        n = counts.get(k, 0)
+        out[k] = (sums[k] / n) if n else float(v)
+    return out
+
+
 def run_episode(agent, env, *, seed: int, deterministic: bool = True,
                 record_every: int = 1):
     """One rollout; returns (kpis_dict, step_records_list).
 
     ``record_every`` subsamples the per-step series (every N-th decision
-    plus the terminal one); episode KPIs are unaffected.  Use for very
-    long episodes where every-step records would dominate memory.
+    plus the terminal one); episode KPIs are unaffected — step-metric KPIs
+    are accumulated over EVERY decision, not the recorded subset.  Use for
+    very long episodes where every-step records would dominate memory.
     """
     np.random.seed(seed)  # heuristic tiebreaks / RandomAgent
     random.seed(seed)  # machine-failure Bernoulli draws (stdlib random in
@@ -480,12 +505,22 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     records = []
     ep_reward, n_steps = 0.0, 0
     final_info: dict = {}
+    metric_sums: dict[str, float] = {}
+    metric_counts: dict[str, int] = {}
     while True:
         action = agent.select_action(obs, deterministic=deterministic)
         with quiet():
             obs, reward, term, trunc, info = env.step(action)
         ep_reward += float(reward)
         n_steps += 1
+        for k, v in info.get("metrics", {}).items():
+            if "/" in k:
+                continue
+            fv = float(v)
+            if k == "mttr_rolling" and fv == 0.0:
+                continue  # placeholder before the first completed repair
+            metric_sums[k] = metric_sums.get(k, 0.0) + fv
+            metric_counts[k] = metric_counts.get(k, 0) + 1
         if (term or trunc) or (n_steps % record_every == 0):
             m = info.get("metrics", {})
             fat_mean, fat_std = fleet_fatigue(env)
@@ -507,11 +542,9 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
             break
     agent.on_episode_end(ep_reward)
 
-    kpis = {
-        k: float(v)
-        for k, v in final_info.get("metrics", {}).items()
-        if "/" not in k
-    }
+    kpis = _episode_kpis(
+        final_info.get("metrics", {}), metric_sums, metric_counts
+    )
     kpis["episode_reward"] = ep_reward
     kpis["n_steps"] = n_steps
     kpis["final_sim_time"] = float(final_info.get("sim_time", 0.0))
