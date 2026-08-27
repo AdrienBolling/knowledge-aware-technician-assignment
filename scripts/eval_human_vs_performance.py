@@ -146,6 +146,15 @@ CHECKPOINTS = {
     "ft_fatigue_last": Path("checkpoints/ft_fatigue/set_transformer_last.pt"),
     "ft_quality": Path("checkpoints/ft_quality/set_transformer_best.pt"),
     "ft_quality_last": Path("checkpoints/ft_quality/set_transformer_last.pt"),
+    # v6-po ablation (scripts/local_po_v6_queue.sh): the exact hc_v6
+    # recipe/world/architecture with ONLY performance-oriented reward
+    # components (throughput_delta, repair_quality, terminal products);
+    # the human-centric stack — knowledge_increment PBRS, terminal
+    # fleet knowledge, fatigue_cost, workload_balance,
+    # fleet_availability — is disabled.  Trained locally (4080); BC
+    # init re-collected locally with the dgy protocol/seed.
+    "po_v6": Path("checkpoints/po_v6_final/set_transformer_best.pt"),
+    "po_v6_last": Path("checkpoints/po_v6_final/set_transformer_last.pt"),
 }
 
 # Token-stream RL anchors (section 7.4): standard architectures trained
