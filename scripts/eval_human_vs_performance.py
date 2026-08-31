@@ -155,6 +155,12 @@ CHECKPOINTS = {
     # init re-collected locally with the dgy protocol/seed.
     "po_v6": Path("checkpoints/po_v6_final/set_transformer_best.pt"),
     "po_v6_last": Path("checkpoints/po_v6_final/set_transformer_last.pt"),
+    # v6 extension (scripts/local_hc_v6_ext_queue.sh): hc_v6 final.pt
+    # + 600 MORE episodes of the same recipe/reward (train_multiscale_v5),
+    # fresh world sequence (seed 43), LR schedule re-armed at 1e-4.
+    # Tests whether the ~ep-400 plateau was a training-budget artifact.
+    "hc_v6_ext": Path("checkpoints/hc_v6_ext_final/set_transformer_best.pt"),
+    "hc_v6_ext_last": Path("checkpoints/hc_v6_ext_final/set_transformer_last.pt"),
 }
 
 # Token-stream RL anchors (section 7.4): standard architectures trained

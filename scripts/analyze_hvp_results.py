@@ -61,6 +61,8 @@ AGENT_LABELS = {
     "ft_quality_last": r"v6-ft-quality-last (ours)",
     "po_v6": r"v6-po (ablation)",
     "po_v6_last": r"v6-po-last (ablation)",
+    "hc_v6_ext": r"HTT-RL-v6-ext (ours)",
+    "hc_v6_ext_last": r"HTT-RL-v6-ext-last (ours)",
     "ppo_transformer": "PPO-TRF (anchor)",
     "rainbow_dqn": "Rainbow (anchor)",
     # Traditional-architecture learned baselines: plain MLPs on the same
