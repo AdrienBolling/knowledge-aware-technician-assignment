@@ -63,6 +63,8 @@ AGENT_LABELS = {
     "po_v6_last": r"v6-po-last (ablation)",
     "hc_v6_ext": r"HTT-RL-v6-ext (ours)",
     "hc_v6_ext_last": r"HTT-RL-v6-ext-last (ours)",
+    "hc_v6_wr": r"HTT-RL-v6-wr (ours)",
+    "hc_v6_wr_last": r"HTT-RL-v6-wr-last (ours)",
     "ppo_transformer": "PPO-TRF (anchor)",
     "rainbow_dqn": "Rainbow (anchor)",
     # Traditional-architecture learned baselines: plain MLPs on the same

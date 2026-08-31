@@ -303,3 +303,32 @@ def test_rearm_uses_constructor_lr_not_checkpoint_base(tmp_path):
     expected = 1.5e-4 * b._lr_lambda(b.warmup_updates)
     assert all(abs(x - expected) < 1e-9 for x in lrs), lrs
     assert all(abs(x - 1.5e-4) < 1e-9 for x in b.lr_scheduler.base_lrs)
+
+
+def test_rearm_fires_on_same_size_extension(tmp_path):
+    """The hc_v6_ext defect (2026-08-31): a checkpoint whose schedule
+    position sits just BELOW the new run's total_updates (same-size
+    extension) must still get a fresh schedule — the old exhausted-only
+    gate resumed the cosine at its tail and the whole extension trained
+    at floor LR."""
+    import torch
+
+    def make(lr, total):
+        return PPOTransformerAgent(
+            n_actions=3, vocab_size=8, d_model=16, n_heads=2, n_layers=1,
+            max_seq_len=8, lr=lr, total_updates=total, warmup_updates=2,
+            device="cpu",
+        )
+
+    a = make(3e-4, 10)
+    for _ in range(9):
+        a.lr_scheduler.step()  # just below the new run's budget
+    p = tmp_path / "ck.pt"
+    a.save(p)
+
+    b = make(1e-4, 10)
+    b.load(p)
+    assert b.lr_scheduler.last_epoch == b.warmup_updates
+    expected = 1e-4 * b._lr_lambda(b.warmup_updates)
+    lrs = [g["lr"] for g in b.optimizer.param_groups]
+    assert all(abs(x - expected) < 1e-9 for x in lrs), lrs

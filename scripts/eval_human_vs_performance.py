@@ -161,6 +161,13 @@ CHECKPOINTS = {
     # Tests whether the ~ep-400 plateau was a training-budget artifact.
     "hc_v6_ext": Path("checkpoints/hc_v6_ext_final/set_transformer_best.pt"),
     "hc_v6_ext_last": Path("checkpoints/hc_v6_ext_final/set_transformer_last.pt"),
+    # v6 warm restart (scripts/local_hc_v6_wr_queue.sh): same +600-ep
+    # extension but with the re-arm gate FIXED, so the lr=1e-4 cosine
+    # warm restart actually applies (hc_v6_ext trained at the floor
+    # 1.5e-5 by the same-size-extension defect — see ppo_transformer
+    # docstring).  ext = budget test at tail LR; wr = plasticity test.
+    "hc_v6_wr": Path("checkpoints/hc_v6_wr_final/set_transformer_best.pt"),
+    "hc_v6_wr_last": Path("checkpoints/hc_v6_wr_final/set_transformer_last.pt"),
 }
 
 # Token-stream RL anchors (section 7.4): standard architectures trained
