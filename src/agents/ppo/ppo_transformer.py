@@ -187,20 +187,27 @@ class PPOAgentInfraMixin:
                 self.net.train()
 
     def _rearm_lr_schedule_if_exhausted(self) -> None:
-        """Re-arm the LR schedule when a restored checkpoint outlives it.
+        """Re-arm the LR schedule on any checkpoint restore.
 
-        A checkpoint resumed past its schedule end (e.g. a plateau
-        extension restarting from a late round) would otherwise spend
-        its entire budget at the cosine tail.  Rewind the schedule to
-        just past warmup and re-apply the corresponding LR to the
-        optimizer's param groups (the restored optimizer state carries
-        the tail LR).
+        This load path only runs when a NEW training run starts from a
+        checkpoint (``init_checkpoint`` / the agent-config ``checkpoint``
+        param) — there is no same-schedule crash-resume in this codebase
+        — so the restored scheduler position is never the right one: the
+        new run deserves a fresh post-warmup schedule over its OWN
+        ``total_updates`` budget.  The original exhausted-only gate
+        (``last_epoch >= total_updates``) missed the same-size-extension
+        case: hc_v6's checkpoint carried last_epoch=832 into a run sized
+        ~837 updates, so the gate said "not exhausted" and the whole
+        600-episode extension trained at the cosine-tail floor LR
+        (found 2026-08-31, hc_v6_ext).  Rewind to just past warmup and
+        re-apply the corresponding LR to the optimizer's param groups
+        (the restored optimizer state carries the tail LR).
         """
-        if self.lr_scheduler.last_epoch < self.total_updates:
-            return
+        if self.lr_scheduler.last_epoch <= 0:
+            return  # nothing restored / fresh schedule already
         logger.warning(
-            "Restored LR schedule is exhausted (step %d >= total_updates %d)"
-            " — re-arming a fresh post-warmup schedule.",
+            "Restored LR schedule position (step %d, total_updates %d)"
+            " — re-arming a fresh post-warmup schedule for this run.",
             self.lr_scheduler.last_epoch,
             self.total_updates,
         )
