@@ -74,8 +74,12 @@ for scenario, title in SCEN.items():
             c, ls, lw, alpha = style(a)
             z = 3 if a in ACCENT else 1
             y = r[1]
-            if ax is axes[0] and xs == 1e6:
-                k = 11  # ~2% of the horizon on the 500-point grid
+            if ax is axes[0]:
+                # rolling median (kills isolated monster-repair windows)
+                # then a light mean: ~3% of the horizon combined
+                from scipy.signal import medfilt
+                y = medfilt(y, 15)
+                k = 7
                 y = np.convolve(y, np.ones(k)/k, mode='same')
                 y[:k//2], y[-(k//2):] = y[k//2], y[-(k//2)-1]
             ax.plot(r[0]/xs, y, color=c, ls=ls, lw=lw, alpha=alpha, zorder=z)
