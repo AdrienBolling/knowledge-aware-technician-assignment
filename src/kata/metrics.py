@@ -422,6 +422,51 @@ class IllTechnicianCount(EpisodeMetric):
         )
 
 
+class DisruptionCountByType(EpisodeMetric):
+    """Fleet-wide count of disruption events of one named type.
+
+    Sums ``disruption_counts_by_type[dis_name]`` over every technician
+    the dispatcher knows (retired technicians keep their history and
+    are deliberately included — their past events happened).  Zero when
+    the scenario does not configure the type.
+    """
+
+    def __init__(self, dis_name: str) -> None:
+        self.dis_name = dis_name
+        self.name = f"disruptions_{dis_name}"
+
+    def compute(self, env: Any) -> float:
+        techs = getattr(env.dispatcher, "techs", [])
+        return float(
+            sum(
+                getattr(t, "disruption_counts_by_type", {}).get(self.dis_name, 0)
+                for t in techs
+            )
+        )
+
+
+class DisruptionTimeByType(EpisodeMetric):
+    """Fleet-wide cumulative sim time spent in one named disruption type.
+
+    Sums the actually-elapsed hold time recorded by
+    ``GymTechnician._take_disruption`` (an interrupted hold contributes
+    what it held, not the sampled duration).
+    """
+
+    def __init__(self, dis_name: str) -> None:
+        self.dis_name = dis_name
+        self.name = f"disruption_time_{dis_name}"
+
+    def compute(self, env: Any) -> float:
+        techs = getattr(env.dispatcher, "techs", [])
+        return float(
+            sum(
+                getattr(t, "disruption_time_by_type", {}).get(self.dis_name, 0.0)
+                for t in techs
+            )
+        )
+
+
 class FinishedProducts(EpisodeMetric):
     """Count of products that reached the sink during the episode."""
 
@@ -575,6 +620,14 @@ EPISODE_METRICS: list[EpisodeMetric] = [
     TotalAssignments(),
     TotalRepairs(),
     IllTechnicianCount(),
+    # Per-type disruption breakdown (the three standard benchmark
+    # types; zero-valued when a scenario omits one).
+    DisruptionCountByType("injury"),
+    DisruptionCountByType("exhaustion"),
+    DisruptionCountByType("vacation"),
+    DisruptionTimeByType("injury"),
+    DisruptionTimeByType("exhaustion"),
+    DisruptionTimeByType("vacation"),
     FinishedProducts(),
     MeanTimeToRepair(),
     MeanTimeBetweenFailures(),
