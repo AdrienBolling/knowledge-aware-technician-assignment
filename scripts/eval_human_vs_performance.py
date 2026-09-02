@@ -482,6 +482,27 @@ def finished_products(env) -> int:
     return sum(int(getattr(s, "completed", 0)) for s in sinks)
 
 
+_DISRUPTION_TYPES = ("injury", "exhaustion", "vacation")
+
+
+def _disruption_totals(env) -> dict:
+    """Cumulative per-type disruption counts and held time, fleet-wide.
+
+    Read directly off the dispatcher's technicians (retired included —
+    their past events happened) so the step records carry trajectories;
+    the matching episode totals come from the ``disruptions_*`` /
+    ``disruption_time_*`` episode metrics.
+    """
+    techs = getattr(env.dispatcher, "techs", [])
+    out = {}
+    for d in _DISRUPTION_TYPES:
+        out[f"disruptions_{d}"] = float(sum(
+            getattr(t, "disruption_counts_by_type", {}).get(d, 0) for t in techs))
+        out[f"disruption_time_{d}"] = float(sum(
+            getattr(t, "disruption_time_by_type", {}).get(d, 0.0) for t in techs))
+    return out
+
+
 def _episode_kpis(final_metrics: dict, sums: dict, counts: dict) -> dict:
     """Episode KPI dict: step metrics as episode MEANS, episode metrics as-is.
 
@@ -561,6 +582,7 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
                 "fleet_knowledge": float(env._fleet_mean_knowledge_volume()),
                 "fatigue_mean": fat_mean,
                 "fatigue_std": fat_std,
+                **_disruption_totals(env),
             })
         if term or trunc:
             final_info = info

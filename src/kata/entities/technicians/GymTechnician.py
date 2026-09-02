@@ -95,6 +95,10 @@ class GymTechnician(Technician):
         # and metrics that want a per-trigger view.
         self.disruption_count: int = 0
         self.disruption_counts_by_type: dict[str, int] = {}
+        # Cumulative sim time spent inside each named disruption type.
+        # Measured as actually-elapsed hold time (not the sampled
+        # duration), so an interrupted hold contributes what it held.
+        self.disruption_time_by_type: dict[str, float] = {}
 
         # Simulation time at which the technician last became idle.
         # Used by ``start_repair`` to drive fatigue recovery: the gap
@@ -271,6 +275,7 @@ class GymTechnician(Technician):
         with tech_resource.request(priority=0, preempt=bool(dis_cfg.preemptive)) as req:
             yield req
             self._in_disruption = True
+            started = float(env.now)
             try:
                 self.disruption_count += 1
                 self.disruption_counts_by_type[dis_name] = (
@@ -280,6 +285,10 @@ class GymTechnician(Technician):
                 yield env.timeout(duration)
             finally:
                 self._in_disruption = False
+                self.disruption_time_by_type[dis_name] = (
+                    self.disruption_time_by_type.get(dis_name, 0.0)
+                    + (float(env.now) - started)
+                )
 
     def _sample_duration(self, dis_cfg: Any) -> float:
         """Sample a strictly-positive duration from the configured Normal."""
