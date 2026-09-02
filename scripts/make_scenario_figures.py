@@ -24,6 +24,29 @@ RET = [0.8e6, 2.5e6, 4.2e6]
 plt.rcParams.update({'font.size':7.5,'axes.titlesize':8,'axes.labelsize':7.5,
                      'xtick.labelsize':7,'ytick.labelsize':7,'pdf.fonttype':42})
 
+
+MIN_PER_MONTH = 43830.0   # 30.44 d x 1440 min, 1 t.u. ~ 1 minute
+MIN_PER_YEAR = 525960.0
+
+def add_calendar_axis(ax, xs, tmax_tu):
+    """Top axis with approximate calendar-time ticks (1 t.u. ~ 1 min)."""
+    if tmax_tu > 1.5e6:
+        vals = [y * MIN_PER_YEAR for y in (2, 4, 6, 8)]
+        labs = ['2 y', '4 y', '6 y', '8 y']
+    elif tmax_tu > 1.2e5:
+        vals = [m * MIN_PER_MONTH for m in (1, 2, 3, 4)]
+        labs = ['1 mo', '2 mo', '3 mo', '4 mo']
+    else:
+        vals = [m * MIN_PER_MONTH for m in (1, 2)]
+        labs = ['1 mo', '2 mo']
+    vals, labs = zip(*[(v, l) for v, l in zip(vals, labs) if v <= tmax_tu * 1.02])
+    sec = ax.secondary_xaxis('top')
+    sec.set_xticks([v / xs for v in vals], labs)
+    sec.tick_params(labelsize=6.3, colors='#777777', length=2.5)
+    for sp in sec.spines.values():
+        sp.set_visible(False)
+    return sec
+
 def style(agent):
     if agent in ACCENT:
         lab,c,ls,lw = ACCENT[agent]; return c,ls,lw,1.0
@@ -97,7 +120,9 @@ for scenario, title in SCEN.items():
         ax.spines[['top','right']].set_visible(False)
         ax.grid(alpha=0.22, lw=0.5)
         if ax in (axes[2], axes[3]): ax.set_xlabel(xl)
-        ax.set_ylabel(ylab); ax.set_title(tt, fontsize=8)
+        if ax in (axes[0], axes[1]):
+            add_calendar_axis(ax, xs, df.sim_time.max())
+        ax.set_ylabel(ylab); ax.set_title(tt, fontsize=8, pad=14)
     # bottom-left: the summary score's output-normalised absence metric
     ep = pd.read_csv(f'{ROOT}/{scenario}/episodes.csv')
     ep = ep[ep.agent.isin(ORDER)].groupby('agent').mean(numeric_only=True)
