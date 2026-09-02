@@ -1,10 +1,11 @@
 """Deep-dive figure: HTT-RL vs PO-HTT-RL vs the two empirical rules at
 the industrial scale, with mean +/- std bands.
 
-Band semantics differ by panel (stated in the caption): rolling MTTR and
-throughput-rate bands are the std ACROSS the 3 episodes; fleet-knowledge
-and fatigue bands are the mean across episodes of the std ACROSS
-TECHNICIANS (the fleet's internal spread).
+Band semantics differ by panel (stated in the caption): the rolling-MTTR
+and repair-quality bands are the std WITHIN the rolling window; the
+throughput band is the std ACROSS MACHINES of the per-machine
+processing rate; fleet-knowledge and fatigue bands are the std ACROSS
+TECHNICIANS.  All curves and bands are means over the 3 episodes.
 
 Data: reports/deepdive_parts/<agent>/massive_scale/steps.csv.gz —
 re-evaluated locally with per-decision records incl. fleet_knowledge_std
@@ -66,31 +67,47 @@ def per_episode(df, fn):
         rows.append(np.interp(GRID, t, y))
     return np.array(rows)
 
-fig, axes = plt.subplots(2, 2, figsize=(7.0, 4.5))
+fig, axes = plt.subplots(2, 3, figsize=(7.0, 4.3))
 data = {a: pd.read_csv(f'{ROOT}/{a}/massive_scale/steps.csv.gz') for a in AGENTS}
 
 def panel(ax, mean_fn, band_fn, ylab, title, do_smooth=False):
     for a, (lab, c, ls, lw) in AGENTS.items():
         df = data[a]
         m = per_episode(df, mean_fn)
-        if band_fn is None:                      # band = std across episodes
-            mu, sd = m.mean(axis=0), m.std(axis=0)
-        else:                                    # band = std across technicians
-            s = per_episode(df, band_fn)
-            mu, sd = m.mean(axis=0), s.mean(axis=0)
+        b = per_episode(df, band_fn)
+        mu, sd = m.mean(axis=0), b.mean(axis=0)
         if do_smooth:
             mu, sd = smooth(mu), smooth(sd)
         ax.plot(GRID/1e3, mu, color=c, ls=ls, lw=lw, zorder=3)
         ax.fill_between(GRID/1e3, np.maximum(mu-sd, 0.0), mu+sd, color=c, alpha=0.14, lw=0, zorder=1)
     ax.spines[['top','right']].set_visible(False)
     ax.grid(alpha=0.22, lw=0.5)
-    if ax in (axes[0][0], axes[0][1]):
+    if ax in (axes[0][0], axes[0][1], axes[0][2]):
         add_calendar_axis(ax, 1e3, GRID[-1])
     ax.set_ylabel(ylab); ax.set_title(title, fontsize=8, pad=14)
 
 def mttr(g):
     g = g[(g.mttr_rolling > 0) & (g.step >= 52)]
     return g.sim_time.to_numpy(float), g.mttr_rolling.to_numpy(float)
+
+def mttr_sd(g):
+    g = g[(g.mttr_rolling > 0) & (g.step >= 52)]
+    return g.sim_time.to_numpy(float), g.mttr_rolling_std.to_numpy(float)
+
+QW = 52  # decisions ~ 50 repairs, matches the MTTR window
+
+def quality(g):
+    g = g.sort_values('step')
+    q = pd.Series(g.repair_quality.to_numpy(float)).rolling(QW, min_periods=QW).mean()
+    return g.sim_time.to_numpy(float), q.to_numpy()
+
+def quality_sd(g):
+    g = g.sort_values('step')
+    q = pd.Series(g.repair_quality.to_numpy(float)).rolling(QW, min_periods=QW).std()
+    return g.sim_time.to_numpy(float), q.to_numpy()
+
+def mrate(g):    return g.sim_time.to_numpy(float), g.machine_rate_mean.to_numpy(float)
+def mrate_sd(g): return g.sim_time.to_numpy(float), g.machine_rate_std.to_numpy(float)
 
 def knowledge(g):   return g.sim_time.to_numpy(float), g.fleet_knowledge.to_numpy(float)/1e3
 def knowledge_sd(g):return g.sim_time.to_numpy(float), g.fleet_knowledge_std.to_numpy(float)/1e3
@@ -102,21 +119,24 @@ def thr_rate(g):
     prev = np.interp(t - W, t, p, left=0.0)
     return t, (p - prev) / W * 1e3   # products per 10^3 t.u.
 
-panel(axes[0][0], mttr, None, 'rolling MTTR (t.u.)',
-      'Rolling MTTR, 50-repair window (band: episodes)', do_smooth=True)
-panel(axes[0][1], knowledge, knowledge_sd, r'fleet knowledge ($\times 10^3$)',
+panel(axes[0][0], mttr, mttr_sd, 'rolling MTTR (t.u.)',
+      'Rolling MTTR (band: window std)', do_smooth=True)
+panel(axes[0][1], quality, quality_sd, 'repair quality',
+      'Rolling repair quality (band: window std)', do_smooth=True)
+panel(axes[0][2], mrate, mrate_sd, r'items / $10^3$ t.u. per machine',
+      'Per-machine rate (band: machines)', do_smooth=True)
+panel(axes[1][0], knowledge, knowledge_sd, r'fleet knowledge ($\times 10^3$)',
       'Fleet knowledge (band: technicians)')
-panel(axes[1][0], thr_rate, None, r'products / $10^3$ t.u.',
-      'Throughput rate, 5k-t.u. window (band: episodes)', do_smooth=True)
 panel(axes[1][1], fatigue, fatigue_sd, 'technician fatigue',
       'Fatigue (band: technicians)', do_smooth=True)
-for ax in axes[1]:
+for ax in axes[1][:2]:
     ax.set_xlabel('simulation time (k t.u.)')
+axes[0][2].set_xlabel('simulation time (k t.u.)')
 
+axes[1][2].axis('off')
 handles = [Line2D([], [], color=c, ls=ls, lw=lw, label=lab)
            for lab, c, ls, lw in AGENTS.values()]
-fig.legend(handles=handles, ncol=4, loc='upper center', frameon=False,
-           fontsize=7.5, bbox_to_anchor=(0.5, 1.02))
-fig.tight_layout(rect=(0, 0, 1, 0.96))
+axes[1][2].legend(handles=handles, loc='center', frameon=False, fontsize=8)
+fig.tight_layout()
 fig.savefig(OUT, bbox_inches='tight')
 print('saved', OUT)

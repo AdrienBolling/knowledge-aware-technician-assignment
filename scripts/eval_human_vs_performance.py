@@ -483,6 +483,44 @@ def finished_products(env) -> int:
 
 
 _DISRUPTION_TYPES = ("injury", "exhaustion", "vacation")
+_MACHINE_RATE_WINDOW = 5000.0  # t.u.; per-machine processing-rate window
+
+
+def _machine_counts(env) -> dict:
+    """{machine_id: total_processed} for the non-retired park."""
+    try:
+        machines = env._factory_machines()
+    except Exception:
+        return {}
+    return {
+        getattr(m, "machine_id", id(m)): int(getattr(m, "total_processed", 0))
+        for m in machines
+        if not getattr(m, "retired", False)
+    }
+
+
+def _machine_rates(history, now, counts) -> tuple[float, float]:
+    """Mean/std across machines of the per-machine processing rate
+    (items per 10^3 t.u.) over the trailing ``_MACHINE_RATE_WINDOW``.
+
+    ``history`` is a list of (sim_time, counts_dict) snapshots the
+    caller appends each decision; entries older than one window beyond
+    the boundary are pruned in place.
+    """
+    boundary = now - _MACHINE_RATE_WINDOW
+    while len(history) >= 2 and history[1][0] <= boundary:
+        history.pop(0)
+    if not history or history[0][0] > boundary or now <= history[0][0]:
+        return float("nan"), float("nan")
+    t0, c0 = history[0]
+    dt = now - t0
+    rates = [
+        (counts[k] - c0[k]) / dt * 1e3
+        for k in counts.keys() & c0.keys()
+    ]
+    if not rates:
+        return float("nan"), float("nan")
+    return float(np.mean(rates)), float(np.std(rates))
 
 
 def _disruption_totals(env) -> dict:
@@ -552,6 +590,7 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     final_info: dict = {}
     metric_sums: dict[str, float] = {}
     metric_counts: dict[str, int] = {}
+    machine_hist: list = []
     while True:
         action = agent.select_action(obs, deterministic=deterministic)
         with quiet():
@@ -566,13 +605,21 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
                 continue  # placeholder before the first completed repair
             metric_sums[k] = metric_sums.get(k, 0.0) + fv
             metric_counts[k] = metric_counts.get(k, 0) + 1
+        _now = float(info.get("sim_time", 0.0))
+        _counts = _machine_counts(env)
+        machine_hist.append((_now, _counts))
         if (term or trunc) or (n_steps % record_every == 0):
             m = info.get("metrics", {})
             fat_mean, fat_std = fleet_fatigue(env)
+            mr_mean, mr_std = _machine_rates(machine_hist, _now, _counts)
+            durs = getattr(env, "_recent_repair_durations", ())
             records.append({
                 "step": n_steps,
                 "sim_time": float(info.get("sim_time", 0.0)),
                 "mttr_rolling": float(m.get("mttr_rolling", np.nan)),
+                "mttr_rolling_std": float(np.std(durs)) if len(durs) >= 2 else np.nan,
+                "machine_rate_mean": mr_mean,
+                "machine_rate_std": mr_std,
                 "repair_quality": float(m.get("repair_quality", np.nan)),
                 "repair_time_delta_per": float(m.get("repair_time_delta_per", np.nan)),
                 "knowledge_gini": float(m.get("knowledge_gini", np.nan)),
