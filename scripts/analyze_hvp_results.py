@@ -82,12 +82,12 @@ AGENT_LABELS = {
     "shortest_queue": "ShortestQueue",
     "empirical_spt": "SPT-emp",
     "empirical_topsis": "TOPSIS-emp",
-    "shortest_processing": r"SPT$^{\dagger}$",
-    "optimal_assignment": r"Hungarian$^{\dagger}$",
-    "batch_milp": r"BatchMILP$^{\dagger}$",
-    "topsis": r"TOPSIS$^{\dagger}$",
-    "reserve_specialist": r"ReserveSpec$^{\dagger}$",
-    "train_weakest": r"TrainWeakest$^{\dagger}$",
+    "shortest_processing": r"SPT$^{*}$",
+    "optimal_assignment": r"Hungarian$^{*}$",
+    "batch_milp": r"BatchMILP$^{*}$",
+    "topsis": r"TOPSIS$^{*}$",
+    "reserve_specialist": r"ReserveSpec$^{*}$",
+    "train_weakest": r"TrainWeakest$^{*}$",
     "greedy_reward": r"GreedyReward$^{\ddagger}$",
 }
 AGENT_ORDER = list(AGENT_LABELS)
@@ -95,7 +95,7 @@ AGENT_ORDER = list(AGENT_LABELS)
 # Drop-in table footnote for the manuscript (also written next to each
 # generated table so the marker semantics travel with the artefact).
 ORACLE_FOOTNOTE = (
-    r"$^{\dagger}$informed baseline: reads the simulator's ground-truth "
+    r"$^{*}$informed baseline: reads the simulator's ground-truth "
     r"repair-time/skill estimates; $^{\ddagger}$reward oracle: reads the "
     r"exact per-assignment reward (the learned agents' training "
     r"objective).  Unmarked rules use the observation (and, for the "
