@@ -69,9 +69,6 @@ for scenario, title in SCEN.items():
         (axes[1], lambda g: (g.sort_values('step').sim_time.to_numpy(float),
                              g.sort_values('step').fleet_knowledge.to_numpy(float)/1e3),
          r'mean fleet knowledge ($\times 10^3$)', 'Fleet knowledge'),
-        (axes[2], lambda g: (g.sort_values('step').sim_time.to_numpy(float),
-                             g.sort_values('step').fatigue_mean.to_numpy(float)),
-         'mean fatigue', 'Fleet fatigue'),
         (axes[3], lambda g: (g.sort_values('step').sim_time.to_numpy(float),
                              g.sort_values('step').finished_products.to_numpy(float)/pscale),
          plab, 'Cumulative finished products')):
@@ -83,7 +80,7 @@ for scenario, title in SCEN.items():
             c, ls, lw, alpha = style(a)
             z = 3 if a in ACCENT else 1
             y = r[1]
-            if ax is axes[0] or ax is axes[2]:
+            if ax is axes[0]:
                 # centered rolling median (kills isolated spikes, no
                 # edge padding artifacts) then a light mean: ~3% of
                 # the horizon combined
@@ -101,6 +98,23 @@ for scenario, title in SCEN.items():
         ax.grid(alpha=0.22, lw=0.5)
         if ax in (axes[2], axes[3]): ax.set_xlabel(xl)
         ax.set_ylabel(ylab); ax.set_title(tt, fontsize=8)
+    # bottom-left: the summary score's output-normalised absence metric
+    ep = pd.read_csv(f'{ROOT}/{scenario}/episodes.csv')
+    ep = ep[ep.agent.isin(ORDER)].groupby('agent').mean(numeric_only=True)
+    ipk = (ep.ill_technician_count / ep.finished_products * 1000).reindex(ORDER).dropna()
+    ipk = ipk.sort_values(ascending=False)  # best (lowest) ends on top
+    SHORT = {'hc_v6':'HTT-RL','ft_quality':'HTT-RL$^{quality}$','empirical_topsis':'Emp-Topsis',
+             'empirical_spt':'Emp-Spt','batch_milp':'Milp','shortest_queue':'ShortQ',
+             'least_fatigued':'LeastFat','round_robin':'RoundR','least_busy':'LeastBusy',
+             'train_weakest':'TrainW','random':'Random','a2c_mlp':'A2C','grpo_mlp':'GRPO','dql_mlp':'DDQN'}
+    ax = axes[2]
+    cols = [style(a)[0] for a in ipk.index]
+    ax.barh(range(len(ipk)), ipk.values, color=cols, height=0.72)
+    ax.set_yticks(range(len(ipk)), [SHORT[a] for a in ipk.index], fontsize=6.3)
+    ax.set_xlabel(r'technician disruptions / $10^3$ products')
+    ax.set_title('Disruptions per output (episode total)', fontsize=8)
+    ax.spines[['top','right']].set_visible(False)
+    ax.grid(alpha=0.22, lw=0.5, axis='x')
     handles = [Line2D([],[], color=ACCENT[a][1], ls=ACCENT[a][2], lw=ACCENT[a][3], label=ACCENT[a][0])
                for a in ('hc_v6','ft_quality','empirical_topsis','empirical_spt','random')]
     handles += [Line2D([],[], color='#BFBFBF', ls='-', lw=0.9, label='other rules (6)'),
