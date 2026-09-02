@@ -580,6 +580,8 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
                 "finished_products": finished_products(env),
                 "fleet_availability": float(env._fleet_availability_raw()),
                 "fleet_knowledge": float(env._fleet_mean_knowledge_volume()),
+                "fleet_knowledge_std": float(np.std(env._fleet_knowledge_volumes())
+                                             if env._fleet_knowledge_volumes() else 0.0),
                 "fatigue_mean": fat_mean,
                 "fatigue_std": fat_std,
                 **_disruption_totals(env),
