@@ -36,16 +36,13 @@ def load(scenario):
     df = pd.concat([df] + parts, ignore_index=True)
     return df[df.agent.isin(ORDER)]
 
-def r100(g):
-    """100-repair rolling MTTR from the recorded 50-repair windows:
-    0.5*(R50(step) + R50(step-52)); step index ~ repair index."""
-    g = g[g.mttr_rolling > 0].sort_values('step')
+def r50(g):
+    """The harness's recorded rolling MTTR (last 50 completed repairs),
+    plotted as-is; rows before the first completed repair are dropped
+    and the curve starts once the window is full (step >= 52)."""
+    g = g[(g.mttr_rolling > 0) & (g.step >= 52)].sort_values('step')
     if len(g) < 3: return None
-    s, v = g.step.to_numpy(float), g.mttr_rolling.to_numpy(float)
-    prev = np.interp(s - 52, s, v, left=np.nan, right=np.nan)
-    out = 0.5*(v + prev)
-    ok = (~np.isnan(out)) & (s >= 104)
-    return g.sim_time.to_numpy(float)[ok], out[ok]
+    return g.sim_time.to_numpy(float), g.mttr_rolling.to_numpy(float)
 
 def mean_curve(sub, series):
     """Average per-episode curves on a common sim-time grid."""
@@ -65,7 +62,7 @@ for scenario, title in SCEN.items():
     fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.35))
     ycaps = {}
     for ax, series, ylab, tt in (
-        (axes[0], r100, 'rolling MTTR (t.u.)', 'Rolling MTTR, 100-repair window'),
+        (axes[0], r50, 'rolling MTTR (t.u.)', 'Rolling MTTR, 50-repair window'),
         (axes[1], lambda g: (g.sort_values('step').sim_time.to_numpy(float),
                              g.sort_values('step').fleet_knowledge.to_numpy(float)/1e3),
          r'mean fleet knowledge ($\times 10^3$)', 'Fleet knowledge')):
