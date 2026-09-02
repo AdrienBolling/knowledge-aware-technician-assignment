@@ -1,0 +1,104 @@
+"""Per-scenario MTTR(100-repair rolling) + fleet-knowledge figures,
+restricted to the summary-table roster (deployable field, no oracles)."""
+import numpy as np, pandas as pd
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+ROOT = 'reports/hvp_eval_v6w'
+PARTS = 'reports/hvp_v6w_parts'
+OUT = 'paper/figures'
+SCEN = {'small_scale':'S1 Small','baseline':'S2 Baseline','massive_scale':'S3 Industrial',
+        'very_long':'S4 Very-long','lifecycle':'S5 Lifecycle'}
+ACCENT = {'hc_v6':('HTT-RL','#0072B2','-',1.8),
+          'ft_quality':(r'HTT-RL$^{quality}$','#009E73','-',1.8),
+          'empirical_topsis':('Emp-Topsis','#D55E00','-',1.3),
+          'empirical_spt':('Emp-Spt','#CC79A7','-.',1.3),
+          'random':('Random','#4D4D4D',':',1.1)}
+RULES = ['batch_milp','shortest_queue','least_fatigued','round_robin','least_busy','train_weakest']
+MLPS  = ['a2c_mlp','grpo_mlp','dql_mlp']
+ORDER = RULES + MLPS + ['random','empirical_spt','empirical_topsis','ft_quality','hc_v6']
+RET = [0.8e6, 2.5e6, 4.2e6]
+
+plt.rcParams.update({'font.size':7.5,'axes.titlesize':8,'axes.labelsize':7.5,
+                     'xtick.labelsize':7,'ytick.labelsize':7,'pdf.fonttype':42})
+
+def style(agent):
+    if agent in ACCENT:
+        lab,c,ls,lw = ACCENT[agent]; return c,ls,lw,1.0
+    if agent in MLPS: return '#8C8C8C','--',0.9,0.9
+    return '#BFBFBF','-',0.9,0.9
+
+def load(scenario):
+    df = pd.read_csv(f'{ROOT}/{scenario}/steps.csv.gz')
+    parts = [pd.read_csv(f'{PARTS}/{a}/{scenario}/steps.csv.gz') for a in MLPS]
+    df = pd.concat([df] + parts, ignore_index=True)
+    return df[df.agent.isin(ORDER)]
+
+def r100(g):
+    """100-repair rolling MTTR from the recorded 50-repair windows:
+    0.5*(R50(step) + R50(step-52)); step index ~ repair index."""
+    g = g[g.mttr_rolling > 0].sort_values('step')
+    if len(g) < 3: return None
+    s, v = g.step.to_numpy(float), g.mttr_rolling.to_numpy(float)
+    prev = np.interp(s - 52, s, v, left=np.nan, right=np.nan)
+    out = 0.5*(v + prev)
+    ok = (~np.isnan(out)) & (s >= 104)
+    return g.sim_time.to_numpy(float)[ok], out[ok]
+
+def mean_curve(sub, series):
+    """Average per-episode curves on a common sim-time grid."""
+    curves = []
+    for _, g in sub.groupby('episode'):
+        r = series(g)
+        if r is not None: curves.append(r)
+    if not curves: return None
+    lo = max(c[0][0] for c in curves); hi = min(c[0][-1] for c in curves)
+    grid = np.linspace(lo, hi, 500)
+    return grid, np.mean([np.interp(grid, *c) for c in curves], axis=0)
+
+for scenario, title in SCEN.items():
+    df = load(scenario)
+    xs = 1e6 if df.sim_time.max() > 1e6 else 1e3
+    xl = 'simulation time (M t.u.)' if xs == 1e6 else 'simulation time (k t.u.)'
+    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.35))
+    ycaps = {}
+    for ax, series, ylab, tt in (
+        (axes[0], r100, 'rolling MTTR (t.u.)', 'Rolling MTTR, 100-repair window'),
+        (axes[1], lambda g: (g.sort_values('step').sim_time.to_numpy(float),
+                             g.sort_values('step').fleet_knowledge.to_numpy(float)/1e3),
+         r'mean fleet knowledge ($\times 10^3$)', 'Fleet knowledge')):
+        for a in ORDER:
+            sub = df[df.agent == a]
+            if sub.empty: continue
+            r = mean_curve(sub, series)
+            if r is None: continue
+            c, ls, lw, alpha = style(a)
+            z = 3 if a in ACCENT else 1
+            y = r[1]
+            if ax is axes[0] and xs == 1e6:
+                k = 11  # ~2% of the horizon on the 500-point grid
+                y = np.convolve(y, np.ones(k)/k, mode='same')
+                y[:k//2], y[-(k//2):] = y[k//2], y[-(k//2)-1]
+            ax.plot(r[0]/xs, y, color=c, ls=ls, lw=lw, alpha=alpha, zorder=z)
+        if scenario == 'lifecycle':
+            for t in RET: ax.axvline(t/1e6, color='#999999', ls=(0,(2,2)), lw=0.7, zorder=0)
+        if ax is axes[0]:
+            p90s = [np.percentile(l.get_ydata(), 90) for l in ax.get_lines() if len(l.get_ydata())]
+            if p90s:
+                lo = min(np.min(l.get_ydata()) for l in ax.get_lines() if len(l.get_ydata()))
+                ax.set_ylim(lo*0.92, max(p90s)*1.15)
+        ax.spines[['top','right']].set_visible(False)
+        ax.grid(alpha=0.22, lw=0.5)
+        ax.set_xlabel(xl); ax.set_ylabel(ylab); ax.set_title(tt, fontsize=8)
+    handles = [Line2D([],[], color=ACCENT[a][1], ls=ACCENT[a][2], lw=ACCENT[a][3], label=ACCENT[a][0])
+               for a in ('hc_v6','ft_quality','empirical_topsis','empirical_spt','random')]
+    handles += [Line2D([],[], color='#BFBFBF', ls='-', lw=0.9, label='other rules (6)'),
+                Line2D([],[], color='#8C8C8C', ls='--', lw=0.9, label='MLP anchors (3)')]
+    fig.legend(handles=handles, ncol=7, loc='upper center', frameon=False,
+               fontsize=7, bbox_to_anchor=(0.5, 1.04), columnspacing=1.2, handlelength=1.9)
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.savefig(f'{OUT}/mttr_knowledge_{scenario}.pdf', bbox_inches='tight')
+    plt.close(fig)
+    print(scenario, 'done')
