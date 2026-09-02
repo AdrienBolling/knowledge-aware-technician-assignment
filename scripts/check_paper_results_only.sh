@@ -19,8 +19,9 @@ if [ "${1:-}" = "--bypass" ] || [ "${GUARD_BYPASS:-0}" = 1 ]; then
   exit 0
 fi
 
-# Build artifacts are not edits.
-ARTIFACTS='\.(aux|log|out|bbl|blg|fls|fdb_latexmk|synctex\.gz|toc|spl|pdf)$'
+# Build artifacts are not edits (Manuscript build products only — a
+# figure PDF under figures/ IS content and must be flagged).
+ARTIFACTS='^Manuscript\.(aux|log|out|bbl|blg|fls|fdb_latexmk|synctex\.gz|toc|spl|pdf)$'
 CHANGED=$(git -C paper status --porcelain --untracked-files=no \
   | awk '{print $2}' | grep -Ev "$ARTIFACTS" || true)
 
