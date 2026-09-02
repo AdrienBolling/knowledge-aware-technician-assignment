@@ -59,13 +59,22 @@ for scenario, title in SCEN.items():
     df = load(scenario)
     xs = 1e6 if df.sim_time.max() > 1e6 else 1e3
     xl = 'simulation time (M t.u.)' if xs == 1e6 else 'simulation time (k t.u.)'
-    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.35))
-    ycaps = {}
+    fig, axes2 = plt.subplots(2, 2, figsize=(7.0, 4.5))
+    axes = axes2.ravel()
+    pscale = 1e3 if df.finished_products.max() > 5000 else 1.0
+    plab = (r'cumulative products ($\times 10^3$)' if pscale == 1e3
+            else 'cumulative products')
     for ax, series, ylab, tt in (
         (axes[0], r50, 'rolling MTTR (t.u.)', 'Rolling MTTR, 50-repair window'),
         (axes[1], lambda g: (g.sort_values('step').sim_time.to_numpy(float),
                              g.sort_values('step').fleet_knowledge.to_numpy(float)/1e3),
-         r'mean fleet knowledge ($\times 10^3$)', 'Fleet knowledge')):
+         r'mean fleet knowledge ($\times 10^3$)', 'Fleet knowledge'),
+        (axes[2], lambda g: (g.sort_values('step').sim_time.to_numpy(float),
+                             g.sort_values('step').fatigue_mean.to_numpy(float)),
+         'mean fatigue', 'Fleet fatigue'),
+        (axes[3], lambda g: (g.sort_values('step').sim_time.to_numpy(float),
+                             g.sort_values('step').finished_products.to_numpy(float)/pscale),
+         plab, 'Cumulative finished products')):
         for a in ORDER:
             sub = df[df.agent == a]
             if sub.empty: continue
@@ -74,32 +83,31 @@ for scenario, title in SCEN.items():
             c, ls, lw, alpha = style(a)
             z = 3 if a in ACCENT else 1
             y = r[1]
-            if ax is axes[0]:
-                # rolling median (kills isolated monster-repair windows)
-                # then a light mean: ~3% of the horizon combined
-                from scipy.signal import medfilt
-                y = medfilt(y, 15)
-                k = 7
-                y = np.convolve(y, np.ones(k)/k, mode='same')
-                y[:k//2], y[-(k//2):] = y[k//2], y[-(k//2)-1]
+            if ax is axes[0] or ax is axes[2]:
+                # centered rolling median (kills isolated spikes, no
+                # edge padding artifacts) then a light mean: ~3% of
+                # the horizon combined
+                y = (pd.Series(y).rolling(15, center=True, min_periods=1).median()
+                       .rolling(7, center=True, min_periods=1).mean().to_numpy())
             ax.plot(r[0]/xs, y, color=c, ls=ls, lw=lw, alpha=alpha, zorder=z)
         if scenario == 'lifecycle':
             for t in RET: ax.axvline(t/1e6, color='#999999', ls=(0,(2,2)), lw=0.7, zorder=0)
         if ax is axes[0]:
             p90s = [np.percentile(l.get_ydata(), 90) for l in ax.get_lines() if len(l.get_ydata())]
             if p90s:
-                lo = min(np.min(l.get_ydata()) for l in ax.get_lines() if len(l.get_ydata()))
-                ax.set_ylim(lo*0.92, max(p90s)*1.15)
+                lo = min(np.percentile(l.get_ydata(), 10) for l in ax.get_lines() if len(l.get_ydata()))
+                ax.set_ylim(lo*0.95, max(p90s)*1.15)
         ax.spines[['top','right']].set_visible(False)
         ax.grid(alpha=0.22, lw=0.5)
-        ax.set_xlabel(xl); ax.set_ylabel(ylab); ax.set_title(tt, fontsize=8)
+        if ax in (axes[2], axes[3]): ax.set_xlabel(xl)
+        ax.set_ylabel(ylab); ax.set_title(tt, fontsize=8)
     handles = [Line2D([],[], color=ACCENT[a][1], ls=ACCENT[a][2], lw=ACCENT[a][3], label=ACCENT[a][0])
                for a in ('hc_v6','ft_quality','empirical_topsis','empirical_spt','random')]
     handles += [Line2D([],[], color='#BFBFBF', ls='-', lw=0.9, label='other rules (6)'),
                 Line2D([],[], color='#8C8C8C', ls='--', lw=0.9, label='MLP anchors (3)')]
     fig.legend(handles=handles, ncol=7, loc='upper center', frameon=False,
-               fontsize=7, bbox_to_anchor=(0.5, 1.04), columnspacing=1.2, handlelength=1.9)
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
+               fontsize=7, bbox_to_anchor=(0.5, 1.02), columnspacing=1.2, handlelength=1.9)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(f'{OUT}/mttr_knowledge_{scenario}.pdf', bbox_inches='tight')
     plt.close(fig)
     print(scenario, 'done')
