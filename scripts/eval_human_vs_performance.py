@@ -235,6 +235,14 @@ SCENARIOS = {
         cfg="run_configs/benchmark_suite/lifecycle.json",
         n_eps=1, sim=5_000_000.0, steps=1_500_000,
     ),
+    # Realistic-lifespan probe (2026-09-02): the industrial layout on
+    # the x25-lifespan machine park of run_configs/realistic_lifespan/
+    # (requires --extra-machine-templates with the matching JSON —
+    # the `_rl` template names are not registered otherwise).
+    "very_long_realistic": dict(
+        cfg="run_configs/realistic_lifespan/very_long_realistic.json",
+        n_eps=1, sim=5_000_000.0, steps=1_500_000,
+    ),
 }
 
 EVAL_SEED = 4321
@@ -670,7 +678,18 @@ def main() -> int:
                          "final paper benchmarks use a freshly drawn seed, "
                          "stated in the manuscript protocol)")
     ap.add_argument("--out-root", default="reports/hvp_eval")
+    ap.add_argument("--extra-machine-templates", default=None,
+                    help="JSON file of additional machine templates to "
+                         "register at runtime (e.g. the realistic-lifespan "
+                         "park); does not touch the packaged template file.")
     args = ap.parse_args()
+    if args.extra_machine_templates:
+        from kata.EntityFactories.machine_factory import register_template
+        _extra = json.loads(Path(args.extra_machine_templates).read_text())
+        for _name, _tpl in _extra.items():
+            register_template(_name, _tpl)
+        print(f"registered {len(_extra)} extra machine templates "
+              f"from {args.extra_machine_templates}")
 
     global EVAL_SEED
     if args.eval_seed is not None:
