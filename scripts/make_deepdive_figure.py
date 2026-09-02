@@ -81,7 +81,7 @@ def panel(ax, mean_fn, band_fn, ylab, title, do_smooth=False):
         if do_smooth:
             mu, sd = smooth(mu), smooth(sd)
         ax.plot(GRID/1e3, mu, color=c, ls=ls, lw=lw, zorder=3)
-        ax.fill_between(GRID/1e3, mu-sd, mu+sd, color=c, alpha=0.14, lw=0, zorder=1)
+        ax.fill_between(GRID/1e3, np.maximum(mu-sd, 0.0), mu+sd, color=c, alpha=0.14, lw=0, zorder=1)
     ax.spines[['top','right']].set_visible(False)
     ax.grid(alpha=0.22, lw=0.5)
     if ax in (axes[0][0], axes[0][1]):
