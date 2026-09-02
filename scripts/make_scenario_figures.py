@@ -113,10 +113,11 @@ for scenario, title in SCEN.items():
         if scenario == 'lifecycle':
             for t in RET: ax.axvline(t/1e6, color='#999999', ls=(0,(2,2)), lw=0.7, zorder=0)
         if ax is axes[0]:
-            p90s = [np.percentile(l.get_ydata(), 90) for l in ax.get_lines() if len(l.get_ydata())]
-            if p90s:
-                lo = min(np.percentile(l.get_ydata(), 10) for l in ax.get_lines() if len(l.get_ydata()))
-                ax.set_ylim(lo*0.95, max(p90s)*1.15)
+            # data curves only — axvline markers carry 2-point (0,1) ydata
+            curves = [l.get_ydata() for l in ax.get_lines() if len(l.get_ydata()) > 10]
+            if curves:
+                lo = min(np.median(y) for y in curves)
+                ax.set_ylim(lo*0.85, max(np.percentile(y, 90) for y in curves)*1.15)
         ax.spines[['top','right']].set_visible(False)
         ax.grid(alpha=0.22, lw=0.5)
         if ax in (axes[2], axes[3]): ax.set_xlabel(xl)
