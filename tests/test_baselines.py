@@ -17,6 +17,11 @@ from agents import (
     TopsisAgent,
     TrainWeakestAgent,
 )
+from agents.baselines.heuristics import (
+    EVO_TOPSIS_DEFAULT,
+    EvoTopsisAgent,
+    EvoTopsisInformedAgent,
+)
 from kata.core.config import GymEnvConfig
 from kata.env import KataEnv
 
@@ -389,3 +394,62 @@ def test_expected_repair_times_memoised_per_decision():
     v2 = env.expected_repair_times()
     assert np.allclose(v1, v2)
     assert calls["n"] == n_after_first  # second call cached
+
+
+def test_evo_topsis_default_weights_reproduce_empirical_topsis():
+    d = FakeDispatcher(tech_count=3)
+    req = FakeRequest(machine_id=1)
+    d.repair_queue.items.append(req)
+    env = _make_env(d)
+    obs, _ = env.reset()
+    d.techs[0].fatigue = 0.1
+    d.techs[1].fatigue = 0.9
+    d.techs[2].fatigue = 0.1
+    env._on_repair_completed(req, 5.0, d.techs[0])
+    env._on_repair_completed(req, 5.0, d.techs[1])
+    env._on_repair_completed(req, 20.0, d.techs[2])
+
+    ref = EmpiricalTopsisAgent(3)
+    ref.attach_env(env)
+    ref.on_episode_start()
+    evo = EvoTopsisAgent(3, weights=EVO_TOPSIS_DEFAULT)
+    evo.attach_env(env)
+    evo.on_episode_start()
+    assert evo.select_action(obs, deterministic=True) == ref.select_action(obs, deterministic=True) == 0
+    # the informed twin reads the env's ground-truth estimates; with equal
+    # oracle repair times the fatigue criterion decides against tech 1.
+    inf = EvoTopsisInformedAgent(3, weights=EVO_TOPSIS_DEFAULT)
+    inf.attach_env(env)
+    inf.on_episode_start()
+    assert inf.select_action(obs, deterministic=True) in (0, 2)
+
+
+def test_evo_topsis_signed_weight_flips_experience_direction():
+    d = FakeDispatcher(tech_count=3)
+    req = FakeRequest(machine_id=1)
+    d.repair_queue.items.append(req)
+    env = _make_env(d)
+    obs, _ = env.reset()
+    for t in d.techs:
+        t.fatigue = 0.2
+    # identical observed speed; tech 2 has three completions on this key
+    for tech, n in ((0, 1), (1, 1), (2, 3)):
+        for _ in range(n):
+            env._on_repair_completed(req, 5.0, d.techs[tech])
+
+    prefer_experience = EvoTopsisAgent(3, weights=(0.0, 0.0, 0.0, -1.0, 0.0))
+    prefer_experience.attach_env(env)
+    prefer_experience.on_episode_start()
+    assert prefer_experience.select_action(obs, deterministic=True) == 2
+
+    train_novice = EvoTopsisAgent(3, weights=(0.0, 0.0, 0.0, 1.0, 0.0))
+    train_novice.attach_env(env)
+    train_novice.on_episode_start()
+    assert train_novice.select_action(obs, deterministic=True) in (0, 1)
+
+
+def test_evo_topsis_rejects_wrong_weight_count():
+    import pytest
+
+    with pytest.raises(ValueError):
+        EvoTopsisAgent(3, weights=(0.5, 0.3, 0.2))

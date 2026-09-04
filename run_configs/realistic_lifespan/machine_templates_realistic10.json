@@ -1,0 +1,540 @@
+{
+ "cnc_weibull_rl10": {
+  "machine_type": "CNC",
+  "process_time": 200,
+  "dt": 1,
+  "components": {
+   "spindle_0": {
+    "component_id": "spindle_0",
+    "component_type": "spindle",
+    "base_repair_time": 480.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 2.5,
+     "scale": 8000.0
+    },
+    "min_repair_fraction": 0.2,
+    "knowledge_sensitivity": 0.075
+   },
+   "coolant_pump_0": {
+    "component_id": "coolant_pump_0",
+    "component_type": "pump",
+    "base_repair_time": 180.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 3.0,
+     "scale": 12000.0
+    },
+    "min_repair_fraction": 0.4,
+    "knowledge_sensitivity": 0.225
+   },
+   "main_drive": {
+    "component_id": "main_drive",
+    "component_type": "drive",
+    "base_repair_time": 48000.0,
+    "idle_degradation_factor": 0.01,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 3.0,
+     "scale": 2000000.0
+    },
+    "min_repair_fraction": 0.6,
+    "knowledge_sensitivity": 0.03
+   }
+  }
+ },
+ "assembly_mixed_rl10": {
+  "machine_type": "Assembly",
+  "process_time": 120,
+  "dt": 1,
+  "components": {
+   "motor_0": {
+    "component_id": "motor_0",
+    "component_type": "motor",
+    "base_repair_time": 240.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 2.5,
+     "scale": 8000.0
+    },
+    "min_repair_fraction": 0.35,
+    "knowledge_sensitivity": 0.15
+   },
+   "bearing_0": {
+    "component_id": "bearing_0",
+    "component_type": "bearing",
+    "base_repair_time": 35.0,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0002,
+     "failure_prob_idle": 2e-05
+    },
+    "min_repair_fraction": 0.55,
+    "knowledge_sensitivity": 0.45
+   }
+  }
+ },
+ "assembly_robot_rl10": {
+  "machine_type": "Assembly",
+  "process_time": 80,
+  "dt": 1,
+  "components": {
+   "servo_motor_1": {
+    "component_id": "servo_motor_1",
+    "component_type": "motor",
+    "base_repair_time": 300.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 3.0,
+     "scale": 30000.0
+    },
+    "min_repair_fraction": 0.3,
+    "knowledge_sensitivity": 0.12
+   },
+   "gripper": {
+    "component_id": "gripper",
+    "component_type": "end_effector",
+    "base_repair_time": 35.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0004,
+     "failure_prob_idle": 4e-05
+    },
+    "min_repair_fraction": 0.45,
+    "knowledge_sensitivity": 0.3
+   },
+   "controller": {
+    "component_id": "controller",
+    "component_type": "electronics",
+    "base_repair_time": 360.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0001,
+     "failure_prob_idle": 1e-05
+    },
+    "min_repair_fraction": 0.25,
+    "knowledge_sensitivity": 0.09
+   },
+   "vendor_pcb": {
+    "component_id": "vendor_pcb",
+    "component_type": "electronics",
+    "base_repair_time": 48000.0,
+    "idle_degradation_factor": 0.01,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 1.0000000000000002e-06,
+     "failure_prob_idle": 1e-07
+    },
+    "min_repair_fraction": 0.8,
+    "knowledge_sensitivity": 0.015
+   }
+  }
+ },
+ "conveyor_rl10": {
+  "machine_type": "Conveyor",
+  "process_time": 100,
+  "dt": 1,
+  "components": {
+   "belt_motor": {
+    "component_id": "belt_motor",
+    "component_type": "motor",
+    "base_repair_time": 200.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 1.5,
+     "scale": 50000.0
+    },
+    "min_repair_fraction": 0.35,
+    "knowledge_sensitivity": 0.18
+   },
+   "belt": {
+    "component_id": "belt",
+    "component_type": "mechanical",
+    "base_repair_time": 30.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0005,
+     "failure_prob_idle": 5e-05
+    },
+    "min_repair_fraction": 0.6,
+    "knowledge_sensitivity": 0.75
+   }
+  }
+ },
+ "welder_rl10": {
+  "machine_type": "Welder",
+  "process_time": 150,
+  "dt": 1,
+  "components": {
+   "welding_torch": {
+    "component_id": "welding_torch",
+    "component_type": "torch",
+    "base_repair_time": 120.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 2.0,
+     "scale": 15000.0
+    },
+    "min_repair_fraction": 0.25,
+    "knowledge_sensitivity": 0.12
+   },
+   "cooling_unit": {
+    "component_id": "cooling_unit",
+    "component_type": "pump",
+    "base_repair_time": 180.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 3.0,
+     "scale": 25000.0
+    },
+    "min_repair_fraction": 0.4,
+    "knowledge_sensitivity": 0.225
+   },
+   "power_supply": {
+    "component_id": "power_supply",
+    "component_type": "electronics",
+    "base_repair_time": 360.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 8e-05,
+     "failure_prob_idle": 1e-05
+    },
+    "min_repair_fraction": 0.2,
+    "knowledge_sensitivity": 0.06
+   }
+  }
+ },
+ "inspection_rl10": {
+  "machine_type": "Inspection",
+  "process_time": 60,
+  "dt": 1,
+  "components": {
+   "camera": {
+    "component_id": "camera",
+    "component_type": "sensor",
+    "base_repair_time": 30.0,
+    "idle_degradation_factor": 0.2,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.00030000000000000003,
+     "failure_prob_idle": 2.9999999999999997e-05
+    },
+    "min_repair_fraction": 0.55,
+    "knowledge_sensitivity": 0.6
+   },
+   "sensor_array": {
+    "component_id": "sensor_array",
+    "component_type": "sensor",
+    "base_repair_time": 120.0,
+    "idle_degradation_factor": 0.15,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0002,
+     "failure_prob_idle": 2e-05
+    },
+    "min_repair_fraction": 0.45,
+    "knowledge_sensitivity": 0.3
+   },
+   "controller": {
+    "component_id": "controller",
+    "component_type": "electronics",
+    "base_repair_time": 240.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0001,
+     "failure_prob_idle": 1e-05
+    },
+    "min_repair_fraction": 0.25,
+    "knowledge_sensitivity": 0.09
+   }
+  }
+ },
+ "press_rl10": {
+  "machine_type": "Press",
+  "process_time": 180,
+  "dt": 1,
+  "components": {
+   "hydraulic_pump": {
+    "component_id": "hydraulic_pump",
+    "component_type": "pump",
+    "base_repair_time": 420.0,
+    "idle_degradation_factor": 0.04,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 2.2,
+     "scale": 40000.0
+    },
+    "min_repair_fraction": 0.3,
+    "knowledge_sensitivity": 0.15
+   },
+   "ram": {
+    "component_id": "ram",
+    "component_type": "mechanical",
+    "base_repair_time": 240.0,
+    "idle_degradation_factor": 0.02,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 3.5,
+     "scale": 80000.0
+    },
+    "min_repair_fraction": 0.45,
+    "knowledge_sensitivity": 0.27
+   },
+   "die": {
+    "component_id": "die",
+    "component_type": "mechanical",
+    "base_repair_time": 90.0,
+    "idle_degradation_factor": 0.08,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0004,
+     "failure_prob_idle": 2.9999999999999997e-05
+    },
+    "min_repair_fraction": 0.55,
+    "knowledge_sensitivity": 0.525
+   }
+  }
+ },
+ "lathe_rl10": {
+  "machine_type": "Lathe",
+  "process_time": 140,
+  "dt": 1,
+  "components": {
+   "spindle_l": {
+    "component_id": "spindle_l",
+    "component_type": "spindle",
+    "base_repair_time": 360.0,
+    "idle_degradation_factor": 0.06,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 2.5,
+     "scale": 15000.0
+    },
+    "min_repair_fraction": 0.25,
+    "knowledge_sensitivity": 0.12
+   },
+   "tool_holder": {
+    "component_id": "tool_holder",
+    "component_type": "end_effector",
+    "base_repair_time": 60.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.00030000000000000003,
+     "failure_prob_idle": 2.9999999999999997e-05
+    },
+    "min_repair_fraction": 0.5,
+    "knowledge_sensitivity": 0.375
+   },
+   "chuck": {
+    "component_id": "chuck",
+    "component_type": "mechanical",
+    "base_repair_time": 75.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.00025,
+     "failure_prob_idle": 2e-05
+    },
+    "min_repair_fraction": 0.55,
+    "knowledge_sensitivity": 0.45
+   }
+  }
+ },
+ "grinder_rl10": {
+  "machine_type": "Grinder",
+  "process_time": 90,
+  "dt": 1,
+  "components": {
+   "grinding_wheel": {
+    "component_id": "grinding_wheel",
+    "component_type": "mechanical",
+    "base_repair_time": 45.0,
+    "idle_degradation_factor": 0.12,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 1.8,
+     "scale": 10000.0
+    },
+    "min_repair_fraction": 0.6,
+    "knowledge_sensitivity": 0.675
+   },
+   "spindle_g": {
+    "component_id": "spindle_g",
+    "component_type": "spindle",
+    "base_repair_time": 420.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 2.8,
+     "scale": 25000.0
+    },
+    "min_repair_fraction": 0.2,
+    "knowledge_sensitivity": 0.09
+   },
+   "dust_collector": {
+    "component_id": "dust_collector",
+    "component_type": "sensor",
+    "base_repair_time": 90.0,
+    "idle_degradation_factor": 0.15,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0005,
+     "failure_prob_idle": 5e-05
+    },
+    "min_repair_fraction": 0.5,
+    "knowledge_sensitivity": 0.45
+   }
+  }
+ },
+ "mill_rl10": {
+  "machine_type": "Mill",
+  "process_time": 160,
+  "dt": 1,
+  "components": {
+   "spindle_m": {
+    "component_id": "spindle_m",
+    "component_type": "spindle",
+    "base_repair_time": 480.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 2.4,
+     "scale": 18000.0
+    },
+    "min_repair_fraction": 0.22,
+    "knowledge_sensitivity": 0.105
+   },
+   "coolant_pump_m": {
+    "component_id": "coolant_pump_m",
+    "component_type": "pump",
+    "base_repair_time": 180.0,
+    "idle_degradation_factor": 0.05,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 3.0,
+     "scale": 11000.0
+    },
+    "min_repair_fraction": 0.4,
+    "knowledge_sensitivity": 0.225
+   },
+   "tool_changer": {
+    "component_id": "tool_changer",
+    "component_type": "end_effector",
+    "base_repair_time": 120.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.00030000000000000003,
+     "failure_prob_idle": 2.9999999999999997e-05
+    },
+    "min_repair_fraction": 0.45,
+    "knowledge_sensitivity": 0.33
+   }
+  }
+ },
+ "furnace_rl10": {
+  "machine_type": "Furnace",
+  "process_time": 240,
+  "dt": 1,
+  "components": {
+   "heating_element": {
+    "component_id": "heating_element",
+    "component_type": "electronics",
+    "base_repair_time": 600.0,
+    "idle_degradation_factor": 0.03,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 4.0,
+     "scale": 120000.0
+    },
+    "min_repair_fraction": 0.15,
+    "knowledge_sensitivity": 0.075
+   },
+   "temp_sensor": {
+    "component_id": "temp_sensor",
+    "component_type": "sensor",
+    "base_repair_time": 60.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.00015000000000000001,
+     "failure_prob_idle": 1.4999999999999999e-05
+    },
+    "min_repair_fraction": 0.55,
+    "knowledge_sensitivity": 0.45
+   },
+   "insulation": {
+    "component_id": "insulation",
+    "component_type": "mechanical",
+    "base_repair_time": 360.0,
+    "idle_degradation_factor": 0.02,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 5.0,
+     "scale": 250000.0
+    },
+    "min_repair_fraction": 0.3,
+    "knowledge_sensitivity": 0.3
+   }
+  }
+ },
+ "packager_rl10": {
+  "machine_type": "Packager",
+  "process_time": 75,
+  "dt": 1,
+  "components": {
+   "drive_motor": {
+    "component_id": "drive_motor",
+    "component_type": "motor",
+    "base_repair_time": 210.0,
+    "idle_degradation_factor": 0.08,
+    "breakdown_model": "weibull",
+    "weibull_breakdown": {
+     "shape": 2.5,
+     "scale": 22000.0
+    },
+    "min_repair_fraction": 0.35,
+    "knowledge_sensitivity": 0.18
+   },
+   "pneumatic_arm": {
+    "component_id": "pneumatic_arm",
+    "component_type": "end_effector",
+    "base_repair_time": 90.0,
+    "idle_degradation_factor": 0.1,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0004,
+     "failure_prob_idle": 4e-05
+    },
+    "min_repair_fraction": 0.5,
+    "knowledge_sensitivity": 0.375
+   },
+   "label_sensor": {
+    "component_id": "label_sensor",
+    "component_type": "sensor",
+    "base_repair_time": 45.0,
+    "idle_degradation_factor": 0.15,
+    "breakdown_model": "simple",
+    "simple_breakdown": {
+     "failure_prob_working": 0.0005,
+     "failure_prob_idle": 5e-05
+    },
+    "min_repair_fraction": 0.55,
+    "knowledge_sensitivity": 0.525
+   }
+  }
+ }
+}

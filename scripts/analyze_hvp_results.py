@@ -32,7 +32,7 @@ SCENARIOS = ["massive_scale", "small_scale", "baseline", "very_long",
 # Display labels.  Markers flag the information level of each baseline:
 #   \dagger  = informed / oracle (reads the simulator's ground-truth
 #              repair-time / skill / cost-matrix estimates)
-#   \ddagger = reward oracle (reads the exact counterfactual per-
+#   * also marks the reward-greedy rule (reads the exact counterfactual per-
 #              assignment reward, i.e. the learned agents' own objective)
 # Unmarked heuristics act on the observation (and, for the empirical
 # variants, on observed repair completions) only.
@@ -82,13 +82,15 @@ AGENT_LABELS = {
     "shortest_queue": "ShortestQueue",
     "empirical_spt": "SPT-emp",
     "empirical_topsis": "TOPSIS-emp",
+    "evo_topsis": "Evo-TOPSIS",
+    "evo_topsis_inf": r"Evo-TOPSIS$^{*}$",
     "shortest_processing": r"SPT$^{*}$",
     "optimal_assignment": r"Hungarian$^{*}$",
     "batch_milp": r"BatchMILP$^{*}$",
     "topsis": r"TOPSIS$^{*}$",
     "reserve_specialist": r"ReserveSpec$^{*}$",
     "train_weakest": r"TrainWeakest$^{*}$",
-    "greedy_reward": r"GreedyReward$^{\ddagger}$",
+    "greedy_reward": r"GreedyReward$^{*}$",
 }
 AGENT_ORDER = list(AGENT_LABELS)
 
@@ -96,7 +98,7 @@ AGENT_ORDER = list(AGENT_LABELS)
 # generated table so the marker semantics travel with the artefact).
 ORACLE_FOOTNOTE = (
     r"$^{*}$informed baseline: reads the simulator's ground-truth "
-    r"repair-time/skill estimates; $^{\ddagger}$reward oracle: reads the "
+    r"repair-time/skill estimates; $^{*}$ on GreedyReward: reads the "
     r"exact per-assignment reward (the learned agents' training "
     r"objective).  Unmarked rules use the observation (and, for the "
     r"-emp variants, observed repair completions) only."

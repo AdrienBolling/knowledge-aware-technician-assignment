@@ -51,6 +51,8 @@ from agents import (
     BatchMILPAgent,
     EmpiricalSPTAgent,
     EmpiricalTopsisAgent,
+    EvoTopsisAgent,
+    EvoTopsisInformedAgent,
     GreedyRewardAgent,
     A2CMLPAgent,
     DQLMLPAgent,
@@ -97,6 +99,11 @@ HEURISTICS = {
     # completions only (env.repair_log); no ground-truth access:
     "empirical_spt": EmpiricalSPTAgent,
     "empirical_topsis": EmpiricalTopsisAgent,
+    # METAHEURISTIC baseline: GA-tuned signed TOPSIS weights over honest
+    # criteria (scripts/tune_evo_topsis.py -> run_configs/agents/
+    # evo_topsis_weights.json); _inf = informed twin (oracle repair times).
+    "evo_topsis": EvoTopsisAgent,
+    "evo_topsis_inf": EvoTopsisInformedAgent,
 }
 
 CHECKPOINTS = {
@@ -241,6 +248,20 @@ SCENARIOS = {
     # the `_rl` template names are not registered otherwise).
     "very_long_realistic": dict(
         cfg="run_configs/realistic_lifespan/very_long_realistic.json",
+        n_eps=1, sim=5_000_000.0, steps=1_500_000,
+    ),
+    # Same realistic park, lean staffing: 5 technicians for 80-100
+    # machines (load-to-capacity probe).
+    "very_long_realistic_5t": dict(
+        cfg="run_configs/realistic_lifespan/very_long_realistic_5t.json",
+        n_eps=1, sim=5_000_000.0, steps=1_500_000,
+    ),
+    "very_long_realistic_3t": dict(
+        cfg="run_configs/realistic_lifespan/very_long_realistic_3t.json",
+        n_eps=1, sim=5_000_000.0, steps=1_500_000,
+    ),
+    "very_long_realistic10_3t": dict(
+        cfg="run_configs/realistic_lifespan/very_long_realistic10_3t.json",
         n_eps=1, sim=5_000_000.0, steps=1_500_000,
     ),
 }

@@ -17,6 +17,8 @@ section of the paper).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -590,3 +592,144 @@ class EmpiricalTopsisAgent(_EmpiricalRepairMixin, TopsisAgent):
 
     def _repair_criterion(self) -> np.ndarray | None:
         return self._empirical_estimates()
+
+
+# ---------------------------------------------------------------------------
+# Metaheuristic-tuned multi-criteria rule (simheuristic baseline)
+# ---------------------------------------------------------------------------
+
+EVO_TOPSIS_CRITERIA = (
+    "repair_time",       # empirical expected repair time, ticket's failure key
+    "fatigue",           # technician fatigue (observation)
+    "workload",          # assignments so far this episode
+    "key_experience",    # completed repairs by the technician on this key
+    "total_experience",  # completed repairs by the technician, any key
+)
+EVO_TOPSIS_DEFAULT = (0.5, 0.3, 0.2, 0.0, 0.0)  # == EmpiricalTopsisAgent
+EVO_TOPSIS_WEIGHTS_PATH = Path("run_configs/agents/evo_topsis_weights.json")
+
+
+class EvoTopsisAgent(_EmpiricalRepairMixin, Agent):
+    """TOPSIS rule whose criterion weights were tuned by a genetic algorithm.
+
+    The metaheuristic entry of the benchmark (simulation-based
+    optimisation / hyper-heuristic): the rule template is
+    :class:`EmpiricalTopsisAgent` extended with two experience criteria,
+    and a GA (``scripts/tune_evo_topsis.py``) optimises the signed weight
+    vector by running the simulator on the multiscale training worlds
+    HTT-RL trained on, with the headline KPIs (products, MTTR,
+    disruptions per output, final fleet knowledge) as fitness.  Every
+    criterion is *honest* information: repair times and experience counts
+    are tallied from observed completions (``KataEnv.repair_log``),
+    fatigue comes from the observation, workload is the agent's own
+    bookkeeping.
+
+    Weight semantics (one per :data:`EVO_TOPSIS_CRITERIA`): the magnitude
+    is the TOPSIS importance, the sign the direction --- positive treats
+    the criterion as a cost (lower is better), negative as a benefit
+    (higher is better), zero drops it.  With :data:`EVO_TOPSIS_DEFAULT`
+    the rule is exactly Emp-TOPSIS; tuned weights are read from
+    :data:`EVO_TOPSIS_WEIGHTS_PATH` when present.  Cold start (no
+    completion observed yet) degrades to an available-technician pick.
+    """
+
+    def __init__(self, n_actions: int, *, weights=None) -> None:
+        super().__init__(n_actions, name="EvoTOPSIS")
+        if weights is None:
+            weights = self.load_weights()
+        w = np.asarray(weights, dtype=np.float64)
+        if w.shape != (len(EVO_TOPSIS_CRITERIA),):
+            raise ValueError(
+                f"EvoTopsis expects {len(EVO_TOPSIS_CRITERIA)} weights, got {w.shape}"
+            )
+        self.weights = w
+        self._reset_estimates()
+
+    @staticmethod
+    def load_weights(path: Path = EVO_TOPSIS_WEIGHTS_PATH) -> tuple[float, ...]:
+        """Tuned weights from ``path`` (JSON with a ``weights`` list), or
+        the Emp-TOPSIS defaults when no tuning result exists yet."""
+        if path.is_file():
+            return tuple(float(x) for x in json.loads(path.read_text())["weights"])
+        return EVO_TOPSIS_DEFAULT
+
+    def _repair_criterion(self) -> np.ndarray | None:
+        return self._empirical_estimates()
+
+    def _experience(self, key: str) -> tuple[np.ndarray, np.ndarray]:
+        pair = np.array(
+            [self._pair_stats.get((j, key), (0, 0.0))[0] for j in range(self.n_actions)],
+            dtype=np.float64,
+        )
+        total = np.array(
+            [self._tech_stats.get(j, (0, 0.0))[0] for j in range(self.n_actions)],
+            dtype=np.float64,
+        )
+        return pair, total
+
+    def _criteria(self, obs: dict[str, Any], avail: np.ndarray) -> np.ndarray | None:
+        """Decision matrix (n_avail x 5), or None when the rule is undefined."""
+        if self._env is None:
+            return None
+        self._ingest_log()
+        repair = self._repair_criterion()
+        if repair is None:
+            return None
+        try:
+            counts = np.asarray(self._env.assignment_counts(), dtype=np.float64)
+        except Exception:
+            return None
+        fatigue = obs.get("technician_fatigue")
+        if fatigue is None:
+            getter = getattr(self._env, "technician_fatigues", None)
+            fatigue = getter() if callable(getter) else None
+        if fatigue is None:
+            fatigue = np.zeros(self.n_actions, dtype=np.float64)
+        fatigue = np.asarray(fatigue, dtype=np.float64)
+        key_getter = getattr(self._env, "current_failure_key", None)
+        key = str(key_getter()) if callable(key_getter) else ""
+        pair, total = self._experience(key)
+        if not np.all(np.isfinite(repair[avail])):
+            return None
+        return np.column_stack(
+            [repair[avail], fatigue[avail], counts[avail], pair[avail], total[avail]]
+        )
+
+    def select_action(self, obs: dict[str, Any], *, deterministic: bool = False) -> int:
+        avail = _available(obs, self.n_actions)
+        if len(avail) == 1:
+            return int(avail[0])
+        m = self._criteria(obs, avail)
+        if m is None:
+            return int(avail[0]) if deterministic else int(np.random.choice(avail))
+        w = self.weights
+        norms = np.sqrt((m ** 2).sum(axis=0))
+        norms[norms == 0.0] = 1.0
+        v = (m / norms) * np.abs(w)
+        lo, hi = v.min(axis=0), v.max(axis=0)
+        cost = w > 0  # positive weight: lower is better; negative: higher is better
+        best = np.where(cost, lo, hi)
+        worst = np.where(cost, hi, lo)
+        d_best = np.sqrt(((v - best) ** 2).sum(axis=1))
+        d_worst = np.sqrt(((v - worst) ** 2).sum(axis=1))
+        denom = d_best + d_worst
+        denom[denom == 0.0] = 1.0
+        closeness = d_worst / denom  # higher == closer to the ideal
+        return int(avail[int(np.argmax(closeness))])
+
+
+class EvoTopsisInformedAgent(EvoTopsisAgent):
+    """Informed twin of :class:`EvoTopsisAgent`: same tuned weights, but
+    the repair-time criterion reads the simulator's ground-truth expected
+    repair times (oracle block of the benchmark); the experience criteria
+    stay empirical."""
+
+    def __init__(self, n_actions: int, *, weights=None) -> None:
+        super().__init__(n_actions, weights=weights)
+        self.name = "EvoTOPSIS-informed"
+
+    def _repair_criterion(self) -> np.ndarray | None:
+        try:
+            return np.asarray(self._env.expected_repair_times(), dtype=np.float64)
+        except Exception:
+            return None
