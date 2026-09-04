@@ -26,7 +26,7 @@ ROOT = 'reports/hvp_eval_v6w'
 PARTS = 'reports/hvp_v6w_parts'
 DISR = 'reports/hvp_eval_disr'   # per-type disruption counts (same episodes, instrumented re-run)
 OUT = 'paper/figures/panels'
-PANEL = (3.2, 2.15)   # inches; 0.49 * 6.5 in = 3.19 in in the manuscript
+PANEL = (3.2, 2.05)   # inches; 0.49 * 6.5 in = 3.19 in in the manuscript
 SCEN = {'small_scale':'S1 Small','baseline':'S2 Baseline','massive_scale':'S3 Industrial',
         'very_long':'S4 Very-long','lifecycle':'S5 Lifecycle'}
 ACCENT = {'hc_v6':('HTT-RL','#0072B2','-',1.8),
@@ -166,10 +166,6 @@ def disruption_panel(scenario):
         left += seg
     ax.set_yticks(range(len(ipk)), [SHORT[a] for a in ipk.index], fontsize=6.3)
     ax.set_xlabel(r'technician disruptions / $10^3$ products')
-    handles = [Patch(facecolor='#9A9A9A', edgecolor='white', hatch=h, label=label)
-               for _, label, h in TYPES]
-    ax.legend(handles=handles, loc='upper right', frameon=False, fontsize=6.3,
-              handlelength=1.6, handleheight=1.1, borderaxespad=0.2)
     return fig
 
 def legend_strip():
@@ -177,9 +173,15 @@ def legend_strip():
                for a in ('hc_v6','ft_quality','empirical_topsis','empirical_spt','random')]
     handles += [Line2D([],[], color='#BFBFBF', ls='-', lw=0.9, label='other rules (6)'),
                 Line2D([],[], color='#8C8C8C', ls='--', lw=0.9, label='MLP anchors (3)')]
-    fig = plt.figure(figsize=(6.5, 0.26))
-    fig.legend(handles=handles, ncol=7, loc='center', frameon=False,
-               fontsize=7, columnspacing=1.2, handlelength=1.9)
+    types = [Patch(facecolor='#9A9A9A', edgecolor='white', hatch=h, label=f'{label} (panel c)')
+             for _, label, h in TYPES]
+    fig = plt.figure(figsize=(6.5, 0.34))
+    fig.legend(handles=handles, ncol=7, loc='upper center', frameon=False,
+               fontsize=7, columnspacing=1.2, handlelength=1.9, bbox_to_anchor=(0.5, 1.02),
+               borderpad=0.1, borderaxespad=0.0)
+    fig.legend(handles=types, ncol=3, loc='lower center', frameon=False, fontsize=7,
+               columnspacing=1.6, handlelength=1.6, handleheight=1.0, bbox_to_anchor=(0.5, -0.02),
+               borderpad=0.1, borderaxespad=0.0)
     fig.savefig(f'{OUT}/scenario_legend.pdf', bbox_inches='tight', pad_inches=0.01)
     plt.close(fig)
 
