@@ -147,6 +147,7 @@ def retire_machine_from_factory(
         dispatcher, "factory_handles", None
     )
     machine.retired = True
+    machine.retired_at = float(machine.env.now)  # type: ignore[attr-defined]
     in_buf = None
     if handles is not None:
         feeder = handles.feeders.get(machine.mtype)

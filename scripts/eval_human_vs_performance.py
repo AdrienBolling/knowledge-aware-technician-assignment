@@ -570,6 +570,104 @@ def _disruption_totals(env) -> dict:
     return out
 
 
+def _product_route(env) -> list[str]:
+    """The sampled product route (ordered machine types) of the live
+    factory, read off the builder config the dispatcher carries."""
+    handles = getattr(env.dispatcher, "factory_handles", None)
+    builder = getattr(handles, "builder", None)
+    cfg = getattr(builder, "config", None)
+    products = getattr(cfg, "products", None) or {}
+    for pcfg in products.values():
+        route = list(getattr(pcfg, "route", None) or [])
+        if route:
+            return [str(t) for t in route]
+    return []
+
+
+def _register_machines(env, registry: dict) -> None:
+    """Keep a reference to every machine ever seen this episode (retired
+    ones drop out of the live lists but their history counts).
+
+    Read the builder's per-type lists rather than ``dispatcher.machines``
+    and key by object identity: the builder derives ``machine_id`` as
+    ``hash(name) % 10000`` under per-process randomised string hashing,
+    so that dict can silently lose a machine to an id collision (~2% of
+    20-machine and ~37% of 97-machine processes).  The queue pins
+    PYTHONHASHSEED to a collision-free value as well.
+    """
+    handles = getattr(env.dispatcher, "factory_handles", None)
+    by_type = getattr(handles, "machines_by_type", None)
+    if by_type:
+        machines = [m for ms in by_type.values() for m in ms]
+    else:
+        try:
+            machines = env._factory_machines()
+        except Exception:
+            return
+    for m in machines:
+        registry.setdefault(id(m), m)
+
+
+def _financial_kpis(env, registry: dict, now: float) -> dict:
+    """Episode-end quantities for the financial analysis (Rodríguez-style
+    profit map with a production-based uptime factor).
+
+    * ``final_stage_uptime`` — mean over every instance of the LAST
+      machine type of the product route of (exact productive time /
+      active lifetime): the fraction of time the plant's delivering
+      stage is actually working on a product (blocked, starved and
+      broken time all excluded).  The plant creates value only while
+      these machines run.
+    * ``fleet_uptime`` — same ratio averaged over the whole park.
+    * ``final_stage_uptime_sampled`` — the env's per-decision sampled
+      production-time estimate for the same machines (cross-check).
+    * ``total_repair_time`` — technician-hours on the tool (labour).
+    * ``total_downtime`` — machine-time lost to breakdowns.
+    """
+    route = _product_route(env)
+    last_type = route[-1] if route else None
+    machines = list(registry.values())
+
+    def _ratio(m, exact: bool = True) -> float:
+        start = float(getattr(m, "created_at", 0.0))
+        end = getattr(m, "retired_at", None)
+        end = float(now) if end is None else float(end)
+        span = end - start
+        if span <= 0.0:
+            return float("nan")
+        if exact:
+            # Closed segments only; a segment still open at the horizon
+            # is bounded by one process_time and is ignored.
+            prod = float(getattr(m, "productive_time", 0.0))
+        else:
+            mid = getattr(m, "machine_id", id(m))  # env stats are id-keyed
+            prod = float(env._machine_total_processing_time.get(mid, 0.0))
+            since = env._machine_processing_since.get(mid)
+            if since is not None:
+                prod += max(0.0, float(now) - float(since))
+        return prod / span
+
+    final = [m for m in machines if last_type is not None
+             and str(getattr(m, "mtype", "")) == last_type]
+    out = {
+        "route": ">".join(route),
+        "route_length": len(route),
+        "final_stage_type": last_type or "",
+        "final_stage_n_machines": len(final),
+        "final_stage_uptime": float(np.nanmean([_ratio(m) for m in final])) if final else float("nan"),
+        "final_stage_uptime_sampled": float(np.nanmean([_ratio(m, exact=False) for m in final])) if final else float("nan"),
+        "final_stage_processed": int(sum(int(getattr(m, "total_processed", 0)) for m in final)),
+        "fleet_n_machines": len(machines),
+        "fleet_uptime": float(np.nanmean([_ratio(m) for m in machines])) if machines else float("nan"),
+        "total_repair_time": float(getattr(env, "_total_repair_time", 0.0)),
+    }
+    down = float(getattr(env, "_total_downtime", 0.0))
+    for mid, since in getattr(env, "_machine_down_since", {}).items():
+        down += max(0.0, float(now) - float(since))
+    out["total_downtime"] = down
+    return out
+
+
 def _episode_kpis(final_metrics: dict, sums: dict, counts: dict) -> dict:
     """Episode KPI dict: step metrics as episode MEANS, episode metrics as-is.
 
@@ -620,6 +718,7 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     metric_sums: dict[str, float] = {}
     metric_counts: dict[str, int] = {}
     machine_hist: list = []
+    machine_registry: dict = {}
     while True:
         action = agent.select_action(obs, deterministic=deterministic)
         with quiet():
@@ -637,6 +736,7 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
         _now = float(info.get("sim_time", 0.0))
         _counts = _machine_counts(env)
         machine_hist.append((_now, _counts))
+        _register_machines(env, machine_registry)
         if (term or trunc) or (n_steps % record_every == 0):
             m = info.get("metrics", {})
             fat_mean, fat_std = fleet_fatigue(env)
@@ -673,6 +773,7 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     kpis["episode_reward"] = ep_reward
     kpis["n_steps"] = n_steps
     kpis["final_sim_time"] = float(final_info.get("sim_time", 0.0))
+    kpis.update(_financial_kpis(env, machine_registry, kpis["final_sim_time"]))
     return kpis, records
 
 
