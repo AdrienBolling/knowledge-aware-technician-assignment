@@ -45,6 +45,16 @@ class Machine(Mach):
         self.broken = False
         self.total_processed = 0
         self.last_failed_at = None
+        # Exact productive time: sum of the processing segments during
+        # which the machine was actually working on a product (never
+        # counts time spent broken or waiting for input/output).  Kept
+        # in the production loop itself so it is event-exact, unlike
+        # the env's per-decision sampled ``production_time`` snapshot.
+        self.productive_time = 0.0
+        # Active-life bounds for time-normalised ratios (lifecycle
+        # events add machines mid-episode and retire others).
+        self.created_at = float(env.now)
+        self.retired_at: float | None = None
         # Lifecycle stop-flag: when True both long-running processes
         # (production loop + breakdown driver) end at their next loop
         # head — SimPy ends a process when its generator returns.  Set
@@ -90,11 +100,16 @@ class Machine(Mach):
             remaining = float(ptime)
             self._log(f"starts processing product {product.product_id} for {ptime:.2f}")
             while remaining > 0.0:
+                seg_start = float(self.env.now)
                 try:
                     self.is_processing = True
                     yield self.env.timeout(delay=remaining)
+                    self.productive_time += float(self.env.now) - seg_start
                     remaining = 0.0
                 except sp.Interrupt:
+                    # The interrupt lands inside the timeout above, so the
+                    # segment [seg_start, now) was genuine processing.
+                    self.productive_time += float(self.env.now) - seg_start
                     if not self.broken:
                         continue
                     remaining = max(
