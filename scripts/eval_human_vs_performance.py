@@ -140,6 +140,10 @@ CHECKPOINTS = {
     # v6: infra-clean retrain (D1 LR-schedule fix, D2 dropout=0, D11
     # boolean tokens visible) + D3 architecture (role-bound slot fusion
     # + feature-context view).  Fresh BC (architecture change).
+    # Corrected agent: permissive action mask + permutation-invariant
+    # cross-slot attention.  Architecture flags come from the checkpoint.
+    "hc_fix": Path("checkpoints/hc_fix_final/set_transformer_best.pt"),
+    "hc_fix_last": Path("checkpoints/hc_fix_final/set_transformer_last.pt"),
     "hc_v6": Path("checkpoints/hc_v6_final/set_transformer_best.pt"),
     "hc_v6_last": Path("checkpoints/hc_v6_final/set_transformer_last.pt"),
     # v6 reward fine-tunes (scripts/dgy_v6_ft_queue.sh): 100 eps from
@@ -389,6 +393,18 @@ def build_agents(env_cfg, scenario_factory, n_techs,
         if imp.get("use_popart"):
             params["use_popart"] = True
             params["normalize_rewards"] = False  # mutually exclusive
+        # Architecture-ladder toggles (absent in historical checkpoints,
+        # which are all the full hybrid + attention encoder)
+        if imp.get("numeric_encoding"):
+            params["numeric_encoding"] = str(imp["numeric_encoding"])
+        if imp.get("cross_slot"):
+            params["cross_slot"] = str(imp["cross_slot"])
+            if str(imp["cross_slot"]) != "attention":
+                params["use_cross_attention"] = False
+        if "set_positional" in imp:
+            params["set_positional"] = bool(imp["set_positional"])
+        if imp.get("flat_hidden"):
+            params["flat_hidden"] = int(imp["flat_hidden"])
         # D3 architecture toggles (absent in historical checkpoints)
         if imp.get("slot_role_binding"):
             params["slot_role_binding"] = True

@@ -32,7 +32,7 @@ class ComponentConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Kijima type-1 restoration factor: after a repair the "
+            "Kijima type-II restoration factor: after a repair the "
             "component keeps ``alpha * age`` as residual virtual age. "
             "0 (default) = perfect repair (as-good-as-new, the historical "
             "behaviour); 1 = minimal repair (as-bad-as-old). The lever "

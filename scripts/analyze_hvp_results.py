@@ -49,6 +49,8 @@ AGENT_LABELS = {
     "hc_v4_last": r"HTT-RL-v4-last (ours)",
     "hc_v5": r"HTT-RL-v5 (ours)",
     "hc_v5_last": r"HTT-RL-v5-last (ours)",
+    "hc_fix": r"HTT-RL-fix (ours)",
+    "hc_fix_last": r"HTT-RL-fix-last (ours)",
     "hc_v6": r"HTT-RL-v6 (ours)",
     "hc_v6_last": r"HTT-RL-v6-last (ours)",
     "ft_protect": r"v6-ft-protect (ours)",

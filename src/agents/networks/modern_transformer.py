@@ -104,6 +104,7 @@ class RoPESelfAttention(nn.Module):
         max_seq_len: int,
         dropout: float = 0.0,
         rope_base: float = 10000.0,
+        use_rope: bool = True,
     ) -> None:
         super().__init__()
         if d_model % n_heads != 0:
@@ -114,6 +115,7 @@ class RoPESelfAttention(nn.Module):
         self.head_dim = d_model // n_heads
         self.dropout_p = dropout
 
+        self.use_rope = bool(use_rope)
         self.qkv_proj = nn.Linear(d_model, 3 * d_model, bias=False)
         self.out_proj = nn.Linear(d_model, d_model, bias=False)
 
@@ -133,8 +135,9 @@ class RoPESelfAttention(nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        q = _apply_rope(q, self.rope_cos, self.rope_sin)
-        k = _apply_rope(k, self.rope_cos, self.rope_sin)
+        if self.use_rope:
+            q = _apply_rope(q, self.rope_cos, self.rope_sin)
+            k = _apply_rope(k, self.rope_cos, self.rope_sin)
 
         # SDPA mask: True means "blocked".  Convert padding mask
         # (B, S) -> additive (B, 1, 1, S) for broadcast across heads.
@@ -165,6 +168,7 @@ class TransformerBlock(nn.Module):
         max_seq_len: int,
         dropout: float = 0.0,
         rope_base: float = 10000.0,
+        use_rope: bool = True,
     ) -> None:
         super().__init__()
         self.norm1 = RMSNorm(d_model)
@@ -174,6 +178,7 @@ class TransformerBlock(nn.Module):
             max_seq_len=max_seq_len,
             dropout=dropout,
             rope_base=rope_base,
+            use_rope=use_rope,
         )
         self.norm2 = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff, dropout=dropout)
