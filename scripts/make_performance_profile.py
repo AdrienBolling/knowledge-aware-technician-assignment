@@ -106,7 +106,7 @@ def main():
                if a not in ss.ORACLES and a not in ss.INFORMED_SWAP]
               + [v for v in ss.INFORMED_SWAP.values() if v in full])
     for name, field, accents, title in (
-            ('profile_deployable', deploy, ACCENT, f'Deployable field ({len(deploy)} agents)'),
+            ('profile_deployable', deploy, ACCENT, f'Main field ({len(deploy)} agents)'),
             ('profile_full', full, {**ACCENT, **INFORMED}, f'Full field ({len(full)} agents)')):
         R = ratios(metrics, field)
         fig, ax = plt.subplots(figsize=PANEL)
