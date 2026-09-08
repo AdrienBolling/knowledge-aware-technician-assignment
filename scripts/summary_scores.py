@@ -1,7 +1,7 @@
 """Summary scores (mean % distance to the best value per KPI) for the v6w
 benchmark field, under selectable KPI sets.
 
-KPI sets (all add final fleet knowledge at the two career-horizon scenarios):
+KPI sets (all add final fleet knowledge, at every scenario):
   published    products, episode-mean MTTR, availability, disruptions/10^3 products
   noavail_mean products, episode-mean MTTR, disruptions/10^3 products
   noavail_final products, final-window MTTR, disruptions/10^3 products
@@ -24,7 +24,10 @@ PARTS = 'reports/hvp_v6w_parts'
 TAIL = 0.03
 SCEN = [('small_scale', 'Small'), ('baseline', 'Base'), ('massive_scale', 'Indust.'),
         ('very_long', 'V-long'), ('lifecycle', 'Lifec.')]
-KNOW_SCEN = {'very_long', 'lifecycle'}
+# Final fleet knowledge is scored at every scenario: its cross-agent spread is
+# comparable at S2 (22%) and S5 (24%), and knowledge is already settled by 90% of
+# the horizon everywhere, so there is no scenario-length ground for restricting it.
+KNOW_SCEN = {s for s, _ in SCEN}
 ORACLES = {'greedy_reward', 'topsis', 'shortest_processing', 'optimal_assignment', 'reserve_specialist', 'evo_topsis_inf'}
 EXCLUDE = {'po_v6', 'po_v6_last', 'hc_v6_ext', 'hc_v6_ext_last', 'hc_v6_wr', 'hc_v6_wr_last'}
 TEX = {  # key -> label in tab:results_dist_full
