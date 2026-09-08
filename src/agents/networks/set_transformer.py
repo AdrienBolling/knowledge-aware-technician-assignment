@@ -106,6 +106,7 @@ class _SlotFuser(nn.Module):
         fourier: FourierFeatures,
         *,
         role_binding: bool = False,
+        plain_numeric: nn.Module | None = None,
     ) -> None:
         super().__init__()
         self.token_embedding = token_embedding
@@ -123,6 +124,7 @@ class _SlotFuser(nn.Module):
         # before pooling: additive role info alone would still cancel
         # in the mean (sum of roles is slot-constant), so the MLP must
         # bind role↔value nonlinearly for identity to survive pooling.
+        self.plain_numeric = plain_numeric
         self.role_binding = bool(role_binding)
         self.binder: nn.Module | None = None
         if self.role_binding:
@@ -147,27 +149,163 @@ class _SlotFuser(nn.Module):
             m_cat = (cont_kinds == ContKind.CATEGORICAL).unsqueeze(-1).float()
             out = x_cat * m_cat
 
-        m_r = cont_kinds == ContKind.RATIO_PLE
-        if m_r.any():
-            v = cont_values.clamp(min=0.0, max=1.0)
-            out = out + self.ratio_ple(v) * m_r.unsqueeze(-1).float()
+        if self.plain_numeric is not None:
+            # Architecture ablation rung: every numeric position goes
+            # through ONE shared scalar projection instead of the
+            # kind-specific PLE / Time2Vec / Fourier encoders.
+            m_num = (cont_kinds != ContKind.CATEGORICAL)
+            if m_num.any():
+                out = out + self.plain_numeric(
+                    cont_values, cont_kinds
+                ) * m_num.unsqueeze(-1).float()
+        else:
+            m_r = cont_kinds == ContKind.RATIO_PLE
+            if m_r.any():
+                v = cont_values.clamp(min=0.0, max=1.0)
+                out = out + self.ratio_ple(v) * m_r.unsqueeze(-1).float()
 
-        m_c = cont_kinds == ContKind.COUNT_PLE
-        if m_c.any():
-            v = torch.log1p(cont_values.clamp(min=0.0))
-            out = out + self.count_ple(v) * m_c.unsqueeze(-1).float()
+            m_c = cont_kinds == ContKind.COUNT_PLE
+            if m_c.any():
+                v = torch.log1p(cont_values.clamp(min=0.0))
+                out = out + self.count_ple(v) * m_c.unsqueeze(-1).float()
 
-        m_t = cont_kinds == ContKind.TIME2VEC
-        if m_t.any():
-            out = out + self.time2vec(cont_values) * m_t.unsqueeze(-1).float()
+            m_t = cont_kinds == ContKind.TIME2VEC
+            if m_t.any():
+                out = out + self.time2vec(cont_values) * m_t.unsqueeze(-1).float()
 
-        m_f = cont_kinds == ContKind.FOURIER
-        if m_f.any():
-            out = out + self.fourier(cont_values) * m_f.unsqueeze(-1).float()
+            m_f = cont_kinds == ContKind.FOURIER
+            if m_f.any():
+                out = out + self.fourier(cont_values) * m_f.unsqueeze(-1).float()
 
         if self.binder is not None:
             out = out + self.binder(out)
         return out
+
+
+class _PlainNumeric(nn.Module):
+    """Plain scalar encoding: the control for the hybrid token encoder.
+
+    One shared ``Linear(1 -> d_model)`` for every numeric position,
+    applied to a symlog-compressed value for the unbounded kinds
+    (counts, times) and to the raw value for ratios, which are already
+    in [0, 1].  This is the competent-but-ordinary treatment a
+    Transformer would normally get -- no piecewise-linear bins, no
+    Time2Vec, no Fourier features -- so the difference against the
+    hybrid encoder isolates that component alone.
+    """
+
+    def __init__(self, d_model: int) -> None:
+        super().__init__()
+        self.proj = nn.Linear(1, d_model)
+
+    def forward(
+        self, cont_values: torch.Tensor, cont_kinds: torch.Tensor
+    ) -> torch.Tensor:
+        is_ratio = (cont_kinds == ContKind.RATIO_PLE)
+        v = torch.where(
+            is_ratio,
+            cont_values.clamp(min=0.0, max=1.0),
+            torch.sign(cont_values) * torch.log1p(cont_values.abs()),
+        )
+        return self.proj(v.unsqueeze(-1))
+
+
+class _PoolEncoder(nn.Module):
+    """Deep-Sets cross-slot encoder: shared per-slot MLP + masked mean.
+
+    Same ``(cls, slots)`` interface as :class:`_SetEncoder`, and like it
+    permutation-equivariant in the slots -- but slots never interact:
+    each is embedded independently by a shared MLP and the only
+    aggregate is the mean.  Rung 2 of the architecture ladder; the step
+    to :class:`_SetEncoder` is exactly "let the slots attend to each
+    other".
+    """
+
+    def __init__(
+        self, d_model: int, n_layers: int, d_ff: int | None, dropout: float
+    ) -> None:
+        super().__init__()
+        if d_ff is None:
+            d_ff = int(round((8 * d_model / 3) / 64.0)) * 64
+        self.blocks = nn.ModuleList(
+            [
+                nn.Sequential(
+                    RMSNorm(d_model),
+                    nn.Linear(d_model, d_ff),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(d_ff, d_model),
+                )
+                for _ in range(n_layers)
+            ]
+        )
+        self.rho = nn.Sequential(
+            nn.Linear(d_model, d_ff), nn.GELU(), nn.Linear(d_ff, d_model)
+        )
+        self.final_norm = RMSNorm(d_model)
+
+    def forward(
+        self, slot_embeds: torch.Tensor, slot_mask: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        x = slot_embeds
+        for block in self.blocks:          # shared across slots by construction
+            x = x + block(x)
+        x = self.final_norm(x)
+        valid = slot_mask.float().unsqueeze(-1)
+        pooled = (x * valid).sum(dim=1) / valid.sum(dim=1).clamp(min=1.0)
+        return self.final_norm(self.rho(pooled)), x
+
+
+class _FlatEncoder(nn.Module):
+    """Order-dependent flat MLP over the slot embeddings.
+
+    Same ``(cls, slots)`` interface again, but deliberately neither
+    permutation-invariant nor slot-shared: the ``(B, S, D)`` embeddings
+    are masked, flattened in fixed slot order and pushed through a plain
+    MLP, so slot *index* is part of the representation and nothing
+    transfers between slots.  Rung 1 of the ladder.
+
+    ``emit_slots=False`` skips the (large) per-slot output projection
+    and passes the input embeddings through; used for the machine
+    stream, whose per-slot outputs are only read by the cross-attention
+    refiner, which this rung does not have.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        max_slots: int,
+        hidden: int,
+        dropout: float,
+        *,
+        emit_slots: bool = True,
+    ) -> None:
+        super().__init__()
+        self.d_model = d_model
+        self.max_slots = max_slots
+        self.trunk = nn.Sequential(
+            nn.Linear(max_slots * d_model, hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden, hidden),
+            nn.GELU(),
+        )
+        self.cls_proj = nn.Linear(hidden, d_model)
+        self.slot_proj = (
+            nn.Linear(hidden, max_slots * d_model) if emit_slots else None
+        )
+        self.final_norm = RMSNorm(d_model)
+
+    def forward(
+        self, slot_embeds: torch.Tensor, slot_mask: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        x = slot_embeds * slot_mask.float().unsqueeze(-1)   # pad slots -> 0
+        h = self.trunk(x.flatten(1))
+        cls = self.final_norm(self.cls_proj(h))
+        if self.slot_proj is None:
+            return cls, slot_embeds
+        slots = self.slot_proj(h).view(-1, self.max_slots, self.d_model)
+        return cls, self.final_norm(slots)
 
 
 class _SetEncoder(nn.Module):
@@ -189,6 +327,7 @@ class _SetEncoder(nn.Module):
         d_ff: int | None,
         max_slots: int,
         dropout: float,
+        use_rope: bool = True,
     ) -> None:
         super().__init__()
         if d_ff is None:
@@ -203,6 +342,7 @@ class _SetEncoder(nn.Module):
                     d_ff=d_ff,
                     max_seq_len=max_slots + 1,
                     dropout=dropout,
+                    use_rope=use_rope,
                 )
                 for _ in range(n_layers)
             ]
@@ -355,6 +495,10 @@ class SetTransformerEncoder(nn.Module):
         fourier_sigma: float = 1.0,
         d_core: int | None = None,
         use_cross_attention: bool = True,
+        numeric_encoding: str = "hybrid",
+        cross_slot: str = "attention",
+        set_positional: bool = True,
+        flat_hidden: int = 512,
         slot_role_binding: bool = False,
         use_feature_context: bool = False,
         tech_slot_length: int = 16,
@@ -367,6 +511,27 @@ class SetTransformerEncoder(nn.Module):
         self.pad_token_id = pad_token_id
         self.d_core = int(d_core if d_core is not None else d_model)
         self.use_cross_attention = bool(use_cross_attention)
+        if numeric_encoding not in ("hybrid", "plain"):
+            msg = f"numeric_encoding must be 'hybrid' or 'plain' (got {numeric_encoding!r})"
+            raise ValueError(msg)
+        if cross_slot not in ("attention", "pool", "flat"):
+            msg = f"cross_slot must be 'attention', 'pool' or 'flat' (got {cross_slot!r})"
+            raise ValueError(msg)
+        if cross_slot != "attention" and self.use_cross_attention:
+            msg = (
+                "use_cross_attention=True is inconsistent with "
+                f"cross_slot={cross_slot!r}: the ladder's non-attention rungs "
+                "must contain no attention at all."
+            )
+            raise ValueError(msg)
+        self.numeric_encoding = str(numeric_encoding)
+        self.cross_slot = str(cross_slot)
+        # The cross-slot attention blocks apply RoPE over the SLOT axis, so
+        # the encoder is order-aware rather than permutation-invariant.  That
+        # is the historical (and default) behaviour; set_positional=False
+        # gives a genuinely permutation-equivariant set encoder.
+        self.set_positional = bool(set_positional)
+        self.flat_hidden = int(flat_hidden)
         self.slot_role_binding = bool(slot_role_binding)
         self.use_feature_context = bool(use_feature_context)
         self.tech_slot_length = int(tech_slot_length)
@@ -389,6 +554,9 @@ class SetTransformerEncoder(nn.Module):
             input_scale=float(sim_time_scale),
         )
 
+        self.plain_numeric = (
+            _PlainNumeric(d_model) if self.numeric_encoding == "plain" else None
+        )
         self._fuser = _SlotFuser(
             token_embedding=self.token_embedding,
             ratio_ple=self.ratio_ple,
@@ -396,25 +564,31 @@ class SetTransformerEncoder(nn.Module):
             time2vec=self.time2vec,
             fourier=self.fourier,
             role_binding=self.slot_role_binding,
+            plain_numeric=self.plain_numeric,
         )
 
-        # Cross-slot encoders, one per slot-set.
-        self.tech_encoder = _SetEncoder(
-            d_model=d_model,
-            n_heads=n_heads,
-            n_layers=n_layers,
-            d_ff=d_ff,
-            max_slots=max_techs,
-            dropout=dropout,
-        )
-        self.machine_encoder = _SetEncoder(
-            d_model=d_model,
-            n_heads=n_heads,
-            n_layers=n_layers,
-            d_ff=d_ff,
-            max_slots=max_machines,
-            dropout=dropout,
-        )
+        # Cross-slot encoders, one per slot-set.  The three rungs of the
+        # architecture ablation differ ONLY here (and in the numeric
+        # encoder above): everything downstream -- pointer head, value
+        # head, PPO -- is shared code.
+        def _cross_slot(max_slots: int, emit_slots: bool) -> nn.Module:
+            if self.cross_slot == "attention":
+                return _SetEncoder(
+                    d_model=d_model, n_heads=n_heads, n_layers=n_layers,
+                    d_ff=d_ff, max_slots=max_slots, dropout=dropout,
+                    use_rope=self.set_positional,
+                )
+            if self.cross_slot == "pool":
+                return _PoolEncoder(
+                    d_model=d_model, n_layers=n_layers, d_ff=d_ff, dropout=dropout,
+                )
+            return _FlatEncoder(
+                d_model=d_model, max_slots=max_slots, hidden=self.flat_hidden,
+                dropout=dropout, emit_slots=emit_slots,
+            )
+
+        self.tech_encoder = _cross_slot(max_techs, emit_slots=True)
+        self.machine_encoder = _cross_slot(max_machines, emit_slots=False)
 
         # Env stream: just an MLP on the mean-pooled fused embedding.
         self.env_mlp = nn.Sequential(

@@ -136,6 +136,10 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         # role-bound slot fusion — keep the per-feature role embedding
         # at continuous positions and bind role↔value with a nonlinear
         # per-position MLP before within-slot pooling.
+        numeric_encoding: str = "hybrid",
+        cross_slot: str = "attention",
+        set_positional: bool = True,
+        flat_hidden: int = 512,
         slot_role_binding: bool = False,
         # two-view pooling — add a per-feature-across-technicians
         # context vector alongside the per-technician pooling.
@@ -173,10 +177,18 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
             max_machines=max_machines,
             env_length=env_length,
             sim_time_scale=sim_time_scale,
+            numeric_encoding=numeric_encoding,
+            cross_slot=cross_slot,
+            set_positional=set_positional,
+            flat_hidden=flat_hidden,
             slot_role_binding=slot_role_binding,
             use_feature_context=use_feature_context,
             tech_slot_length=tech_slot_length,
         )
+        self.numeric_encoding = str(numeric_encoding)
+        self.cross_slot = str(cross_slot)
+        self.set_positional = bool(set_positional)
+        self.flat_hidden = int(flat_hidden)
         self.slot_role_binding = bool(slot_role_binding)
         self.use_feature_context = bool(use_feature_context)
         self.tech_slot_length = int(tech_slot_length)
@@ -898,6 +910,12 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
                 "rnn_hidden": self.rnn_hidden,
                 # D3 architecture toggles — the eval loader rebuilds the
                 # matching encoder from these.
+                # Architecture-ladder toggles (encoder variants); the eval
+                # loader rebuilds the matching encoder from these.
+                "numeric_encoding": self.numeric_encoding,
+                "cross_slot": self.cross_slot,
+                "set_positional": self.set_positional,
+                "flat_hidden": self.flat_hidden,
                 "slot_role_binding": self.slot_role_binding,
                 "use_feature_context": self.use_feature_context,
                 "tech_slot_length": self.tech_slot_length,

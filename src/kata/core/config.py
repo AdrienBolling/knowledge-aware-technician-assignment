@@ -244,7 +244,7 @@ class RepairConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Kijima type-1 restoration factor applied to every component "
+            "Kijima type-II restoration factor applied to every component "
             "whose own config does not set ``restoration_alpha``: after a "
             "repair the component retains ``alpha * age``.  0 = perfect "
             "(as-good-as-new, historical behaviour), 1 = minimal repair."
@@ -946,6 +946,20 @@ class GymEnvConfig(BaseModel):
             "constrain the policy to valid technicians.  Falls back to "
             "all-1 when every technician is busy, so a valid action "
             "always exists."
+        ),
+    )
+    mask_unavailable_technicians: bool = Field(
+        default=True,
+        description=(
+            "When True (the historical default) the action mask offers only "
+            "technicians who are neither busy nor absent, so an assignment is "
+            "always immediate.  When False the mask removes only assignments "
+            "that are truly impossible -- retired/tombstoned slots -- leaving "
+            "busy and absent technicians selectable, so the agent may queue a "
+            "ticket behind someone's current job and deliberately trade "
+            "availability for expertise.  The permissive setting is what makes "
+            "the wait-for-the-expert action semantics of the MDP actually "
+            "reachable; under the default the choice does not exist."
         ),
     )
     legacy_obs_quirks: bool = Field(
