@@ -17,6 +17,8 @@ Usage: uv run --no-sync python scripts/summary_scores.py [--validate] [--md]
 import argparse, glob, re
 import numpy as np, pandas as pd
 
+# The variant carried by the manuscript (tab:results_dist / tab:results_dist_full).
+PAPER_VARIANT = 'noavail_mean'
 ROOT = 'reports/hvp_eval_v6w'
 PARTS = 'reports/hvp_v6w_parts'
 TAIL = 0.03
@@ -54,6 +56,54 @@ VARIANTS = {'published': ['prod', 'mttr_mean', 'avail', 'disr'],
             'noavail_final': ['prod', 'mttr_final', 'disr'],
             'noavail_both': ['prod', 'mttr_mean', 'mttr_final', 'disr']}
 STEP_COLS = ['agent', 'episode', 'step', 'sim_time', 'mttr_rolling', 'fleet_knowledge']
+# tab:results_dist columns, in manuscript order (key, column header)
+REP_COLS = [
+    ('hc_v6', r'HTT-RL\textsubscript{ref.}'), ('ft_quality', r'HTT-RL\textsubscript{qua.}'),
+    ('empirical_topsis', r'\textsc{E-Topsis}'), ('empirical_spt', r'\textsc{E-Spt}'),
+    ('shortest_queue', r'\textsc{ShortQ}'), ('least_fatigued', r'\textsc{LeastFat}'),
+    ('round_robin', r'\textsc{RoundR}'), ('least_busy', r'\textsc{LeastBusy}'),
+    ('train_weakest', r'\textsc{TrainW}'), ('random', r'\textsc{Random}'),
+    ('batch_milp', r'\textsc{B\textsubscript{MILP}}'), ('a2c_mlp', 'A2C'),
+    ('grpo_mlp', 'GRPO'), ('dql_mlp', 'DDQN')]
+ROW_LABELS = [('Small', 'S1 -- Small'), ('Base', 'S2 -- Baseline'), ('Indust.', 'S3 -- Industrial'),
+              ('V-long', 'S4 -- Very-long'), ('Lifec.', 'S5 -- Lifecycle')]
+
+
+def _mark(v, vals, gray=False):
+    """Bold the row minimum, underline the second-smallest distinct value."""
+    uniq = sorted(set(round(x, 1) for x in vals))
+    r = round(v, 1)
+    cell = f'{r:.1f}'
+    if uniq and r == uniq[0]:
+        cell = r'\textbf{' + cell + '}'
+    elif len(uniq) > 1 and r == uniq[1]:
+        cell = r'\underline{' + cell + '}'
+    return r'\textcolor{gray}{' + cell + '}' if gray else cell
+
+
+def emit_tex(tables):
+    """Body rows of tab:results_dist and tab:results_dist_full for the paper variant."""
+    t = tables[(PAPER_VARIANT, 'deployable')]
+    print(f'% ---- tab:results_dist body ({PAPER_VARIANT}, deployable field) ----')
+    keys = [k for k, _ in REP_COLS]
+    for short, label in ROW_LABELS:
+        vals = [t.loc[k, short] for k in keys]
+        q1, q3 = np.percentile(vals, [25, 75])
+        cells = ' & '.join(_mark(v, vals) for v in vals)
+        print(f'{label:<16} & {cells} & ' + r'\textcolor{gray}{' + f'{q3 - q1:.2f}' + r'} \\')
+    vals = [t.loc[k, 'Overall'] for k in keys]
+    cells = ' & '.join(_mark(v, vals, gray=True) for v in vals)
+    print(r'\textcolor{gray}{Overall} & ' + cells + r' & \\')
+    print(f'\n% ---- tab:results_dist_full body ({PAPER_VARIANT}, full field) ----')
+    t = tables[(PAPER_VARIANT, 'full')]
+    cols = ['Small', 'Base', 'Indust.', 'V-long', 'Lifec.', 'Overall']
+    best = {c: round(t[c].min(), 1) for c in cols}
+    for a, r in t.iterrows():
+        cells = []
+        for c in cols:
+            x = f'{r[c]:.1f}'
+            cells.append(r'\textbf{' + x + '}' if round(r[c], 1) == best[c] else x)
+        print(f'{TEX[a]} & ' + ' & '.join(cells) + r' \\')
 
 
 def load_steps(scenario, agents):
@@ -112,7 +162,8 @@ def score(m, kpis, field):
 def main():
     global TAIL
     ap = argparse.ArgumentParser()
-    ap.add_argument('--validate', action='store_true', help='compare "published" with tab:results_dist_full')
+    ap.add_argument('--validate', action='store_true', help='compare the paper variant with tab:results_dist_full')
+    ap.add_argument('--tex', action='store_true', help='LaTeX bodies for tab:results_dist and tab:results_dist_full')
     ap.add_argument('--md', action='store_true', help='markdown tables')
     ap.add_argument('--tail', type=float, default=TAIL, help='final-window fraction of the horizon')
     ap.add_argument('--exclude', default='', help='comma-separated agent keys dropped from the field (rows AND best-value computation)')
@@ -163,15 +214,18 @@ def main():
             key = next((k for k, v in TEX.items() if v == lab), None)
             assert key, lab
             pub[key] = [float(re.sub(r'\\textbf\{([^}]*)\}', r'\1', c)) for c in cells[1:]]
-        t = tables[('published', 'full')]
+        t = tables[(PAPER_VARIANT, 'full')]
         dev = pd.DataFrame({k: np.array(v) - t.loc[k, ['Small', 'Base', 'Indust.', 'V-long', 'Lifec.', 'Overall']].to_numpy()
                             for k, v in pub.items()}).T
         dev.columns = ['Small', 'Base', 'Indust.', 'V-long', 'Lifec.', 'Overall']
-        print('# validation vs tab:results_dist_full (published - recomputed), max |dev| per column:')
+        print(f'# validation vs tab:results_dist_full ({PAPER_VARIANT}: published - recomputed), max |dev| per column:')
         print(dev.abs().max().round(2).to_string())
         bad = dev[(dev.abs() > 0.06).any(axis=1)]
         if len(bad):
             print('# rows deviating > 0.06:'); print(bad.round(2).to_string())
+    if args.tex:
+        emit_tex(tables)
+        return
     if args.compare:
         for fname in ('deployable', 'full'):
             cmp = pd.DataFrame({v: tables[(v, fname)]['Overall'] for v in VARIANTS})
