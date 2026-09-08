@@ -18,7 +18,7 @@ class SimpleBreakdownProcess(BreakdownProcess):
         Args:
             failure_prob_working: Probability of failure per time step while working
             failure_prob_idle: Probability of failure per time step while idle
-            restoration_alpha: Kijima type-1 restoration factor in [0, 1].
+            restoration_alpha: Kijima type-II restoration factor in [0, 1].
                 0 (default) = perfect repair (as-good-as-new, historical
                 behaviour); 1 = minimal repair (as-bad-as-old).  Memoryless
                 process, so this only affects the diagnostic counter.
@@ -40,7 +40,12 @@ class SimpleBreakdownProcess(BreakdownProcess):
         return self.failure_prob_idle
 
     def repair(self) -> None:
-        """Reset the breakdown process after repair (Kijima type-1)."""
+        """Reset the breakdown process after repair (Kijima type-II).
+
+        ``V_n = alpha * (V_{n-1} + X_n)``: the factor scales the WHOLE
+        accumulated age, not just the age since the last repair (which
+        would be type I, as in the unused funcs.py::repair_kijima_type1).
+        """
         self.time_since_repair = int(self.restoration_alpha * self.time_since_repair)
 
     # -- event-driven sampling (see Machine._breakdown_driver_event) ----
@@ -91,7 +96,7 @@ class WeibullBreakdownProcess(BreakdownProcess):
             shape: Weibull shape parameter (k)
             scale: Weibull scale parameter (lambda)
             dt: Time step size
-            restoration_alpha: Kijima type-1 restoration factor in [0, 1].
+            restoration_alpha: Kijima type-II restoration factor in [0, 1].
                 After a repair the component keeps ``alpha * age`` as
                 residual (virtual) age: 0 (default) = perfect repair
                 (as-good-as-new, historical behaviour); 1 = minimal repair
@@ -125,8 +130,10 @@ class WeibullBreakdownProcess(BreakdownProcess):
         return self.step_and_get_proba() * 0.1
 
     def repair(self) -> None:
-        """Kijima type-1 repair: keep ``restoration_alpha * age`` as
-        residual virtual age (0 = perfect repair, the historical default)."""
+        """Kijima type-II repair: keep ``restoration_alpha * age`` as residual
+        virtual age, i.e. ``V_n = alpha * (V_{n-1} + X_n)`` -- the factor
+        scales the WHOLE accumulated age, not only the age since the last
+        repair (that would be type I).  0 = perfect repair, the default."""
         self.age = self.restoration_alpha * self.age
 
     # -- event-driven sampling (see Machine._breakdown_driver_event) ----
