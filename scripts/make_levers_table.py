@@ -70,12 +70,17 @@ for i, (scenario, tag, name) in enumerate(SCEN):
     lines.append(r'\midrule')
     for j, (key, label, direction, fmt) in enumerate(KPIS):
         row = [vals[a][key] for a in AGENTS]
-        best = max(row) if direction > 0 else min(row)
+        txts = [fmt.format(v) for v in row]
+        # rank at display precision, so the marks match the printed values
+        uniq = sorted({float(t.replace(',', '')) for t in txts}, reverse=direction > 0)
+        best_s = fmt.format(uniq[0])
+        second_s = fmt.format(uniq[1]) if len(uniq) > 1 else None
         cells = []
-        for v in row:
-            txt = fmt.format(v)
-            if fmt.format(best) == txt:
+        for txt in txts:
+            if txt == best_s:
                 txt = r'\textbf{' + txt + '}'
+            elif second_s is not None and txt == second_s:
+                txt = r'\underline{' + txt + '}'
             cells.append(txt)
         first = (r'\multirow{4}{*}{\makecell[l]{' + tag + r'\\' + name + '}}'
                  if j == 0 else '')
