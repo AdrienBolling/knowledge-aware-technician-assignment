@@ -1765,6 +1765,17 @@ class KataEnv(gym.Env):
         pick someone to enqueue, even if the choice is forced.
         """
         techs = self.dispatcher.techs if self.dispatcher else []
+        if not getattr(self.config, "mask_unavailable_technicians", True):
+            # Permissive surface: only genuinely impossible assignments are
+            # removed.  Busy and absent technicians stay selectable, so the
+            # agent can queue behind a current job and wait for expertise.
+            mask = np.asarray(
+                [0 if bool(getattr(t, "retired", False)) else 1 for t in techs],
+                dtype=np.int8,
+            )
+            if mask.size and int(mask.sum()) == 0:
+                mask = np.ones(len(techs), dtype=np.int8)
+            return mask
         mask = np.asarray(
             [
                 0

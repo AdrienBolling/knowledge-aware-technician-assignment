@@ -389,6 +389,18 @@ def build_agents(env_cfg, scenario_factory, n_techs,
         if imp.get("use_popart"):
             params["use_popart"] = True
             params["normalize_rewards"] = False  # mutually exclusive
+        # Architecture-ladder toggles (absent in historical checkpoints,
+        # which are all the full hybrid + attention encoder)
+        if imp.get("numeric_encoding"):
+            params["numeric_encoding"] = str(imp["numeric_encoding"])
+        if imp.get("cross_slot"):
+            params["cross_slot"] = str(imp["cross_slot"])
+            if str(imp["cross_slot"]) != "attention":
+                params["use_cross_attention"] = False
+        if "set_positional" in imp:
+            params["set_positional"] = bool(imp["set_positional"])
+        if imp.get("flat_hidden"):
+            params["flat_hidden"] = int(imp["flat_hidden"])
         # D3 architecture toggles (absent in historical checkpoints)
         if imp.get("slot_role_binding"):
             params["slot_role_binding"] = True
