@@ -29,11 +29,17 @@ TAIL = 0.03
 SCEN = [('small_scale', 'S1', 'Small'), ('baseline', 'S2', 'Baseline'),
         ('massive_scale', 'S3', 'Industrial'), ('very_long', 'S4', 'Very-long'),
         ('lifecycle', 'S5', 'Lifecycle')]
-KPIS = [('mttr', r'MTTR $\downarrow$', -1, '{:.1f}'),
-        ('know', r'Know.\ $\uparrow$', +1, '{:.1f}'),
-        ('fat', r'Fat.\ $\downarrow$', -1, '{:.3f}'),
-        ('disr', r'Disr.\ $\downarrow$', -1, '{:.0f}'),
-        ('prod', r'Prod.\ $\uparrow$', +1, '{:.0f}')]
+# The four KPIs of tab:results_levers, so the three ablation tables share one
+# format.  'fat' (episode-mean technician fatigue) is computed as well and can
+# be added per table via the spec's 'kpis' key.
+ALL_KPIS = {
+    'mttr': (r'MTTR $\downarrow$', -1, '{:.1f}'),
+    'know': (r'Know.\ $\uparrow$', +1, '{:.1f}'),
+    'fat':  (r'Fat.\ $\downarrow$', -1, '{:.3f}'),
+    'disr': (r'Disr.\ $\downarrow$', -1, '{:.0f}'),
+    'prod': (r'Prod.\ $\uparrow$', +1, '{:.0f}'),
+}
+LEVERS_KPIS = ['mttr', 'know', 'disr', 'prod']
 
 TABLES = {
     'po_table': dict(
@@ -101,6 +107,7 @@ def scenario_values(scenario, agents):
 
 def render(name, spec):
     agents, head, groups = spec['agents'], spec['head'], spec['groups']
+    kpis = [(k, *ALL_KPIS[k]) for k in spec.get('kpis', LEVERS_KPIS)]
     n = len(agents)
     lines = [r'\begin{tabular}{@{}ll' + 'r' * n + r'@{}}', r'\toprule']
     if groups:
@@ -115,7 +122,7 @@ def render(name, spec):
     for scenario, tag, label in SCEN:
         vals = scenario_values(scenario, agents)
         lines.append(r'\midrule')
-        for j, (key, klabel, direction, fmt) in enumerate(KPIS):
+        for j, (key, klabel, direction, fmt) in enumerate(kpis):
             row = [vals[a][key] for a in agents]
             txts = [fmt.format(v) for v in row]
             uniq = sorted({float(t) for t in txts}, reverse=direction > 0)
@@ -128,7 +135,7 @@ def render(name, spec):
                 elif second is not None and t == second:
                     t = r'\underline{' + t + '}'
                 cells.append(t)
-            first = (r'\multirow{%d}{*}{\makecell[l]{%s\\%s}}' % (len(KPIS), tag, label)
+            first = (r'\multirow{%d}{*}{\makecell[l]{%s\\%s}}' % (len(kpis), tag, label)
                      if j == 0 else '')
             lines.append(f'{first} & {klabel} & ' + ' & '.join(cells) + r' \\')
         eps = {vals[a]['n'] for a in agents}
