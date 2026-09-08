@@ -29,6 +29,15 @@ SCEN = [('small_scale', 'Small'), ('baseline', 'Base'), ('massive_scale', 'Indus
 # the horizon everywhere, so there is no scenario-length ground for restricting it.
 KNOW_SCEN = {s for s, _ in SCEN}
 ORACLES = {'greedy_reward', 'topsis', 'shortest_processing', 'optimal_assignment', 'reserve_specialist', 'evo_topsis_inf'}
+# One-for-one informed swap.  HTT-RL's observation carries the simulator's own
+# expected repair time and knowledge match, so a field of empirically-estimating
+# rules was not like-for-like.  Each estimating baseline is replaced by its
+# informed twin.  Informed baselines with no empirical twin (ReserveSpec*,
+# GreedyReward*) stay out of the main field and remain in the full field.
+INFORMED_SWAP = {'empirical_topsis': 'topsis',
+                 'empirical_spt': 'shortest_processing',
+                 'batch_milp': 'optimal_assignment'}
+SWAP_ON = True
 EXCLUDE = {'po_v6', 'po_v6_last', 'hc_v6_ext', 'hc_v6_ext_last', 'hc_v6_wr', 'hc_v6_wr_last'}
 TEX = {  # key -> label in tab:results_dist_full
     'greedy_reward': r'\textsc{GreedyReward}$^{*}$', 'empirical_topsis': r'\textsc{Emp-Topsis}',
@@ -62,11 +71,11 @@ STEP_COLS = ['agent', 'episode', 'step', 'sim_time', 'mttr_rolling', 'fleet_know
 # tab:results_dist columns, in manuscript order (key, column header)
 REP_COLS = [
     ('hc_v6', r'HTT-RL\textsubscript{ref.}'), ('ft_quality', r'HTT-RL\textsubscript{qua.}'),
-    ('empirical_topsis', r'\textsc{E-Topsis}'), ('empirical_spt', r'\textsc{E-Spt}'),
+    ('topsis', r'\textsc{Topsis}$^{*}$'), ('shortest_processing', r'\textsc{Spt}$^{*}$'),
     ('shortest_queue', r'\textsc{ShortQ}'), ('least_fatigued', r'\textsc{LeastFat}'),
     ('round_robin', r'\textsc{RoundR}'), ('least_busy', r'\textsc{LeastBusy}'),
     ('train_weakest', r'\textsc{TrainW}'), ('random', r'\textsc{Random}'),
-    ('batch_milp', r'\textsc{B\textsubscript{MILP}}'), ('a2c_mlp', 'A2C'),
+    ('optimal_assignment', r'\textsc{Hungarian}$^{*}$'), ('a2c_mlp', 'A2C'),
     ('grpo_mlp', 'GRPO'), ('dql_mlp', 'DDQN')]
 ROW_LABELS = [('Small', 'S1 -- Small'), ('Base', 'S2 -- Baseline'), ('Indust.', 'S3 -- Industrial'),
               ('V-long', 'S4 -- Very-long'), ('Lifec.', 'S5 -- Lifecycle')]
@@ -192,7 +201,11 @@ def main():
     full = sorted(set.intersection(*[set(metrics[s].index) for s, _ in SCEN]) - drop)
     if drop:
         print(f'# excluded from the field: {sorted(drop)}')
-    deploy = [a for a in full if a not in ORACLES]
+    if SWAP_ON:
+        deploy = ([a for a in full if a not in ORACLES and a not in INFORMED_SWAP]
+                  + [v for v in INFORMED_SWAP.values() if v in full])
+    else:
+        deploy = [a for a in full if a not in ORACLES]
     print(f'# field: {len(full)} agents full, {len(deploy)} deployable')
     tables = {}
     for vname, base_kpis in VARIANTS.items():

@@ -50,11 +50,12 @@ SCEN = {"small_scale": "S1 Small", "baseline": "S2 Baseline",
         "massive_scale": "S3 Industrial", "very_long": "S4 Very-long",
         "lifecycle": "S5 Lifecycle"}
 SCEN_ORDER = list(SCEN)
-DEPLOYABLE = ["hc_v6", "ft_quality", "empirical_topsis", "empirical_spt", "batch_milp",
+# One-for-one informed swap: the estimating baselines are replaced by their
+# informed twins, so the field matches HTT-RL's own information.
+DEPLOYABLE = ["hc_v6", "ft_quality", "topsis", "shortest_processing", "optimal_assignment",
               "shortest_queue", "least_fatigued", "round_robin", "least_busy",
               "train_weakest", "random", "a2c_mlp", "grpo_mlp", "dql_mlp"]
-INFORMED = ["topsis", "shortest_processing", "optimal_assignment", "reserve_specialist",
-            "greedy_reward"]
+INFORMED = ["reserve_specialist", "greedy_reward"]
 ROSTERS = {"deployable": DEPLOYABLE, "twin": DEPLOYABLE + ["po_v6"],
            "all": DEPLOYABLE + ["po_v6"] + INFORMED}
 LABEL = {"hc_v6": "HTT-RL", "ft_quality": r"HTT-RL$_{qua.}$", "po_v6": "PO-HTT-RL",

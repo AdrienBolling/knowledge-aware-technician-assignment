@@ -31,18 +31,18 @@ SCEN = {'small_scale':'S1 Small','baseline':'S2 Baseline','massive_scale':'S3 In
         'very_long':'S4 Very-long','lifecycle':'S5 Lifecycle'}
 ACCENT = {'hc_v6':('HTT-RL','#0072B2','-',1.8),
           'ft_quality':(r'HTT-RL$^{quality}$','#009E73','-',1.8),
-          'empirical_topsis':('Emp-Topsis','#D55E00','-',1.3),
-          'empirical_spt':('Emp-Spt','#CC79A7','-.',1.3),
+          'topsis':('Topsis*','#D55E00','-',1.3),
+          'shortest_processing':('Spt*','#CC79A7','-.',1.3),
           'random':('Random','#4D4D4D',':',1.1)}
-RULES = ['batch_milp','shortest_queue','least_fatigued','round_robin','least_busy','train_weakest']
+RULES = ['optimal_assignment','shortest_queue','least_fatigued','round_robin','least_busy','train_weakest']
 MLPS  = ['a2c_mlp','grpo_mlp','dql_mlp']
-ORDER = RULES + MLPS + ['random','empirical_spt','empirical_topsis','ft_quality','hc_v6']
+ORDER = RULES + MLPS + ['random','shortest_processing','topsis','ft_quality','hc_v6']
 RET = [0.8e6, 2.5e6, 4.2e6]
 # (key suffix, legend label, hatch): injuries solid, exhaustion hatched, vacations dotted
 TYPES = [('injury', 'injury', ''), ('exhaustion', 'exhaustion', '////'), ('vacation', 'vacation', '....')]
 plt.rcParams['hatch.linewidth'] = 0.5
-SHORT = {'hc_v6':'HTT-RL','ft_quality':'HTT-RL$^{quality}$','empirical_topsis':'Emp-Topsis',
-         'empirical_spt':'Emp-Spt','batch_milp':'Milp','shortest_queue':'ShortQ',
+SHORT = {'hc_v6':'HTT-RL','ft_quality':'HTT-RL$^{quality}$','topsis':'Topsis*',
+         'shortest_processing':'Spt*','optimal_assignment':'Hungarian*','shortest_queue':'ShortQ',
          'least_fatigued':'LeastFat','round_robin':'RoundR','least_busy':'LeastBusy',
          'train_weakest':'TrainW','random':'Random','a2c_mlp':'A2C','grpo_mlp':'GRPO','dql_mlp':'DDQN'}
 
@@ -170,7 +170,7 @@ def disruption_panel(scenario):
 
 def legend_strip():
     handles = [Line2D([],[], color=ACCENT[a][1], ls=ACCENT[a][2], lw=ACCENT[a][3], label=ACCENT[a][0])
-               for a in ('hc_v6','ft_quality','empirical_topsis','empirical_spt','random')]
+               for a in ('hc_v6','ft_quality','topsis','shortest_processing','random')]
     handles += [Line2D([],[], color='#BFBFBF', ls='-', lw=0.9, label='other rules (6)'),
                 Line2D([],[], color='#8C8C8C', ls='--', lw=0.9, label='MLP anchors (3)')]
     types = [Patch(facecolor='#9A9A9A', edgecolor='white', hatch=h, label=f'{label} (panel c)')
