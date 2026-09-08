@@ -65,12 +65,17 @@ for scen, sname in SCEN:
     for i, (key, label, d, fmt, scale) in enumerate(ROWS):
         vals = [m.loc[k, key] if k in m.index else np.nan for k in keys]
         arr = np.array(vals, dtype=float)
-        best = (np.nanmax(arr) if d > 0 else np.nanmin(arr)) if d else None
+        shown = [fmt.format(v / scale) for v in vals if np.isfinite(v)]
+        # rank at display precision, so the marks match the printed values
+        uniq = sorted({float(t.replace(',', '')) for t in shown}, reverse=d > 0) if d else []
+        best_s = fmt.format(uniq[0]) if uniq else None
+        second_s = fmt.format(uniq[1]) if len(uniq) > 1 else None
         cells = []
         for v in vals:
             if not np.isfinite(v): cells.append('---'); continue
             txt = fmt.format(v / scale)
-            if d and fmt.format(best / scale) == txt: txt = r'\textbf{' + txt + '}'
+            if d and txt == best_s: txt = r'\textbf{' + txt + '}'
+            elif d and second_s is not None and txt == second_s: txt = r'\underline{' + txt + '}'
             cells.append(txt)
         first = r'\multirow{%d}{*}{\makecell[l]{%s}}' % (len(ROWS), sname.replace(' ', r'\\', 1)) if i == 0 else ''
         lines.append(f'{first} & {label} & ' + ' & '.join(cells) + r' \\')

@@ -100,12 +100,14 @@ def emit_tex(tables):
     print(f'\n% ---- tab:results_dist_full body ({PAPER_VARIANT}, full field) ----')
     t = tables[(PAPER_VARIANT, 'full')]
     cols = ['Small', 'Base', 'Indust.', 'V-long', 'Lifec.', 'Overall']
-    best = {c: round(t[c].min(), 1) for c in cols}
+    rank = {c: sorted(set(round(v, 1) for v in t[c])) for c in cols}
     for a, r in t.iterrows():
         cells = []
         for c in cols:
-            x = f'{r[c]:.1f}'
-            cells.append(r'\textbf{' + x + '}' if round(r[c], 1) == best[c] else x)
+            x = f'{r[c]:.1f}'; v = round(r[c], 1); o = rank[c]
+            if v == o[0]: x = r'\textbf{' + x + '}'
+            elif len(o) > 1 and v == o[1]: x = r'\underline{' + x + '}'
+            cells.append(x)
         print(f'{TEX[a]} & ' + ' & '.join(cells) + r' \\')
 
 
