@@ -35,12 +35,12 @@ TAU_MAX = 2.5
 # key: (label, colour, linestyle, linewidth)
 ACCENT = {'hc_v6':            ('HTT-RL',            '#0072B2', '-',   1.8),
           'ft_quality':       (r'HTT-RL$^{quality}$','#009E73', '-',   1.8),
-          'empirical_topsis': ('Emp-Topsis',        '#D55E00', '-',   1.3),
-          'empirical_spt':    ('Emp-Spt',           '#CC79A7', '-.',  1.3),
-          'batch_milp':       ('BatchMilp',         '#E69F00', '--',  1.3),
+          'topsis':             ('Topsis*',       '#D55E00', '-',   1.3),
+          'shortest_processing':('Spt*',          '#CC79A7', '-.',  1.3),
+          'optimal_assignment': ('Hungarian*',    '#E69F00', '--',  1.3),
           'random':           ('Random',            '#4D4D4D', ':',   1.1)}
-INFORMED = {'greedy_reward': ('GreedyReward*', '#000000', (0, (4, 1.5)), 1.4),
-            'topsis':        ('Topsis*',       '#56B4E9', (0, (4, 1.5)), 1.4)}
+INFORMED = {'greedy_reward':      ('GreedyReward*',  '#000000', (0, (4, 1.5)), 1.4),
+            'reserve_specialist': ('ReserveSpec*',   '#56B4E9', (0, (4, 1.5)), 1.4)}
 MLPS = ['a2c_mlp', 'grpo_mlp', 'dql_mlp']
 
 plt.rcParams.update({'font.size': 7.5, 'axes.titlesize': 8, 'axes.labelsize': 7.5,
@@ -102,7 +102,9 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     metrics = load()
     full = sorted(set.intersection(*[set(metrics[s].index) for s, _ in ss.SCEN]))
-    deploy = [a for a in full if a not in ss.ORACLES]
+    deploy = ([a for a in full
+               if a not in ss.ORACLES and a not in ss.INFORMED_SWAP]
+              + [v for v in ss.INFORMED_SWAP.values() if v in full])
     for name, field, accents, title in (
             ('profile_deployable', deploy, ACCENT, f'Deployable field ({len(deploy)} agents)'),
             ('profile_full', full, {**ACCENT, **INFORMED}, f'Full field ({len(full)} agents)')):
