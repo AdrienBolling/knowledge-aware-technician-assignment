@@ -140,6 +140,10 @@ CHECKPOINTS = {
     # v6: infra-clean retrain (D1 LR-schedule fix, D2 dropout=0, D11
     # boolean tokens visible) + D3 architecture (role-bound slot fusion
     # + feature-context view).  Fresh BC (architecture change).
+    # Corrected agent: permissive action mask + permutation-invariant
+    # cross-slot attention.  Architecture flags come from the checkpoint.
+    "hc_fix": Path("checkpoints/hc_fix_final/set_transformer_best.pt"),
+    "hc_fix_last": Path("checkpoints/hc_fix_final/set_transformer_last.pt"),
     "hc_v6": Path("checkpoints/hc_v6_final/set_transformer_best.pt"),
     "hc_v6_last": Path("checkpoints/hc_v6_final/set_transformer_last.pt"),
     # v6 reward fine-tunes (scripts/dgy_v6_ft_queue.sh): 100 eps from
