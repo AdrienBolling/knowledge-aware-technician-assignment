@@ -26,7 +26,7 @@ ROOT = 'reports/hvp_eval_v6w'
 PARTS = 'reports/hvp_v6w_parts'
 DISR = 'reports/hvp_eval_disr'   # per-type disruption counts (same episodes, instrumented re-run)
 OUT = 'paper/figures/panels'
-PANEL = (3.2, 2.05)   # inches; 0.49 * 6.5 in = 3.19 in in the manuscript
+PANEL = (3.2, 1.55)   # inches; 0.49 * 6.5 in = 3.19 in in the manuscript
 SCEN = {'small_scale':'S1 Small','baseline':'S2 Baseline','massive_scale':'S3 Industrial',
         'very_long':'S4 Very-long','lifecycle':'S5 Lifecycle'}
 ACCENT = {'hc_v6':('HTT-RL','#0072B2','-',1.8),
@@ -184,6 +184,17 @@ def legend_strip():
                borderpad=0.1, borderaxespad=0.0)
     fig.savefig(f'{OUT}/scenario_legend.pdf', bbox_inches='tight', pad_inches=0.01)
     plt.close(fig)
+
+import argparse
+
+_ap = argparse.ArgumentParser(description=__doc__)
+_ap.add_argument('--panel-height', type=float, default=PANEL[1],
+                 help='panel height in inches; the width is fixed so this sets '
+                      'the height the manuscript renders (default: %(default)s)')
+_ap.add_argument('--out', default=OUT, help='output directory (default: %(default)s)')
+_args = _ap.parse_args()
+PANEL = (PANEL[0], float(_args.panel_height))
+OUT = _args.out
 
 os.makedirs(OUT, exist_ok=True)
 legend_strip()
