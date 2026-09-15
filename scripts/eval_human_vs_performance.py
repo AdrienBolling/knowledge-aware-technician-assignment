@@ -157,6 +157,13 @@ CHECKPOINTS = {
     "ft_fatigue_last": Path("checkpoints/ft_fatigue/set_transformer_last.pt"),
     "ft_quality": Path("checkpoints/ft_quality/set_transformer_best.pt"),
     "ft_quality_last": Path("checkpoints/ft_quality/set_transformer_last.pt"),
+    # Deployment-time adaptation study on S5 (scripts/live_finetune_s5.py,
+    # scripts/dgy_live_s5_queue.sh): weights after one live-updated episode
+    # (sampled or argmax actions), and after 10 fine-tuning episodes on the
+    # fixed S5 factory (run_configs/benchmark_suite/lifecycle_fixed_s5.json).
+    "ft_quality_live_sto": Path("checkpoints/ft_quality_live_sto/set_transformer_final.pt"),
+    "ft_quality_live_det": Path("checkpoints/ft_quality_live_det/set_transformer_final.pt"),
+    "ft_quality_s5ft": Path("checkpoints/ft_quality_s5ft/set_transformer_final.pt"),
     # v6-po ablation (scripts/local_po_v6_queue.sh): the exact hc_v6
     # recipe/world/architecture with ONLY performance-oriented reward
     # components (throughput_delta, repair_quality, terminal products);
@@ -362,6 +369,50 @@ def peek_improvements(checkpoint: Path) -> dict:
     return dict(ck.get("improvements") or {}) if isinstance(ck, dict) else {}
 
 
+def set_transformer_params(base_params: dict, env_cfg, tokenizer,
+                           checkpoint: Path) -> tuple[dict, dict]:
+    """Constructor params for a SetTransformerAgent that loads ``checkpoint``.
+
+    Injects the env-derived sizes and the architecture recorded in the
+    checkpoint's ``improvements`` dict.  Returns ``(params, improvements)``.
+    """
+    params = dict(base_params)
+    params["n_actions"] = int(env_cfg.gym.max_techs)
+    params.setdefault("max_techs", int(env_cfg.gym.max_techs))
+    params.setdefault("max_machines", int(env_cfg.gym.max_machines))
+    params.setdefault("env_length", int(env_cfg.gym.set_env_length))
+    params.setdefault("sim_time_scale", float(env_cfg.gym.max_sim_time))
+    params.setdefault("vocab_size", tokenizer.vocab_size)
+    # Match the checkpoint's trained architecture (opt-in improvements).
+    imp = peek_improvements(checkpoint)
+    rnn_type = str(imp.get("rnn_type", "none") or "none")
+    if rnn_type != "none":
+        params["rnn_type"] = rnn_type
+        params["rnn_hidden"] = int(imp.get("rnn_hidden", 128))
+    if imp.get("use_popart"):
+        params["use_popart"] = True
+        params["normalize_rewards"] = False  # mutually exclusive
+    # Architecture-ladder toggles (absent in historical checkpoints,
+    # which are all the full hybrid + attention encoder)
+    if imp.get("numeric_encoding"):
+        params["numeric_encoding"] = str(imp["numeric_encoding"])
+    if imp.get("cross_slot"):
+        params["cross_slot"] = str(imp["cross_slot"])
+        if str(imp["cross_slot"]) != "attention":
+            params["use_cross_attention"] = False
+    if "set_positional" in imp:
+        params["set_positional"] = bool(imp["set_positional"])
+    if imp.get("flat_hidden"):
+        params["flat_hidden"] = int(imp["flat_hidden"])
+    # D3 architecture toggles (absent in historical checkpoints)
+    if imp.get("slot_role_binding"):
+        params["slot_role_binding"] = True
+    if imp.get("use_feature_context"):
+        params["use_feature_context"] = True
+        params["tech_slot_length"] = int(imp.get("tech_slot_length", 16))
+    return params, imp
+
+
 def build_agents(env_cfg, scenario_factory, n_techs,
                  machine_types=None, component_types=None):
     """Return {label: (agent, env)} for the trained checkpoints + 5 heuristics.
@@ -377,40 +428,7 @@ def build_agents(env_cfg, scenario_factory, n_techs,
             print(f"  (skipping {label}: no checkpoint at {ckpt})", flush=True)
             continue
         tok = load_set_tokenizer(ckpt, env_cfg)
-        params = dict(agent_cfg.params)
-        params["n_actions"] = int(env_cfg.gym.max_techs)
-        params.setdefault("max_techs", int(env_cfg.gym.max_techs))
-        params.setdefault("max_machines", int(env_cfg.gym.max_machines))
-        params.setdefault("env_length", int(env_cfg.gym.set_env_length))
-        params.setdefault("sim_time_scale", float(env_cfg.gym.max_sim_time))
-        params.setdefault("vocab_size", tok.vocab_size)
-        # Match the checkpoint's trained architecture (opt-in improvements).
-        imp = peek_improvements(ckpt)
-        rnn_type = str(imp.get("rnn_type", "none") or "none")
-        if rnn_type != "none":
-            params["rnn_type"] = rnn_type
-            params["rnn_hidden"] = int(imp.get("rnn_hidden", 128))
-        if imp.get("use_popart"):
-            params["use_popart"] = True
-            params["normalize_rewards"] = False  # mutually exclusive
-        # Architecture-ladder toggles (absent in historical checkpoints,
-        # which are all the full hybrid + attention encoder)
-        if imp.get("numeric_encoding"):
-            params["numeric_encoding"] = str(imp["numeric_encoding"])
-        if imp.get("cross_slot"):
-            params["cross_slot"] = str(imp["cross_slot"])
-            if str(imp["cross_slot"]) != "attention":
-                params["use_cross_attention"] = False
-        if "set_positional" in imp:
-            params["set_positional"] = bool(imp["set_positional"])
-        if imp.get("flat_hidden"):
-            params["flat_hidden"] = int(imp["flat_hidden"])
-        # D3 architecture toggles (absent in historical checkpoints)
-        if imp.get("slot_role_binding"):
-            params["slot_role_binding"] = True
-        if imp.get("use_feature_context"):
-            params["use_feature_context"] = True
-            params["tech_slot_length"] = int(imp.get("tech_slot_length", 16))
+        params, imp = set_transformer_params(agent_cfg.params, env_cfg, tok, ckpt)
         agent = SetTransformerAgent(**params)
         agent.load(ckpt)
         # Benchmark forwards must not sample dropout masks (defect D2);
@@ -709,13 +727,20 @@ def _episode_kpis(final_metrics: dict, sums: dict, counts: dict) -> dict:
 
 
 def run_episode(agent, env, *, seed: int, deterministic: bool = True,
-                record_every: int = 1):
+                record_every: int = 1, on_step=None,
+                freeze_normalizer: bool = True):
     """One rollout; returns (kpis_dict, step_records_list).
 
     ``record_every`` subsamples the per-step series (every N-th decision
     plus the terminal one); episode KPIs are unaffected — step-metric KPIs
     are accumulated over EVERY decision, not the recorded subset.  Use for
     very long episodes where every-step records would dominate memory.
+
+    ``on_step(prev_obs, action, reward, obs, terminated, truncated, info)``
+    runs after every env step and before the next action (live learning in
+    scripts/live_finetune_s5.py).  ``freeze_normalizer=False`` keeps the
+    reward normalizer updating, as in training.  The defaults reproduce the
+    benchmark exactly.
     """
     np.random.seed(seed)  # heuristic tiebreaks / RandomAgent
     random.seed(seed)  # machine-failure Bernoulli draws (stdlib random in
@@ -725,7 +750,7 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     agent.on_episode_start()
     with quiet():
         obs, _ = env.reset(seed=seed)
-    if hasattr(env, "freeze_reward_normalizer"):
+    if freeze_normalizer and hasattr(env, "freeze_reward_normalizer"):
         env.freeze_reward_normalizer()
 
     records = []
@@ -736,9 +761,12 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     machine_hist: list = []
     machine_registry: dict = {}
     while True:
+        prev_obs = obs
         action = agent.select_action(obs, deterministic=deterministic)
         with quiet():
             obs, reward, term, trunc, info = env.step(action)
+        if on_step is not None:
+            on_step(prev_obs, action, reward, obs, term, trunc, info)
         ep_reward += float(reward)
         n_steps += 1
         for k, v in info.get("metrics", {}).items():
