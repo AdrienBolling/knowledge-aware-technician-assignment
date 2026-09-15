@@ -18,7 +18,7 @@ as LaTeX subfigures (same pattern as make_scenario_figures.py):
     paper/figures/panels/profile_full.pdf         30-agent field, informed included
     paper/figures/panels/profile_legend.pdf       shared legend strip (full width)
 """
-import importlib.util, os
+import importlib.util, os, sys
 import numpy as np, pandas as pd
 import matplotlib
 matplotlib.use('Agg')
@@ -27,20 +27,22 @@ from matplotlib.lines import Line2D
 
 spec = importlib.util.spec_from_file_location('ss', os.path.join(os.path.dirname(__file__), 'summary_scores.py'))
 ss = importlib.util.module_from_spec(spec); spec.loader.exec_module(ss)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from policy_colors import COLOR as PC  # single palette shared with the scenario panels and profit maps
 
 OUT = 'paper/figures/panels'
 PANEL = (3.2, 2.35)          # inches; included at 0.49\textwidth
 KPIS = [('prod', +1), ('mttr_mean', -1), ('disr', -1), ('know', +1)]
 TAU_MAX = 2.5
 # key: (label, colour, linestyle, linewidth)
-ACCENT = {'hc_v6':            ('HTT-RL',            '#0072B2', '-',   1.8),
-          'ft_quality':       (r'HTT-RL$^{quality}$','#009E73', '-',   1.8),
-          'topsis':             ('Topsis*',       '#D55E00', '-',   1.3),
-          'shortest_processing':('Spt*',          '#CC79A7', '-.',  1.3),
-          'optimal_assignment': ('Hungarian*',    '#E69F00', '--',  1.3),
-          'random':           ('Random',            '#4D4D4D', ':',   1.1)}
-INFORMED = {'greedy_reward':      ('GreedyReward*',  '#000000', (0, (4, 1.5)), 1.4),
-            'reserve_specialist': ('ReserveSpec*',   '#56B4E9', (0, (4, 1.5)), 1.4)}
+ACCENT = {'hc_v6':            ('HTT-RL',            PC['hc_v6'], '-',   1.8),
+          'ft_quality':       (r'HTT-RL$^{quality}$', PC['ft_quality'], '-',   1.8),
+          'topsis':             ('Topsis*',       PC['topsis'], '-',   1.3),
+          'shortest_processing':('Spt*',          PC['shortest_processing'], '-.',  1.3),
+          'optimal_assignment': ('Hungarian*',    PC['optimal_assignment'], '--',  1.3),
+          'random':           ('Random',            PC['random'], ':',   1.1)}
+INFORMED = {'greedy_reward':      ('GreedyReward*',  PC['greedy_reward'], (0, (4, 1.5)), 1.4),
+            'reserve_specialist': ('ReserveSpec*',   PC['reserve_specialist'], (0, (4, 1.5)), 1.4)}
 MLPS = ['a2c_mlp', 'grpo_mlp', 'dql_mlp']
 
 plt.rcParams.update({'font.size': 7.5, 'axes.titlesize': 8, 'axes.labelsize': 7.5,
@@ -125,8 +127,12 @@ def main():
                for lab, c, ls, lw in list(ACCENT.values()) + list(INFORMED.values())]
     handles += [Line2D([], [], color='0.72', ls='-', lw=0.7, label='other rules'),
                 Line2D([], [], color='0.72', ls='--', lw=0.7, label='MLP anchors')]
-    fig = plt.figure(figsize=(6.42, 0.34))  # full-width strip, as make_scenario_figures.py
-    fig.legend(handles=handles, loc='center', ncol=8, frameon=False,
+    # Full-width strip, as make_scenario_figures.py; wrap to extra rows instead of clipping.
+    ncol = min(len(handles), 6)
+    nrow = -(-len(handles) // ncol)
+    fig = plt.figure(figsize=(6.42, 0.06 + 0.14 * nrow))
+    fig.legend(handles=handles, loc='center', ncol=ncol, frameon=False,
+               borderaxespad=0.0, borderpad=0.0, labelspacing=0.25,
                handlelength=1.8, columnspacing=1.0, fontsize=6.5)
     fig.savefig(f'{OUT}/profile_legend.pdf'); plt.close(fig)
     print(f'\nwritten: {OUT}/profile_{{deployable,full,legend}}.pdf')

@@ -14,13 +14,15 @@ Panels are emitted at a fixed physical size (PANEL, inches) with no
 tight-bbox cropping, so every panel scales identically when included at
 0.49\textwidth (elsarticle 3p: \textwidth = 468 pt = 6.5 in).  Roster =
 the summary-table deployable field (no oracles)."""
-import os
+import os, sys
 import numpy as np, pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from policy_colors import COLOR as PC  # single palette shared with the profit maps and profiles
 
 ROOT = 'reports/hvp_eval_v6w'
 PARTS = 'reports/hvp_v6w_parts'
@@ -29,11 +31,11 @@ OUT = 'paper/figures/panels'
 PANEL = (3.2, 1.55)   # inches; 0.49 * 6.5 in = 3.19 in in the manuscript
 SCEN = {'small_scale':'S1 Small','baseline':'S2 Baseline','massive_scale':'S3 Industrial',
         'very_long':'S4 Very-long','lifecycle':'S5 Lifecycle'}
-ACCENT = {'hc_v6':('HTT-RL','#0072B2','-',1.8),
-          'ft_quality':(r'HTT-RL$^{quality}$','#009E73','-',1.8),
-          'topsis':('Topsis*','#D55E00','-',1.3),
-          'shortest_processing':('Spt*','#CC79A7','-.',1.3),
-          'random':('Random','#4D4D4D',':',1.1)}
+ACCENT = {'hc_v6':('HTT-RL',PC['hc_v6'],'-',1.8),
+          'ft_quality':(r'HTT-RL$^{quality}$',PC['ft_quality'],'-',1.8),
+          'topsis':('Topsis*',PC['topsis'],'-',1.3),
+          'shortest_processing':('Spt*',PC['shortest_processing'],'-.',1.3),
+          'random':('Random',PC['random'],':',1.1)}
 RULES = ['optimal_assignment','shortest_queue','least_fatigued','round_robin','least_busy','train_weakest']
 MLPS  = ['a2c_mlp','grpo_mlp','dql_mlp']
 ORDER = RULES + MLPS + ['random','shortest_processing','topsis','ft_quality','hc_v6']

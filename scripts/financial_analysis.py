@@ -34,6 +34,8 @@ Outputs (``--out``, default ``financial/``):
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -74,17 +76,20 @@ TEX = {"hc_v6": "HTT-RL", "ft_quality": r"HTT-RL\textsubscript{qua.}", "po_v6": 
        "dql_mlp": "DDQN-MLP", "topsis": r"\textsc{Topsis}$^{*}$",
        "shortest_processing": r"\textsc{Spt}$^{*}$", "optimal_assignment": r"\textsc{Hungarian}$^{*}$",
        "reserve_specialist": r"\textsc{ReserveSpec}$^{*}$", "greedy_reward": r"\textsc{GreedyReward}$^{*}$"}
-# Accents shared with the scenario panels (make_scenario_figures.ACCENT); the
-# rules that win somewhere get their own hue (Dark2), MLP anchors pale,
-# informed baselines in the remaining hues.  ShortestQueue and LeastFatigued
-# produce identical episodes under the shared action mask and share a colour.
-COLOR = {"hc_v6": "#0072B2", "ft_quality": "#009E73", "po_v6": "#E69F00",
-         "empirical_topsis": "#D55E00", "empirical_spt": "#CC79A7", "random": "#4D4D4D",
+# Tracked policies take their colour from policy_colors.COLOR, the palette of
+# the scenario panels and the performance profiles.  The rules that win
+# somewhere get their own hue (Dark2), MLP anchors pale.  ShortestQueue and
+# LeastFatigued produce identical episodes under the shared action mask and
+# share a colour.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import policy_colors  # noqa: E402
+
+COLOR = {"po_v6": "#E69F00",
+         "empirical_topsis": "#D55E00", "empirical_spt": "#CC79A7",
          "batch_milp": "#7570B3", "least_busy": "#E6AB02", "shortest_queue": "#A6761D",
          "least_fatigued": "#A6761D", "round_robin": "#66A61E", "train_weakest": "#8C8C8C",
          "a2c_mlp": "#E6D8A8", "grpo_mlp": "#D4E6A8", "dql_mlp": "#A8D4E6",
-         "topsis": "#F0E442", "shortest_processing": "#56B4E9", "optimal_assignment": "#999933",
-         "reserve_specialist": "#882255", "greedy_reward": "#117733"}
+         **policy_colors.COLOR}
 GRID = 700          # fine enough that the winner boundaries do not alias
 PANEL = (2.1, 1.9)   # inches; 0.32 * 6.5 in = 2.08 in in the manuscript
 SWEEP = 1.15         # axes extend 15% past the roster's largest break-even
