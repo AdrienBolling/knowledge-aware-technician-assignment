@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import torch
 
-from agents import GRPOAgent, PPOTransformerAgent, RainbowDQNAgent
+from agents import PPOTransformerAgent
 from agents.base import resolve_device
 
 
@@ -60,32 +60,11 @@ class TestAgentAutoDetect:
         assert isinstance(agent.device, torch.device)
         assert agent.device.type in ("cpu", "cuda", "mps")
 
-    def test_grpo_defaults_to_auto(self):
-        agent = GRPOAgent(
-            n_actions=2, vocab_size=16, d_model=16, n_heads=2, n_layers=1,
-            max_seq_len=8,
-        )
-        assert isinstance(agent.device, torch.device)
-        assert agent.device.type in ("cpu", "cuda", "mps")
-
-    def test_rainbow_defaults_to_auto(self):
-        agent = RainbowDQNAgent(
-            n_actions=2, vocab_size=16, d_model=16, n_heads=2, n_layers=1,
-            max_seq_len=8, min_replay_size=2,
-        )
-        assert isinstance(agent.device, torch.device)
-        assert agent.device.type in ("cpu", "cuda", "mps")
-
     def test_explicit_cpu_override_respected(self):
         for cls, kw in (
             (PPOTransformerAgent, dict(
                 vocab_size=16, d_model=16, n_heads=2, n_layers=1, max_seq_len=8,
                 rollout_steps=4, minibatch_size=2, total_updates=2, warmup_updates=1,
-            )),
-            (GRPOAgent, dict(vocab_size=16, d_model=16, n_heads=2, n_layers=1, max_seq_len=8)),
-            (RainbowDQNAgent, dict(
-                vocab_size=16, d_model=16, n_heads=2, n_layers=1, max_seq_len=8,
-                min_replay_size=2,
             )),
         ):
             agent = cls(n_actions=2, device="cpu", **kw)

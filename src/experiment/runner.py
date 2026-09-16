@@ -39,13 +39,10 @@ from agents import (
     A2CMLPAgent,
     Agent,
     DQLMLPAgent,
-    GRPOAgent,
     GRPOMLPAgent,
     LeastBusyAgent,
     LeastFatiguedAgent,
-    PPOLatentAgent,
     PPOTransformerAgent,
-    RainbowDQNAgent,
     RandomAgent,
     RoundRobinAgent,
     SetTransformerAgent,
@@ -74,10 +71,7 @@ _AGENT_REGISTRY: dict[str, type[Agent]] = {
     "least_busy": LeastBusyAgent,
     "least_fatigued": LeastFatiguedAgent,
     "shortest_queue": ShortestQueueAgent,
-    "rainbow_dqn": RainbowDQNAgent,
-    "grpo": GRPOAgent,
     "ppo_transformer": PPOTransformerAgent,
-    "ppo_latent": PPOLatentAgent,
     "set_transformer": SetTransformerAgent,
     "a2c_mlp": A2CMLPAgent,
     "grpo_mlp": GRPOMLPAgent,
@@ -85,11 +79,11 @@ _AGENT_REGISTRY: dict[str, type[Agent]] = {
 }
 
 _LEARNING_AGENTS = {
-    "rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent", "set_transformer",
+    "ppo_transformer", "set_transformer",
     "a2c_mlp", "grpo_mlp", "dql_mlp",
 }
 _TOKEN_AGENTS = {
-    "rainbow_dqn", "grpo", "ppo_transformer", "ppo_latent", "set_transformer",
+    "ppo_transformer", "set_transformer",
 }
 # Agents that consume the grouped ``set`` observation rather than the
 # flat token stream — their n_actions is the *padded* max_techs cap,

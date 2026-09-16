@@ -48,11 +48,6 @@ from kata.EntityFactories import RandomScenarioSampler
 from kata.funcs import seed_numba_rng
 from experiment.config import AgentConfig
 from agents import (
-    BatchMILPAgent,
-    EmpiricalSPTAgent,
-    EmpiricalTopsisAgent,
-    EvoTopsisAgent,
-    EvoTopsisInformedAgent,
     GreedyRewardAgent,
     A2CMLPAgent,
     DQLMLPAgent,
@@ -60,8 +55,6 @@ from agents import (
     LeastBusyAgent,
     LeastFatiguedAgent,
     OptimalAssignmentAgent,
-    PPOTransformerAgent,
-    RainbowDQNAgent,
     RandomAgent,
     ReserveSpecialistAgent,
     RoundRobinAgent,
@@ -71,11 +64,6 @@ from agents import (
     TopsisAgent,
     TrainWeakestAgent,
 )
-
-TOKEN_AGENT_CLASSES = {
-    "ppo_transformer": PPOTransformerAgent,
-    "rainbow_dqn": RainbowDQNAgent,
-}
 
 HEURISTICS = {
     "random": RandomAgent,
@@ -90,60 +78,16 @@ HEURISTICS = {
     # batch cost matrix, or the counterfactual per-assignment reward):
     "shortest_processing": ShortestProcessingTimeAgent,
     "optimal_assignment": OptimalAssignmentAgent,
-    "batch_milp": BatchMILPAgent,
     "topsis": TopsisAgent,
     "reserve_specialist": ReserveSpecialistAgent,
     "greedy_reward": GreedyRewardAgent,
     "train_weakest": TrainWeakestAgent,
-    # HONEST-INFORMATION baselines --- estimates tallied from observed
-    # completions only (env.repair_log); no ground-truth access:
-    "empirical_spt": EmpiricalSPTAgent,
-    "empirical_topsis": EmpiricalTopsisAgent,
-    # METAHEURISTIC baseline: GA-tuned signed TOPSIS weights over honest
-    # criteria (scripts/tune_evo_topsis.py -> run_configs/agents/
-    # evo_topsis_weights.json); _inf = informed twin (oracle repair times).
-    "evo_topsis": EvoTopsisAgent,
-    "evo_topsis_inf": EvoTopsisInformedAgent,
 }
 
 CHECKPOINTS = {
-    "human": Path("checkpoints/human_set_transformer_best.pt"),
-    "performance": Path("checkpoints/performance_set_transformer_best.pt"),
-    # Second-generation human-centric agent (long-horizon gamma/lambda +
-    # PopArt + GRU, trained with the opt-in improvement stack).  Its
-    # architecture is read from the checkpoint's own ``improvements`` dict
-    # by build_agents, so no separate agent config is needed here.
-    "hc_v2": Path("checkpoints/hc_v2/set_transformer_best.pt"),
-    # GAE-fix infra ablation (diagnostic — training cut at 80%).
-    "gaefix": Path("checkpoints/hc_v2_gaefix/set_transformer_best.pt"),
-    # Third generation: BC warm-start + multiscale SOM-world training.
-    # ``hc_v3_final/`` is populated by the post-v3 queue with the best
-    # AND the latest round checkpoint of the (possibly extended) run —
-    # the inline eval is sparse (5 eps / 50 rounds), so "best" is a
-    # noisy selection and both are benchmarked.
-    "hc_v3": Path("checkpoints/hc_v3_final/set_transformer_best.pt"),
-    "hc_v3_last": Path("checkpoints/hc_v3_final/set_transformer_last.pt"),
-    # Long-horizon fine-tune of hc_v3_last (horizons U(1.5M, 5M), halved
-    # LR, inline eval off): final and mid-training round checkpoints,
-    # canonicalised by scripts/serval_post_ft_queue.sh.
-    "hc_v3_ft": Path("checkpoints/hc_v3_ft_final/set_transformer_last.pt"),
-    "hc_v3_ft_mid": Path("checkpoints/hc_v3_ft_final/set_transformer_mid.pt"),
-    # v4: trained from scratch (fresh TOPSIS BC-init) in the mechanisms-ON
-    # world (knowledge decay + Kijima imperfect repair, alpha=0.25).
-    "hc_v4": Path("checkpoints/hc_v4_final/set_transformer_best.pt"),
-    "hc_v4_last": Path("checkpoints/hc_v4_final/set_transformer_last.pt"),
-    # v5: v4 world + v4 recipe, reward/discounting the only variable —
-    # PBRS knowledge credit, workload_balance, fleet_availability, and
-    # semi-MDP gamma**dt (0.9999 per sim-t.u.) discounting.
-    "hc_v5": Path("checkpoints/hc_v5_final/set_transformer_best.pt"),
-    "hc_v5_last": Path("checkpoints/hc_v5_final/set_transformer_last.pt"),
     # v6: infra-clean retrain (D1 LR-schedule fix, D2 dropout=0, D11
     # boolean tokens visible) + D3 architecture (role-bound slot fusion
     # + feature-context view).  Fresh BC (architecture change).
-    # Corrected agent: permissive action mask + permutation-invariant
-    # cross-slot attention.  Architecture flags come from the checkpoint.
-    "hc_fix": Path("checkpoints/hc_fix_final/set_transformer_best.pt"),
-    "hc_fix_last": Path("checkpoints/hc_fix_final/set_transformer_last.pt"),
     "hc_v6": Path("checkpoints/hc_v6_final/set_transformer_best.pt"),
     "hc_v6_last": Path("checkpoints/hc_v6_final/set_transformer_last.pt"),
     # v6 reward fine-tunes (scripts/dgy_v6_ft_queue.sh): 100 eps from
@@ -166,33 +110,6 @@ CHECKPOINTS = {
     # init re-collected locally with the dgy protocol/seed.
     "po_v6": Path("checkpoints/po_v6_final/set_transformer_best.pt"),
     "po_v6_last": Path("checkpoints/po_v6_final/set_transformer_last.pt"),
-    # v6 extension (scripts/local_hc_v6_ext_queue.sh): hc_v6 final.pt
-    # + 600 MORE episodes of the same recipe/reward (train_multiscale_v5),
-    # fresh world sequence (seed 43), LR schedule re-armed at 1e-4.
-    # Tests whether the ~ep-400 plateau was a training-budget artifact.
-    "hc_v6_ext": Path("checkpoints/hc_v6_ext_final/set_transformer_best.pt"),
-    "hc_v6_ext_last": Path("checkpoints/hc_v6_ext_final/set_transformer_last.pt"),
-    # v6 warm restart (scripts/local_hc_v6_wr_queue.sh): same +600-ep
-    # extension but with the re-arm gate FIXED, so the lr=1e-4 cosine
-    # warm restart actually applies (hc_v6_ext trained at the floor
-    # 1.5e-5 by the same-size-extension defect — see ppo_transformer
-    # docstring).  ext = budget test at tail LR; wr = plasticity test.
-    "hc_v6_wr": Path("checkpoints/hc_v6_wr_final/set_transformer_best.pt"),
-    "hc_v6_wr_last": Path("checkpoints/hc_v6_wr_final/set_transformer_last.pt"),
-}
-
-# Token-stream RL anchors (section 7.4): standard architectures trained
-# on the exact HC-v1 world + reward.  Fixed action head + fleet-sized
-# vocab: they only run on the scenario they were trained on (baseline).
-TOKEN_CHECKPOINTS = {
-    "ppo_transformer": (
-        Path("checkpoints/anchors/ppo_transformer_best.pt"),
-        Path("run_configs/agents/ppo_transformer.json"),
-    ),
-    "rainbow_dqn": (
-        Path("checkpoints/anchors/rainbow_dqn_best.pt"),
-        Path("run_configs/agents/rainbow_dqn.json"),
-    ),
 }
 
 # Traditional-architecture learned baselines (section 7.4): plain MLPs
@@ -244,28 +161,6 @@ SCENARIOS = {
     # max_techs/max_machines caps.
     "lifecycle": dict(
         cfg="run_configs/benchmark_suite/lifecycle.json",
-        n_eps=1, sim=5_000_000.0, steps=1_500_000,
-    ),
-    # Realistic-lifespan probe (2026-09-02): the industrial layout on
-    # the x25-lifespan machine park of run_configs/realistic_lifespan/
-    # (requires --extra-machine-templates with the matching JSON —
-    # the `_rl` template names are not registered otherwise).
-    "very_long_realistic": dict(
-        cfg="run_configs/realistic_lifespan/very_long_realistic.json",
-        n_eps=1, sim=5_000_000.0, steps=1_500_000,
-    ),
-    # Same realistic park, lean staffing: 5 technicians for 80-100
-    # machines (load-to-capacity probe).
-    "very_long_realistic_5t": dict(
-        cfg="run_configs/realistic_lifespan/very_long_realistic_5t.json",
-        n_eps=1, sim=5_000_000.0, steps=1_500_000,
-    ),
-    "very_long_realistic_3t": dict(
-        cfg="run_configs/realistic_lifespan/very_long_realistic_3t.json",
-        n_eps=1, sim=5_000_000.0, steps=1_500_000,
-    ),
-    "very_long_realistic10_3t": dict(
-        cfg="run_configs/realistic_lifespan/very_long_realistic10_3t.json",
         n_eps=1, sim=5_000_000.0, steps=1_500_000,
     ),
 }
@@ -456,44 +351,6 @@ def build_agents(env_cfg, scenario_factory, n_techs,
         env = make_env(env_cfg, scenario_factory, "set", tokenizer=tok,
                        legacy_obs=False)
         agents[label] = (agent, env)
-    # Token-stream anchors: rebuilt with the runner's exact vocab recipe
-    # (deterministic given identical config/pools, so checkpoint ids
-    # match).  ``setdefault`` mirrors the runner: an explicit vocab_size
-    # in the agent JSON wins, exactly as it did at training time.
-    if machine_types is not None and component_types is not None:
-        for label, (ckpt, cfg_path) in TOKEN_CHECKPOINTS.items():
-            if not ckpt.is_file():
-                print(f"  (skipping {label}: no checkpoint at {ckpt})",
-                      flush=True)
-                continue
-            tok = StateTokenizer.build_vocab(
-                machine_types=machine_types,
-                n_technicians=n_techs,
-                seq_length=env_cfg.gym.tokenizer_seq_length,
-                component_types=component_types,
-                next_ticket_lookahead=env_cfg.gym.next_ticket_lookahead,
-            )
-            acfg = AgentConfig(**json.loads(cfg_path.read_text()))
-            params = dict(acfg.params)
-            params["n_actions"] = n_techs
-            params.setdefault("vocab_size", tok.vocab_size)
-            params.setdefault("max_seq_len", env_cfg.gym.tokenizer_seq_length)
-            try:
-                agent = TOKEN_AGENT_CLASSES[label](**params)
-                agent.load(ckpt)
-                net = getattr(agent, "net", None) or getattr(
-                    agent, "online_net", None
-                )
-                if net is not None:
-                    net.eval()  # no dropout/noisy-net noise at benchmark (D2)
-            except Exception as exc:  # fixed head/vocab: wrong scale
-                print(f"  (skipping {label}: checkpoint incompatible with "
-                      f"this scenario — {type(exc).__name__}: {exc})",
-                      flush=True)
-                continue
-            env = make_env(env_cfg, scenario_factory, "token_ids",
-                           tokenizer=tok, legacy_obs=True)  # pre-fix anchors
-            agents[label] = (agent, env)
     # Under a lifecycle scenario the fleet list can grow past the
     # initial n_techs (tombstones keep their slots) — size the
     # heuristics' action space to the cap so their per-tech arrays
@@ -845,8 +702,7 @@ def main() -> int:
                               machine_types=mtypes, component_types=ctypes)
         if args.agents != "all":
             if args.agents == "trained":
-                keep = (set(CHECKPOINTS) | set(TOKEN_CHECKPOINTS)
-                        | set(MLP_CHECKPOINTS))
+                keep = set(CHECKPOINTS) | set(MLP_CHECKPOINTS)
             elif args.agents == "heuristics":
                 keep = set(HEURISTICS)
             else:

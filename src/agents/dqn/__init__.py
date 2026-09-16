@@ -1,5 +1,3 @@
 """DQN-based agents."""
 
-from agents.dqn.rainbow import RainbowDQNAgent
-
-__all__ = ["RainbowDQNAgent"]
+__all__: list[str] = []
