@@ -27,8 +27,11 @@
 # stages are cached, so a rerun continues where the queue stopped.
 #
 # Queue log: reports/arch_ladder_queue.log.  Markers:
-#   LADDER <rung> BC DONE / TRAIN DONE rc=N / CANON DONE / BENCH DONE
-#   HC PERM DGY LINKED / HC PERM DGY BENCH DONE / ARCH LADDER QUEUE DONE
+#   LADDER <rung> BC DONE / TRAIN DONE rc=N / CANON DONE
+#   LADDER <rung> BENCH DONE (all parts) or BENCH INCOMPLETE (n/total)
+#   HC PERM DGY LINKED / HC PERM DGY BENCH DONE or BENCH INCOMPLETE
+#   lane <name> rc=N, then ARCH LADDER QUEUE DONE (every lane rc=0, exit 0)
+#   or ARCH LADDER QUEUE FAILED (lanes: ...) (exit 1)
 # Training logs end with DONE_TRAIN_LADDER_<rung> rc=N.
 #
 # Layout expected on dgy: this tree at ~/kata_ladder, .venv linked to the
@@ -180,7 +183,12 @@ bench() {  # $1 label  $2.. harness keys: 5 scenarios each, longest first
       if [ -s "$PARTS/$K/$S/episodes.csv" ]; then n=$((n + 1)); else say "MISSING part $K/$S"; fi
     done
   done
-  say "$L BENCH DONE ($n/$total parts)"
+  if [ "$n" -eq "$total" ]; then
+    say "$L BENCH DONE ($n/$total parts)"
+    return 0
+  fi
+  say "$L BENCH INCOMPLETE ($n/$total parts)"
+  return 1
 }
 
 rung() {  # $1 rung  $2 gpu for BC + training
@@ -277,13 +285,30 @@ perm_lane() {  # top rung: trained in ~/kata_perm, benchmarked here
 say "ARCH LADDER QUEUE ARMED (pid $$, code $(cat COMMIT 2>/dev/null || echo unknown), smoke=${SMOKE:-0}, stop $STOP_UTC)"
 say "placement: flat + pool on GPU ${GPU_TRAIN:-cpu}; plainset + benchmarks on GPU ${GPU_LATE:-cpu} after LIVE LANE DONE; <= $MAX_BENCH benchmark parts at once"
 
+# Each lane runs in the background; its exit status is collected below.
 rung flat "$GPU_TRAIN" &
+PID_flat=$!
 sleep 5
 rung pool "$GPU_TRAIN" &
+PID_pool=$!
 (
   say "plainset: waiting for LIVE LANE DONE in $LIVE_LOG"
   wait_live && { say "plainset: GPU 1 gate open"; rung plainset "$GPU_LATE"; }
 ) &
+PID_plainset=$!
 perm_lane &
-wait
+PID_hc_perm=$!
+
+FAILED=""
+for LANE in flat pool plainset hc_perm; do
+  PID_VAR="PID_$LANE"
+  wait "${!PID_VAR}"
+  RC=$?
+  say "lane $LANE rc=$RC"
+  [ "$RC" -eq 0 ] || FAILED="$FAILED $LANE"
+done
+if [ -n "$FAILED" ]; then
+  say "ARCH LADDER QUEUE FAILED (lanes:$FAILED)"
+  exit 1
+fi
 say "ARCH LADDER QUEUE DONE"
