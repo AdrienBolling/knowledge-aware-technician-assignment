@@ -26,6 +26,7 @@ import numpy as np, pandas as pd
 PAPER_VARIANT = 'noavail_mean'
 ROOT = 'reports/hvp_eval_v6w'
 PARTS = 'reports/hvp_v6w_parts'
+EXTRA = 'reports/hvp_eval_v6w/mlp_last_step_metrics.csv'
 TAIL = 0.03
 SCEN = [('small_scale', 'Small'), ('baseline', 'Base'), ('massive_scale', 'Indust.'),
         ('very_long', 'V-long'), ('lifecycle', 'Lifec.')]
@@ -199,6 +200,28 @@ def scenario_metrics(scenario):
     return m, missing
 
 
+def load_metrics(extra_path=EXTRA):
+    """KPI table per scenario for every evaluated agent.
+
+    Agents without local step records take final-window MTTR and final
+    knowledge from ``extra_path`` (CSV of scenario, agent, episode,
+    mttr_final, know_final); pass '' or None to skip it.
+    """
+    extra = pd.read_csv(extra_path) if extra_path else None
+    metrics = {}
+    for s, _ in SCEN:
+        m, missing = scenario_metrics(s)
+        if extra is not None and missing:
+            e = extra[extra.scenario == s].groupby('agent').agg(mttr_final=('mttr_final', 'mean'), know_final=('know_final', 'mean'))
+            for a in list(missing):
+                if a in e.index:
+                    m.loc[a, 'mttr_final'] = e.loc[a, 'mttr_final']; m.loc[a, 'know'] = e.loc[a, 'know_final'] / 1e3; missing.discard(a)
+        if missing:
+            print(f'# {s}: no step records for {sorted(missing)} (final-window MTTR / final knowledge = NaN)')
+        metrics[s] = m
+    return metrics
+
+
 def score(m, kpis, field):
     """Mean % distance to the field's best value, per agent (field = index subset)."""
     sub = m.loc[field]
@@ -220,21 +243,10 @@ def main():
     ap.add_argument('--exclude', default='', help='comma-separated agent keys dropped from the field (rows AND best-value computation)')
     ap.add_argument('--compare', action='store_true', help='overall score + rank per variant, side by side')
     ap.add_argument('--greedy-check', action='store_true', help='score GreedyReward against the field plus itself (appendix reward-design check)')
-    ap.add_argument('--extra', default='reports/hvp_eval_v6w/mlp_last_step_metrics.csv', help='CSV of scenario,agent,episode,mttr_final,know_final for agents without local step records')
+    ap.add_argument('--extra', default=EXTRA, help='CSV of scenario,agent,episode,mttr_final,know_final for agents without local step records')
     args = ap.parse_args()
     TAIL = args.tail
-    extra = pd.read_csv(args.extra) if args.extra else None
-    metrics = {}
-    for s, _ in SCEN:
-        m, missing = scenario_metrics(s)
-        if extra is not None and missing:
-            e = extra[extra.scenario == s].groupby('agent').agg(mttr_final=('mttr_final', 'mean'), know_final=('know_final', 'mean'))
-            for a in list(missing):
-                if a in e.index:
-                    m.loc[a, 'mttr_final'] = e.loc[a, 'mttr_final']; m.loc[a, 'know'] = e.loc[a, 'know_final'] / 1e3; missing.discard(a)
-        if missing:
-            print(f'# {s}: no step records for {sorted(missing)} (final-window MTTR / final knowledge = NaN)')
-        metrics[s] = m
+    metrics = load_metrics(args.extra)
     drop = {a for a in args.exclude.split(',') if a}
     field = main_field(metrics, drop)
     if drop:
