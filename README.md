@@ -1,5 +1,7 @@
 # knowledge-aware-technician-assignment
 
+For the complete experiment settings of the paper, see [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
+
 ## Time units
 
 Simulation time is unitless; the calibration used throughout the released
