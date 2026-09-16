@@ -39,7 +39,7 @@ KPIS = [('prod', +1), ('mttr_mean', -1), ('disr', -1), ('know', +1)]
 TAU_MAX = 2.5
 # key: (label, colour, linestyle, linewidth)
 ACCENT = {'hc_v6':            ('HTT-RL',            PC['hc_v6'], '-',   1.8),
-          'ft_quality':       (r'HTT-RL$^{quality}$', PC['ft_quality'], '-',   1.8),
+          'ft_quality':       (r'HTT-RL$_{qua.}$',    PC['ft_quality'], '-',   1.8),
           'topsis':             ('Topsis',        PC['topsis'], '-',   1.3),
           'shortest_processing':('Spt',           PC['shortest_processing'], '-.',  1.3),
           'optimal_assignment': ('Hungarian',     PC['optimal_assignment'], '--',  1.3),
