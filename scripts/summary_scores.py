@@ -43,14 +43,14 @@ GREEDY = 'greedy_reward'
 EXCLUDE = {'po_v6', 'po_v6_last', 'hc_v6_ext', 'hc_v6_ext_last', 'hc_v6_wr', 'hc_v6_wr_last'}
 TEX = {  # key -> label in tab:results_dist_full
     'greedy_reward': r'\textsc{GreedyReward}',
-    'ft_protect_last': 'ft-protect-last (ours)', 'topsis': r'\textsc{Topsis}',
-    'hc_v6': 'HTT-RL (ours)', 'shortest_processing': r'\textsc{Spt}',
-    'ft_protect': 'ft-protect (ours)', 'ft_fatigue_last': 'ft-fatigue-last (ours)',
-    'hc_v6_last': 'HTT-RL-last (ours)', 'ft_fatigue': 'ft-fatigue (ours)',
-    'ft_quality': 'ft-quality (ours)', 'ft_gini': 'ft-gini (ours)',
-    'ft_quality_last': 'ft-quality-last (ours)',
+    'ft_protect_last': r'HTT-RL\textsubscript{pro.}-last (ours)', 'topsis': r'\textsc{Topsis}',
+    'hc_v6': r'HTT-RL\textsubscript{ref.} (ours)', 'shortest_processing': r'\textsc{Spt}',
+    'ft_protect': r'HTT-RL\textsubscript{pro.} (ours)', 'ft_fatigue_last': r'HTT-RL\textsubscript{fat.}-last (ours)',
+    'hc_v6_last': r'HTT-RL\textsubscript{ref.}-last (ours)', 'ft_fatigue': r'HTT-RL\textsubscript{fat.} (ours)',
+    'ft_quality': r'HTT-RL\textsubscript{qua.} (ours)', 'ft_gini': r'HTT-RL\textsubscript{know.} (ours)',
+    'ft_quality_last': r'HTT-RL\textsubscript{qua.}-last (ours)',
     'optimal_assignment': r'\textsc{Hungarian}',
-    'ft_gini_last': 'ft-gini-last (ours)', 'reserve_specialist': r'\textsc{ReserveSpec}',
+    'ft_gini_last': r'HTT-RL\textsubscript{know.}-last (ours)', 'reserve_specialist': r'\textsc{ReserveSpec}',
     'shortest_queue': r'\textsc{ShortestQueue}', 'least_fatigued': r'\textsc{LeastFatigued}',
     'round_robin': r'\textsc{RoundRobin}', 'random': r'\textsc{Random}',
     'dql_mlp': 'DDQN-MLP (anchor)', 'a2c_mlp': 'A2C-MLP (anchor)',
@@ -58,7 +58,7 @@ TEX = {  # key -> label in tab:results_dist_full
     'grpo_mlp_last': 'GRPO-MLP-last (anchor)', 'least_busy': r'\textsc{LeastBusy}',
     'a2c_mlp_last': 'A2C-MLP-last (anchor)', 'train_weakest': r'\textsc{TrainWeakest}',
     'evo_topsis_inf': r'\textsc{Evo-Topsis}'}
-PLAIN = {k: (re.sub(r'\\textsc\{([^}]*)\}', r'\1', v)
+PLAIN = {k: (re.sub(r'\\textsubscript\{([^}]*)\}', r'_\1', re.sub(r'\\textsc\{([^}]*)\}', r'\1', v))
              .replace(' (ours)', '').replace(' (anchor)', ''))
          for k, v in TEX.items()}
 # KPI: (direction, pretty)
