@@ -51,6 +51,10 @@ class MachineFeeder(MachineFeederBase):
 
         self.fed = 0
         self.current_machine_idx = 0  # Round-robin index
+        # The product taken from the type queue and not yet offered to a
+        # machine input buffer (non-None only while the feeder waits for
+        # a machine of its type).  Read by the product-conservation count.
+        self.holding = None
         self.proc = env.process(self._run())
 
     def _log(self, *args) -> None:
@@ -80,6 +84,7 @@ class MachineFeeder(MachineFeederBase):
         """
         while True:
             product = yield self.in_buffer.get()
+            self.holding = product
 
             # Lifecycle: the type may (transiently or permanently) have
             # zero machines — park the product back in the type queue
@@ -99,7 +104,9 @@ class MachineFeeder(MachineFeederBase):
             )
             target_buffer = self.machine_input_buffers[target_idx]
             self._log(f"Feeding product {product.product_id} to {target_buffer.name}")
-            yield target_buffer.put(product)
+            put_ev = target_buffer.put(product)
+            self.holding = None
+            yield put_ev
             self.fed += 1
 
             # ``current_machine_idx`` is kept for backwards compatibility with

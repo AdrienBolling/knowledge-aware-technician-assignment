@@ -55,6 +55,13 @@ class FactoryHandles:
     router: Router
     feeders: dict[str, MachineFeeder]
     machines_by_type: dict[str, list[Machine]] = field(default_factory=dict)
+    # Product-conservation bookkeeping (no effect on the dynamics):
+    # every source, every machine ever built (retired machines stay
+    # here, their buffers still hold products), and the products that a
+    # machine retirement scraps from the retired input buffer.
+    sources: list[Source] = field(default_factory=list)
+    all_machines: list[Machine] = field(default_factory=list)
+    products_scrapped: int = 0
 
 
 def next_free_machine_id(dispatcher: GymTechDispatcher) -> int:
@@ -122,6 +129,7 @@ def add_machine_to_factory(
 
     feeder.machines.append(machine)
     feeder.machine_input_buffers.append(in_buf)
+    handles.all_machines.append(machine)
     ScenarioBuilder._create_conveyor(env, out_buf, handles.route_buffer)
     dispatcher.machines[machine.machine_id] = machine  # type: ignore[attr-defined]
     # ``feeder.machines`` IS ``machines_by_type[mtype]`` (the builder
@@ -170,6 +178,8 @@ def retire_machine_from_factory(
             store = getattr(buf, "store", buf)
             while store.items or store.put_queue:
                 yield store.get()
+                if handles is not None:
+                    handles.products_scrapped += 1
 
         dispatcher.env.process(_drain())
 
@@ -280,14 +290,16 @@ class ScenarioBuilder:
         routes = [pcfg.route for pcfg in self.config.products.values() if pcfg.route]
         default_route = routes[0] if routes else list(machines_by_type.keys())
 
+        sources: list[Source] = []
         for pname, pcfg in self.config.products.items():
-            Source(
+            src = Source(
                 env,
                 name=f"Source_{pname}",
                 out_buffer=route_buffer,
                 interarrival_time=10.0,
                 route=pcfg.route or default_route,
             )
+            sources.append(src)
 
         # -- Sink -------------------------------------------------------------
         main_sink = Sink(env, "MainSink", sink_buffer)
@@ -306,6 +318,10 @@ class ScenarioBuilder:
             router=router,
             feeders=feeders,
             machines_by_type=machines_by_type,
+            sources=sources,
+            all_machines=[
+                m for machines in machines_by_type.values() for m in machines
+            ],
         )
 
         return env, dispatcher

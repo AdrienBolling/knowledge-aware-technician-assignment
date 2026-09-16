@@ -41,6 +41,7 @@ import numpy as np
 import pandas as pd
 
 from kata.core.config import KATAConfig
+from kata.core.legacy import legacy_switches
 from kata.core.tokenizer import StateTokenizer
 from kata.env import KataEnv
 from kata.scenario import ScenarioBuilder
@@ -684,6 +685,38 @@ def _financial_kpis(env, registry: dict, now: float) -> dict:
     return out
 
 
+def _simulator_check_kpis(env) -> dict:
+    """Episode-end product conservation, breakdown counts and switch state.
+
+    * ``products_*`` — :meth:`KataEnv.product_conservation`;
+      ``products_lost`` is 0 unless the simulator destroys products.
+    * ``machine_breakdowns`` — sum of the env's per-machine breakdown
+      counts (the MTBF denominator; decision-boundary samples under the
+      legacy tracking).
+    * ``breakdowns_filed`` — exact number of breakdowns (one ticket each),
+      counted by the dispatcher in both tracking modes.
+    * ``legacy_buffer_interrupt`` / ``legacy_machine_tracking`` — the
+      simulator variant this episode ran (1 = pre-fix behaviour).
+    """
+    out: dict = {}
+    getter = getattr(env, "product_conservation", None)
+    if callable(getter):
+        out.update(getter())
+    counts = getattr(env, "_machine_breakdown_counts", {}) or {}
+    out["machine_breakdowns"] = int(sum(counts.values()))
+    out["breakdowns_filed"] = int(getattr(env.dispatcher, "breakdowns_filed", -1))
+    handles = getattr(env.dispatcher, "factory_handles", None)
+    machines = list(getattr(handles, "all_machines", None) or [])
+    out["legacy_buffer_interrupt"] = (
+        int(bool(getattr(machines[0], "legacy_buffer_interrupt", False)))
+        if machines else -1
+    )
+    out["legacy_machine_tracking"] = int(
+        bool(getattr(env, "_legacy_machine_tracking", False))
+    )
+    return out
+
+
 def _episode_kpis(final_metrics: dict, sums: dict, counts: dict) -> dict:
     """Episode KPI dict: step metrics as episode MEANS, episode metrics as-is.
 
@@ -790,6 +823,7 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     kpis["n_steps"] = n_steps
     kpis["final_sim_time"] = float(final_info.get("sim_time", 0.0))
     kpis.update(_financial_kpis(env, machine_registry, kpis["final_sim_time"]))
+    kpis.update(_simulator_check_kpis(env))
     return kpis, records
 
 
@@ -917,6 +951,8 @@ def main() -> int:
             "merged": bool(args.merge),
             "record_every": args.record_every,
             "n_techs": n_techs,
+            "legacy_switches": legacy_switches(),
+            "pythonhashseed": os.environ.get("PYTHONHASHSEED"),
             "machine_types": mtypes,
             "component_types": ctypes,
         }
