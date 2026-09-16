@@ -1,6 +1,6 @@
 """Full per-scenario KPI table for the appendix: agents as columns grouped
 by archetype (multicolumn headers), scenarios as multirow blocks, one
-metric per row.  Field = the 30-agent benchmark field + the PO twin.
+metric per row.  Field = the 26-agent benchmark field + the PO twin.
 Values are means over the scenario's episodes; final fleet knowledge and
 final-window MTTR come from the step records (MLP final-checkpoint
 anchors: reports/hvp_eval_v6w/mlp_last_step_metrics.csv).
@@ -19,13 +19,13 @@ GROUPS = [
                        ('ft_protect', r'\textsuperscript{protect}'), ('ft_protect_last', r'\textsuperscript{protect}-last'),
                        ('ft_gini', r'\textsuperscript{gini}'), ('ft_gini_last', r'\textsuperscript{gini}-last'),
                        ('po_v6', 'PO-HTT-RL')]),
-    ('Multicriteria', [('topsis', r'\textsc{Topsis}$^{*}$'), ('empirical_topsis', r'\textsc{Emp-Topsis}')]),
-    ('Rule-based', [('shortest_processing', r'\textsc{Spt}$^{*}$'), ('empirical_spt', r'\textsc{Emp-Spt}'),
-                    ('reserve_specialist', r'\textsc{ReserveSpec}$^{*}$'), ('least_fatigued', r'\textsc{LeastFat}'),
+    ('MCDA', [('topsis', r'\textsc{Topsis}')]),
+    ('Rule-based', [('shortest_processing', r'\textsc{Spt}'),
+                    ('reserve_specialist', r'\textsc{ReserveSpec}'), ('least_fatigued', r'\textsc{LeastFat}'),
                     ('train_weakest', r'\textsc{TrainW}'), ('shortest_queue', r'\textsc{ShortQ}'),
                     ('round_robin', r'\textsc{RoundR}'), ('least_busy', r'\textsc{LeastBusy}'),
-                    ('random', r'\textsc{Random}'), ('greedy_reward', r'\textsc{GreedyReward}$^{*}$')]),
-    ('Optimization', [('optimal_assignment', r'\textsc{Hungarian}$^{*}$'), ('batch_milp', r'\textsc{BatchMilp}')]),
+                    ('random', r'\textsc{Random}')]),
+    ('Optimization', [('optimal_assignment', r'\textsc{Hungarian}')]),
     ('Learning-based', [('a2c_mlp', 'A2C'), ('a2c_mlp_last', 'A2C-last'), ('dql_mlp', 'DDQN'),
                         ('dql_mlp_last', 'DDQN-last'), ('grpo_mlp', 'GRPO'), ('grpo_mlp_last', 'GRPO-last')]),
 ]

@@ -52,30 +52,26 @@ SCEN = {"small_scale": "S1 Small", "baseline": "S2 Baseline",
         "massive_scale": "S3 Industrial", "very_long": "S4 Very-long",
         "lifecycle": "S5 Lifecycle"}
 SCEN_ORDER = list(SCEN)
-# One-for-one informed swap: the estimating baselines are replaced by their
-# informed twins, so the field matches HTT-RL's own information.
-DEPLOYABLE = ["hc_v6", "ft_quality", "topsis", "shortest_processing", "optimal_assignment",
-              "shortest_queue", "least_fatigued", "round_robin", "least_busy",
-              "train_weakest", "random", "a2c_mlp", "grpo_mlp", "dql_mlp"]
-INFORMED = ["reserve_specialist", "greedy_reward"]
-ROSTERS = {"deployable": DEPLOYABLE, "twin": DEPLOYABLE + ["po_v6"],
-           "all": DEPLOYABLE + ["po_v6"] + INFORMED}
+# The policies of tab:results_dist.  Every baseline reads the same simulator
+# quantities as HTT-RL's observation.
+MAIN = ["hc_v6", "ft_quality", "topsis", "shortest_processing", "reserve_specialist",
+        "optimal_assignment", "shortest_queue", "least_fatigued", "round_robin", "least_busy",
+        "train_weakest", "random", "a2c_mlp", "grpo_mlp", "dql_mlp"]
+ROSTERS = {"main": MAIN, "twin": MAIN + ["po_v6"]}
 LABEL = {"hc_v6": "HTT-RL", "ft_quality": r"HTT-RL$_{qua.}$", "po_v6": "PO-HTT-RL",
-         "empirical_topsis": "Emp-Topsis", "empirical_spt": "Emp-Spt", "batch_milp": "BatchMilp",
          "shortest_queue": "ShortestQueue (= LeastFatigued)", "least_fatigued": "LeastFatigued",
          "round_robin": "RoundRobin", "least_busy": "LeastBusy", "train_weakest": "TrainWeakest",
          "random": "Random", "a2c_mlp": "A2C-MLP", "grpo_mlp": "GRPO-MLP", "dql_mlp": "DDQN-MLP",
-         "topsis": "Topsis*", "shortest_processing": "Spt*", "optimal_assignment": "Hungarian*",
-         "reserve_specialist": "ReserveSpec*", "greedy_reward": "GreedyReward*"}
+         "topsis": "Topsis", "shortest_processing": "Spt", "optimal_assignment": "Hungarian",
+         "reserve_specialist": "ReserveSpec"}
 TEX = {"hc_v6": "HTT-RL", "ft_quality": r"HTT-RL\textsubscript{qua.}", "po_v6": "PO-HTT-RL",
-       "empirical_topsis": r"\textsc{Emp-Topsis}", "empirical_spt": r"\textsc{Emp-Spt}",
-       "batch_milp": r"\textsc{BatchMilp}", "shortest_queue": r"\textsc{ShortestQueue}",
+       "shortest_queue": r"\textsc{ShortestQueue}",
        "least_fatigued": r"\textsc{LeastFatigued}", "round_robin": r"\textsc{RoundRobin}",
        "least_busy": r"\textsc{LeastBusy}", "train_weakest": r"\textsc{TrainWeakest}",
        "random": r"\textsc{Random}", "a2c_mlp": "A2C-MLP", "grpo_mlp": "GRPO-MLP",
-       "dql_mlp": "DDQN-MLP", "topsis": r"\textsc{Topsis}$^{*}$",
-       "shortest_processing": r"\textsc{Spt}$^{*}$", "optimal_assignment": r"\textsc{Hungarian}$^{*}$",
-       "reserve_specialist": r"\textsc{ReserveSpec}$^{*}$", "greedy_reward": r"\textsc{GreedyReward}$^{*}$"}
+       "dql_mlp": "DDQN-MLP", "topsis": r"\textsc{Topsis}",
+       "shortest_processing": r"\textsc{Spt}", "optimal_assignment": r"\textsc{Hungarian}",
+       "reserve_specialist": r"\textsc{ReserveSpec}"}
 # Tracked policies take their colour from policy_colors.COLOR, the palette of
 # the scenario panels and the performance profiles.  The rules that win
 # somewhere get their own hue (Dark2), MLP anchors pale.  ShortestQueue and
@@ -85,8 +81,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import policy_colors  # noqa: E402
 
 COLOR = {"po_v6": "#E69F00",
-         "empirical_topsis": "#D55E00", "empirical_spt": "#CC79A7",
-         "batch_milp": "#7570B3", "least_busy": "#E6AB02", "shortest_queue": "#A6761D",
+         "least_busy": "#E6AB02", "shortest_queue": "#A6761D",
          "least_fatigued": "#A6761D", "round_robin": "#66A61E", "train_weakest": "#8C8C8C",
          "a2c_mlp": "#E6D8A8", "grpo_mlp": "#D4E6A8", "dql_mlp": "#A8D4E6",
          **policy_colors.COLOR}
@@ -270,7 +265,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="financial")
     ap.add_argument("--figures", default="paper/figures/panels")
-    ap.add_argument("--roster", default="deployable", choices=list(ROSTERS))
+    ap.add_argument("--roster", default="main", choices=list(ROSTERS))
     ap.add_argument("--disruptions", default="all", choices=["all", "exhaustion"])
     ap.add_argument("--grid", type=int, default=GRID)
     ap.add_argument("--fig-suffix", default="")
