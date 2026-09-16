@@ -277,6 +277,18 @@ def main() -> int:
     counts = load_counts(args.disruptions)
     counts.to_csv(out / "agent_scenario.csv", index=False)
     roster = [a for a in ROSTERS[args.roster]]
+    # Every roster policy needs a disruption count in every scenario.  In
+    # exhaustion mode that count comes from the per-type records in DISR; a
+    # policy without them would otherwise vanish silently from the maps and
+    # frontiers below.
+    have = counts.dropna(subset=["D"])
+    missing = [(s, a) for s in SCEN_ORDER for a in roster
+               if a not in set(have.loc[have.scenario == s, "agent"])]
+    if missing:
+        hint = (f" (exhaustion mode needs per-type disruption records in {DISR})"
+                if args.disruptions == "exhaustion" else "")
+        raise SystemExit("no disruption count for " + ", ".join(
+            f"{a} at {s}" for s, a in missing) + hint)
 
     plt.rcParams.update({"font.size": 6.5, "axes.titlesize": 7, "axes.labelsize": 6.3,
                          "xtick.labelsize": 6, "ytick.labelsize": 6, "pdf.fonttype": 42})
