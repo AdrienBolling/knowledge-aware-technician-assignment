@@ -3,6 +3,7 @@ import random
 
 import simpy as sp
 
+from kata.core.legacy import legacy_buffer_interrupt as _legacy_buffer_interrupt
 from kata.entities.machines.base import Machine as Mach
 from kata.entities.tech_dispatcher.GymTechDispatcher import GymTechDispatcher
 from kata.features.breakdown.base import BreakdownProcess
@@ -32,6 +33,7 @@ class Machine(Mach):
         process_time: int,
         dt: int,
         event_driven: bool | None = None,
+        legacy_buffer_interrupt: bool | None = None,
     ) -> None:
         self.env = env
         self.machine_id = machine_id
@@ -63,6 +65,19 @@ class Machine(Mach):
         self.event_driven = (
             EVENT_DRIVEN_DEFAULT if event_driven is None else bool(event_driven)
         )
+        # Pre-fix buffer handling (products lost when a breakdown
+        # interrupts a store request).  ``None`` reads the
+        # KATA_LEGACY_BUFFER_INTERRUPT switch (see kata.core.legacy).
+        self.legacy_buffer_interrupt = (
+            _legacy_buffer_interrupt()
+            if legacy_buffer_interrupt is None
+            else bool(legacy_buffer_interrupt)
+        )
+        # The product this machine holds: set when the input request
+        # delivers it, cleared when the output request is created (from
+        # then on the product is in the output store or in its put
+        # queue).  Read by the product-conservation count only.
+        self.current_product = None
 
         self.proc = env.process(self._run())
         self.breaks = env.process(self._breakdown_driver())
@@ -90,11 +105,28 @@ class Machine(Mach):
 
             ## Process Product
             # Pull product from input buffer
+            get_ev = self.input_buffer.get()
             try:
-                product = yield self.input_buffer.get()
+                product = yield get_ev
             except sp.Interrupt:
-                # Breakdown while waiting for input — loop back to repair
-                continue
+                # Breakdown while waiting for input.
+                if self.legacy_buffer_interrupt:
+                    # Pre-fix: SimPy does not cancel the request, so it
+                    # stays queued and swallows the next product put
+                    # into this buffer.
+                    continue
+                if not get_ev.triggered:
+                    # Nothing delivered yet: withdraw the request, then
+                    # loop back to the repair wait.
+                    get_ev.cancel()
+                    continue
+                # The store already handed over a product: keep it and
+                # process it after the repair.
+                product = get_ev.value
+                self.current_product = product
+                if self.broken:
+                    yield self.tech_dispatcher.wait_until_repaired(self)
+            self.current_product = product
             ptime = self.process_time
             start = self.env.now
             remaining = float(ptime)
@@ -131,11 +163,28 @@ class Machine(Mach):
             self._log(
                 f"finished processing product {product.product_id}, enqueue to {buffer_name}"
             )
-            try:
-                yield self.output_buffer.put(product)
-            except sp.Interrupt:
-                # Breakdown while putting to output — product is lost, loop to repair
-                continue
+            put_ev = self.output_buffer.put(product)
+            self.current_product = None
+            if self.legacy_buffer_interrupt:
+                try:
+                    yield put_ev
+                except sp.Interrupt:
+                    # Pre-fix: skip the count (the product is in the
+                    # output store, or its request stays queued).
+                    continue
+            else:
+                while True:
+                    try:
+                        yield put_ev
+                        break
+                    except sp.Interrupt:
+                        if put_ev.triggered:
+                            # The product is already in the output store.
+                            break
+                        # Output buffer full: the request stays queued;
+                        # keep waiting on it after the repair.
+                        if self.broken:
+                            yield self.tech_dispatcher.wait_until_repaired(self)
             self.total_processed += 1
             self._log(
                 f"product {product.product_id} enqueued successfully to {buffer_name}"

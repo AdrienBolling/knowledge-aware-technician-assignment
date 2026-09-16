@@ -29,6 +29,7 @@ class ComplexMachine(Machine):
         process_time: int,
         dt: int,
         event_driven: bool | None = None,
+        legacy_buffer_interrupt: bool | None = None,
     ) -> None:
         """Initialize a ComplexMachine with multiple components.
 
@@ -64,6 +65,7 @@ class ComplexMachine(Machine):
             process_time=process_time,
             dt=dt,
             event_driven=event_driven,
+            legacy_buffer_interrupt=legacy_buffer_interrupt,
         )
 
     # -- event-driven hooks: the candidate is the min over components --
