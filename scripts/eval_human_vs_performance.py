@@ -144,6 +144,20 @@ CHECKPOINTS = {
     # cross-slot attention.  Architecture flags come from the checkpoint.
     "hc_fix": Path("checkpoints/hc_fix_final/set_transformer_best.pt"),
     "hc_fix_last": Path("checkpoints/hc_fix_final/set_transformer_last.pt"),
+    # Architecture ladder (scripts/dgy_arch_ladder_queue.sh): hc_v6's
+    # recipe (PPO, v5 reward, TOPSIS BC, semi-MDP discounting, 600 eps,
+    # seed 42, strict mask) with ONLY the encoder changed.  Rungs:
+    # flat MLP over the slots, Deep Sets pool, Set Transformer with plain
+    # numeric encoding; hc_perm_dgy is the top rung (full HTT-RL, hybrid
+    # encoding, attention without RoPE).  Flags come from the checkpoint.
+    "ladder_flat": Path("checkpoints/ladder_flat_final/set_transformer_best.pt"),
+    "ladder_flat_last": Path("checkpoints/ladder_flat_final/set_transformer_last.pt"),
+    "ladder_pool": Path("checkpoints/ladder_pool_final/set_transformer_best.pt"),
+    "ladder_pool_last": Path("checkpoints/ladder_pool_final/set_transformer_last.pt"),
+    "ladder_plainset": Path("checkpoints/ladder_plainset_final/set_transformer_best.pt"),
+    "ladder_plainset_last": Path("checkpoints/ladder_plainset_final/set_transformer_last.pt"),
+    "hc_perm_dgy": Path("checkpoints/hc_perm_dgy_final/set_transformer_best.pt"),
+    "hc_perm_dgy_last": Path("checkpoints/hc_perm_dgy_final/set_transformer_last.pt"),
     "hc_v6": Path("checkpoints/hc_v6_final/set_transformer_best.pt"),
     "hc_v6_last": Path("checkpoints/hc_v6_final/set_transformer_last.pt"),
     # v6 reward fine-tunes (scripts/dgy_v6_ft_queue.sh): 100 eps from
@@ -362,6 +376,65 @@ def peek_improvements(checkpoint: Path) -> dict:
     return dict(ck.get("improvements") or {}) if isinstance(ck, dict) else {}
 
 
+def apply_improvements(params: dict, imp: dict) -> dict:
+    """Set the architecture keys of ``params`` from a checkpoint's
+    ``improvements`` dict (in place; also returned).
+
+    Keys absent from ``imp`` keep the agent defaults, which are the
+    historical architecture.
+    """
+    rnn_type = str(imp.get("rnn_type", "none") or "none")
+    if rnn_type != "none":
+        params["rnn_type"] = rnn_type
+        params["rnn_hidden"] = int(imp.get("rnn_hidden", 128))
+    if imp.get("use_popart"):
+        params["use_popart"] = True
+        params["normalize_rewards"] = False  # mutually exclusive
+    # Architecture-ladder toggles (absent in historical checkpoints,
+    # which are all the full hybrid + attention encoder)
+    if imp.get("numeric_encoding"):
+        params["numeric_encoding"] = str(imp["numeric_encoding"])
+    if imp.get("cross_slot"):
+        params["cross_slot"] = str(imp["cross_slot"])
+        if str(imp["cross_slot"]) != "attention":
+            params["use_cross_attention"] = False
+    if "use_cross_attention" in imp:
+        params["use_cross_attention"] = bool(imp["use_cross_attention"])
+    if "set_positional" in imp:
+        params["set_positional"] = bool(imp["set_positional"])
+    if imp.get("flat_hidden"):
+        params["flat_hidden"] = int(imp["flat_hidden"])
+    # D3 architecture toggles (absent in historical checkpoints)
+    if imp.get("slot_role_binding"):
+        params["slot_role_binding"] = True
+    if imp.get("use_feature_context"):
+        params["use_feature_context"] = True
+        params["tech_slot_length"] = int(imp.get("tech_slot_length", 16))
+    return params
+
+
+def check_full_load(agent, checkpoint: Path) -> list[str]:
+    """Return the tensor names on which the live network and the
+    checkpoint disagree (missing on one side, or a different shape).
+
+    An empty list means ``agent.load`` restored the full network.  The
+    token embedding is exempt from the shape check: ``load`` pads it on
+    an append-only vocabulary growth.
+    """
+    import torch
+
+    ck = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    saved = ck.get("net", {}) if isinstance(ck, dict) else {}
+    live = agent.net.state_dict()
+    bad = set(saved) ^ set(live)
+    bad |= {
+        k for k in set(saved) & set(live)
+        if not k.endswith("token_embedding.weight")
+        and tuple(saved[k].shape) != tuple(live[k].shape)
+    }
+    return sorted(bad)
+
+
 def build_agents(env_cfg, scenario_factory, n_techs,
                  machine_types=None, component_types=None):
     """Return {label: (agent, env)} for the trained checkpoints + 5 heuristics.
@@ -386,33 +459,17 @@ def build_agents(env_cfg, scenario_factory, n_techs,
         params.setdefault("vocab_size", tok.vocab_size)
         # Match the checkpoint's trained architecture (opt-in improvements).
         imp = peek_improvements(ckpt)
-        rnn_type = str(imp.get("rnn_type", "none") or "none")
-        if rnn_type != "none":
-            params["rnn_type"] = rnn_type
-            params["rnn_hidden"] = int(imp.get("rnn_hidden", 128))
-        if imp.get("use_popart"):
-            params["use_popart"] = True
-            params["normalize_rewards"] = False  # mutually exclusive
-        # Architecture-ladder toggles (absent in historical checkpoints,
-        # which are all the full hybrid + attention encoder)
-        if imp.get("numeric_encoding"):
-            params["numeric_encoding"] = str(imp["numeric_encoding"])
-        if imp.get("cross_slot"):
-            params["cross_slot"] = str(imp["cross_slot"])
-            if str(imp["cross_slot"]) != "attention":
-                params["use_cross_attention"] = False
-        if "set_positional" in imp:
-            params["set_positional"] = bool(imp["set_positional"])
-        if imp.get("flat_hidden"):
-            params["flat_hidden"] = int(imp["flat_hidden"])
-        # D3 architecture toggles (absent in historical checkpoints)
-        if imp.get("slot_role_binding"):
-            params["slot_role_binding"] = True
-        if imp.get("use_feature_context"):
-            params["use_feature_context"] = True
-            params["tech_slot_length"] = int(imp.get("tech_slot_length", 16))
+        apply_improvements(params, imp)
         agent = SetTransformerAgent(**params)
         agent.load(ckpt)
+        # load() falls back to a partial, shape-matched load on an
+        # architecture mismatch and only logs it -- and this script
+        # disables logging.  Say it on stdout instead.
+        missing = check_full_load(agent, ckpt)
+        if missing:
+            print(f"  WARNING {label}: partial checkpoint load, "
+                  f"{len(missing)} tensors differ from the checkpoint "
+                  f"(e.g. {missing[:3]})", flush=True)
         # Benchmark forwards must not sample dropout masks (defect D2);
         # the agent also guards deterministic acting itself.
         agent.net.eval()
