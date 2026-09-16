@@ -326,7 +326,7 @@ def load_set_tokenizer(checkpoint: Path, env_cfg, peek=None) -> StateTokenizer:
 
 
 def make_env(env_cfg, scenario_factory, representation, tokenizer=None,
-             legacy_obs=False) -> KataEnv:
+             legacy_obs=False, expose_sim_time=False) -> KataEnv:
     gym_cfg = env_cfg.gym.model_copy(
         update={
             "observation_representation": representation,
@@ -336,6 +336,9 @@ def make_env(env_cfg, scenario_factory, representation, tokenizer=None,
             # they run off-distribution through never-trained
             # embedding rows.
             "legacy_obs_quirks": bool(legacy_obs),
+            # Memory agents (rnn_type="ema") decay their state with the
+            # simulated time carried in the observation.
+            "expose_sim_time": bool(expose_sim_time),
         }
     )
     with quiet():
@@ -390,6 +393,9 @@ def build_agents(env_cfg, scenario_factory, n_techs,
         if rnn_type != "none":
             params["rnn_type"] = rnn_type
             params["rnn_hidden"] = int(imp.get("rnn_hidden", 128))
+        if rnn_type == "ema":
+            params["memory_half_lives"] = list(imp["memory_half_lives"])
+            params["memory_dim"] = int(imp["memory_dim"])
         if imp.get("use_popart"):
             params["use_popart"] = True
             params["normalize_rewards"] = False  # mutually exclusive
@@ -421,7 +427,7 @@ def build_agents(env_cfg, scenario_factory, n_techs,
         # under the legacy encoding for faithfulness.
         legacy = "slot_role_binding" not in imp
         env = make_env(env_cfg, scenario_factory, "set", tokenizer=tok,
-                       legacy_obs=legacy)
+                       legacy_obs=legacy, expose_sim_time=(rnn_type == "ema"))
         agents[label] = (agent, env)
     # Traditional MLP baselines (fleet-independent vocab + padded
     # Discrete(max_techs) head — every scenario, best AND last).  Params

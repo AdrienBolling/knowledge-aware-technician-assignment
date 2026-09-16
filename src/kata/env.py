@@ -590,6 +590,10 @@ class KataEnv(gym.Env):
             }
             if self.config.expose_action_mask:
                 space_dict["action_mask"] = gym.spaces.MultiBinary(max_t)
+            if self.config.expose_sim_time:
+                space_dict["sim_time"] = gym.spaces.Box(
+                    low=0.0, high=np.inf, shape=(1,), dtype=np.float32,
+                )
             self.observation_space = gym.spaces.Dict(space_dict)
             return
         if self.config.observation_representation == "hybrid":
@@ -1826,6 +1830,11 @@ class KataEnv(gym.Env):
                 padded[: min(len(mask), max_t)] = mask[:max_t]
                 mask = padded
             payload["action_mask"] = mask
+        if (
+            self.config.expose_sim_time
+            and self.config.observation_representation == "set"
+        ):
+            payload["sim_time"] = np.array([self._sim_time()], dtype=np.float32)
         return payload
 
     def _info(self) -> dict[str, Any]:

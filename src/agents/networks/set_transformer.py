@@ -793,6 +793,65 @@ class PointerActionHead(nn.Module):
         return scores
 
 
+class EMAMemory(nn.Module):
+    """Frozen multi-timescale memory over the encoder's pooled context.
+
+    Keeps ``K`` exponential moving averages of a learned projection of the
+    pooled context, one per fixed half-life in simulated time units.  The
+    averaging rates are buffers, not parameters: nothing about *how long*
+    to retain is learned.  The write projection trains through the current
+    step and the read projection through every step, which needs no
+    backpropagation through time.
+
+    Decay uses the simulated time elapsed since the previous decision
+    (``exp(-dt / tau)``), so irregular decision spacing is handled exactly.
+    The read projection starts at zero: at initialisation the policy is
+    identical to the memoryless network, so a memoryless checkpoint can
+    initialise it and the memory is switched on only by training.
+
+    State, shaped like the agent's LSTM tuple so rollout storage, batching
+    and slicing work unchanged:
+    ``(memory (1, B, K * d_mem), last_time (1, B, 1))``, where
+    ``last_time < 0`` marks a stream that has not written yet.
+    """
+
+    def __init__(self, d_ctx: int, half_lives, d_mem: int = 32) -> None:
+        super().__init__()
+        hl = torch.as_tensor([float(h) for h in half_lives], dtype=torch.float32)
+        if hl.numel() == 0 or bool((hl <= 0).any()):
+            raise ValueError(f"memory half-lives must be positive (got {half_lives!r})")
+        self.register_buffer("tau", hl / math.log(2.0))
+        self.k = int(hl.numel())
+        self.d_mem = int(d_mem)
+        self.write = nn.Linear(d_ctx, self.d_mem)
+        self.read = nn.Linear(self.k * self.d_mem, d_ctx)
+        nn.init.zeros_(self.read.weight)
+        nn.init.zeros_(self.read.bias)
+
+    def initial_state(self, batch_size: int, device: torch.device):
+        return (
+            torch.zeros(1, batch_size, self.k * self.d_mem, device=device),
+            torch.full((1, batch_size, 1), -1.0, device=device),
+        )
+
+    def forward(self, context: torch.Tensor, sim_time: torch.Tensor, state):
+        mem, last = state
+        b = context.shape[0]
+        mem = mem.reshape(b, self.k, self.d_mem).to(context.dtype)
+        last = last.reshape(b, 1).to(context.dtype)
+        now = sim_time.reshape(b, 1).to(context.dtype)
+        w = self.write(context).unsqueeze(1)  # (B, 1, d_mem)
+        dt = (now - last).clamp(min=0.0)  # (B, 1)
+        alpha = torch.exp(-dt / self.tau.to(context.dtype).view(1, self.k))
+        alpha = alpha.unsqueeze(-1)  # (B, K, 1)
+        fresh = (last < 0).view(b, 1, 1)
+        new_mem = torch.where(
+            fresh, w.expand(-1, self.k, -1), alpha * mem + (1.0 - alpha) * w
+        )
+        out = context + self.read(new_mem.reshape(b, -1))
+        return out, (new_mem.reshape(1, b, -1), now.reshape(1, b, 1))
+
+
 class SetTransformerActorCritic(nn.Module):
     """Encoder + optional recurrent context + pointer policy head + value head.
 
@@ -814,17 +873,27 @@ class SetTransformerActorCritic(nn.Module):
         pointer_d_attn: int = 64,
         rnn_type: str = "none",
         rnn_hidden: int = 128,
+        memory_half_lives=(60.0, 360.0, 1440.0, 5760.0, 20160.0),
+        memory_dim: int = 32,
     ) -> None:
         super().__init__()
-        if rnn_type not in ("none", "gru", "lstm"):
-            msg = f"rnn_type must be 'none', 'gru', or 'lstm' (got {rnn_type!r})"
+        if rnn_type not in ("none", "gru", "lstm", "ema"):
+            msg = (
+                "rnn_type must be 'none', 'gru', 'lstm', or 'ema' "
+                f"(got {rnn_type!r})"
+            )
             raise ValueError(msg)
         self.encoder = encoder
         self.rnn_type = rnn_type
         self.rnn_hidden = int(rnn_hidden)
         d_ctx = encoder.output_dim
         d_slot = encoder.d_model
-        if rnn_type == "gru":
+        self.memory: EMAMemory | None = None
+        if rnn_type == "ema":
+            self.memory = EMAMemory(d_ctx, memory_half_lives, d_mem=memory_dim)
+            self.rnn = None
+            d_head = d_ctx
+        elif rnn_type == "gru":
             self.rnn: nn.Module | None = nn.GRU(
                 d_ctx, self.rnn_hidden, batch_first=True
             )
@@ -846,6 +915,8 @@ class SetTransformerActorCritic(nn.Module):
 
     def initial_hidden(self, batch_size: int, device: torch.device):
         """Zero hidden state for ``batch_size`` parallel streams."""
+        if self.memory is not None:
+            return self.memory.initial_state(batch_size, device)
         if self.rnn_type == "gru":
             return torch.zeros(1, batch_size, self.rnn_hidden, device=device)
         if self.rnn_type == "lstm":
@@ -861,7 +932,17 @@ class SetTransformerActorCritic(nn.Module):
         hidden=None,
     ) -> tuple[torch.Tensor, torch.Tensor, object]:
         context, tech_slots, tech_mask = self.encoder(obs)
-        if self.rnn is not None:
+        if self.memory is not None:
+            sim_time = obs.get("sim_time")
+            if sim_time is None:
+                raise ValueError(
+                    "rnn_type='ema' needs obs['sim_time']; build the env with "
+                    "gym.expose_sim_time=true"
+                )
+            if hidden is None:
+                hidden = self.initial_hidden(context.shape[0], context.device)
+            head_in, hidden_out = self.memory(context, sim_time, hidden)
+        elif self.rnn is not None:
             if hidden is None:
                 hidden = self.initial_hidden(context.shape[0], context.device)
             # One recurrent step per decision: (B, 1, d_ctx) -> (B, 1, H)
@@ -876,6 +957,7 @@ class SetTransformerActorCritic(nn.Module):
 
 
 __all__ = [
+    "EMAMemory",
     "SetTransformerEncoder",
     "PointerActionHead",
     "SetTransformerActorCritic",

@@ -100,8 +100,12 @@ def main(cfg: DictConfig) -> int:
         params["use_popart"] = bool(cfg.use_popart)
         if params.get("use_popart"):
             params["normalize_rewards"] = False  # mutually exclusive
-        if not bool(cfg.use_gru):
+        # use_gru switches the gated recurrent cell only; a frozen-rate
+        # memory (rnn_type="ema") set in the agent config is kept.
+        if not bool(cfg.use_gru) and params.get("rnn_type") in ("gru", "lstm"):
             params["rnn_type"] = "none"
+        if params.get("rnn_type") == "ema":
+            env_data["gym"]["expose_sim_time"] = True
         if cfg.gamma is not None:
             params["gamma"] = float(cfg.gamma)
         params["time_based_discount"] = bool(

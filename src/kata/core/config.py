@@ -962,6 +962,18 @@ class GymEnvConfig(BaseModel):
             "reachable; under the default the choice does not exist."
         ),
     )
+    expose_sim_time: bool = Field(
+        default=False,
+        description=(
+            "Add the current simulated time as a raw ``sim_time`` field "
+            "(shape (1,), float32) to set-mode observations.  Needed by "
+            "memory agents whose state decays with elapsed simulated time "
+            "(agent rnn_type='ema'): the benchmark harness only calls "
+            "select_action, so the elapsed time must come from the "
+            "observation itself.  Off by default, so existing observation "
+            "spaces and checkpoints are unchanged."
+        ),
+    )
     legacy_obs_quirks: bool = Field(
         default=False,
         description=(

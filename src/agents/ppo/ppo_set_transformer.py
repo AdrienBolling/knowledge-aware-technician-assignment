@@ -57,6 +57,9 @@ _SET_OBS_KEYS: tuple[str, ...] = (
     "env_token_ids",
     "env_cont_values",
     "env_cont_kinds",
+    # Raw simulated time, present only when the env sets expose_sim_time
+    # (memory agents); absent keys are skipped.
+    "sim_time",
 )
 
 
@@ -131,6 +134,10 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         # the rollout are treated as constants; no BPTT across steps).
         rnn_type: str = "none",
         rnn_hidden: int = 128,
+        # Frozen-rate memory (rnn_type="ema"): half-lives in simulated time
+        # units of the moving averages, and the width of each average.
+        memory_half_lives=(60.0, 360.0, 1440.0, 5760.0, 20160.0),
+        memory_dim: int = 32,
         # D3 architecture toggles (default OFF = pre-2026-08 behaviour,
         # so historical checkpoints rebuild identically):
         # role-bound slot fusion — keep the per-feature role embedding
@@ -198,6 +205,8 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
             pointer_d_attn=pointer_d_attn,
             rnn_type=rnn_type,
             rnn_hidden=rnn_hidden,
+            memory_half_lives=memory_half_lives,
+            memory_dim=memory_dim,
         ).to(self.device)
 
         self.optimizer = torch.optim.AdamW(
@@ -266,6 +275,8 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         # Recurrent context (opt-in)
         self.rnn_type = str(rnn_type)
         self.rnn_hidden = int(rnn_hidden)
+        self.memory_half_lives = [float(h) for h in memory_half_lives]
+        self.memory_dim = int(memory_dim)
         self._rnn_state: dict[int, Any] = {}
 
         # Parallel streams
@@ -319,6 +330,8 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
                 out[k] = np.asarray(v, dtype=np.int8)
             elif k.endswith("_mask"):
                 out[k] = np.asarray(v, dtype=np.int8)
+            elif k == "sim_time":
+                out[k] = np.asarray(v, dtype=np.float32).reshape(1)
             else:
                 out[k] = np.asarray(v)
         return out
@@ -908,6 +921,8 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
                 "popart_initialized": bool(self._popart_initialized),
                 "rnn_type": self.rnn_type,
                 "rnn_hidden": self.rnn_hidden,
+                "memory_half_lives": self.memory_half_lives,
+                "memory_dim": self.memory_dim,
                 # D3 architecture toggles — the eval loader rebuilds the
                 # matching encoder from these.
                 # Architecture-ladder toggles (encoder variants); the eval
