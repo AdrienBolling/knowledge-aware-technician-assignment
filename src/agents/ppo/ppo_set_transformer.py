@@ -140,6 +140,11 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         cross_slot: str = "attention",
         set_positional: bool = True,
         flat_hidden: int = 512,
+        # Cross-attention refiner (per-tech embeddings attend over the
+        # machine + env state).  The non-attention ladder rungs
+        # (cross_slot "flat"/"pool") must set this False: the encoder
+        # rejects attention in those rungs.
+        use_cross_attention: bool = True,
         slot_role_binding: bool = False,
         # two-view pooling — add a per-feature-across-technicians
         # context vector alongside the per-technician pooling.
@@ -181,6 +186,7 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
             cross_slot=cross_slot,
             set_positional=set_positional,
             flat_hidden=flat_hidden,
+            use_cross_attention=use_cross_attention,
             slot_role_binding=slot_role_binding,
             use_feature_context=use_feature_context,
             tech_slot_length=tech_slot_length,
@@ -189,6 +195,7 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         self.cross_slot = str(cross_slot)
         self.set_positional = bool(set_positional)
         self.flat_hidden = int(flat_hidden)
+        self.use_cross_attention = bool(use_cross_attention)
         self.slot_role_binding = bool(slot_role_binding)
         self.use_feature_context = bool(use_feature_context)
         self.tech_slot_length = int(tech_slot_length)
@@ -916,6 +923,7 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
                 "cross_slot": self.cross_slot,
                 "set_positional": self.set_positional,
                 "flat_hidden": self.flat_hidden,
+                "use_cross_attention": self.use_cross_attention,
                 "slot_role_binding": self.slot_role_binding,
                 "use_feature_context": self.use_feature_context,
                 "tech_slot_length": self.tech_slot_length,
