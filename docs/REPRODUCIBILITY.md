@@ -248,7 +248,7 @@ Event schedule of S5 (`gym.lifecycle_events` in `lifecycle.json`). A retirement 
 
 ### Machine templates
 
-Machine templates and their components (`src/kata/resources/templates/machine_templates.json`). The first three columns give the template name, the machine type, and the process time (t.u.). Model W: Weibull with shape β and scale η (t.u.); model B: Bernoulli with failure probabilities per t.u. when working (p<sub>w</sub>) and idle (p<sub>i</sub>). c<sub>time</sub>: base repair time (t.u.); f<sup>⋆</sup>, α<sup>⋆</sup>: overrides of the knowledge multiplier (Eq. (A.1) of the paper). The 33 components give 31 failure keys (machine type, component family).
+Machine templates and their components (`src/kata/resources/templates/machine_templates.json`). The first three columns give the template name, the machine type, and the process time (t.u.). Model W: Weibull with shape β and scale η (t.u.); model B: Bernoulli with failure probabilities per t.u. when working (p<sub>w</sub>) and idle (p<sub>i</sub>). c<sub>time</sub>: base repair time (t.u.); f<sup>⋆</sup>, α<sup>⋆</sup>: overrides of the knowledge multiplier (Eq. (A.1) of the paper). The 35 components give 31 failure keys (machine type, component family).
 
 | Template | Machine type | Process time | Component | Family | Model | β or p<sub>w</sub> | η or p<sub>i</sub> | c<sub>time</sub> | f<sup>⋆</sup> | α<sup>⋆</sup> |
 |---|---|---:|---|---|---|---:|---:|---:|---:|---:|
