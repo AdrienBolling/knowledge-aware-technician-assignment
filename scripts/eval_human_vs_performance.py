@@ -721,6 +721,35 @@ def _episode_kpis(final_metrics: dict, sums: dict, counts: dict) -> dict:
     return out
 
 
+LIFECYCLE_LOG_COLUMNS = ["agent", "episode", "time", "kind", "target"]
+
+
+def write_lifecycle_log(path: Path, rows: list[dict], *, rerun: set[str],
+                        merge: bool) -> pd.DataFrame:
+    """Write the fired lifecycle events of this run to ``path``.
+
+    With ``merge``, the rows of the ``rerun`` agents are replaced and the
+    rows of all other agents are kept — also when this run fired no event,
+    so a rerun never leaves stale rows next to its new episodes.  Without
+    ``merge``, the file holds this run only (as episodes.csv does).  When
+    no row remains, the file is removed.  Returns the written frame.
+    """
+    new = pd.DataFrame(rows, columns=LIFECYCLE_LOG_COLUMNS)
+    frames = [new] if len(new) else []
+    if merge and path.is_file():
+        old = pd.read_csv(path)
+        kept = old[~old["agent"].isin(rerun)]
+        if len(kept):
+            frames.insert(0, kept)
+    out = (pd.concat(frames, ignore_index=True) if frames
+           else pd.DataFrame(columns=LIFECYCLE_LOG_COLUMNS))
+    if len(out):
+        out.to_csv(path, index=False)
+    elif path.is_file():
+        path.unlink()
+    return out
+
+
 def run_episode(agent, env, *, seed: int, deterministic: bool = True,
                 record_every: int = 1):
     """One rollout; returns (kpis_dict, step_records_list).
@@ -917,16 +946,8 @@ def main() -> int:
             print(f"  [merge] replaced rows for {sorted(rerun)}; "
                   f"kept {sorted(set(ep_df['agent']) - rerun)}", flush=True)
         ep_df.to_csv(out_dir / "episodes.csv", index=False)
-        if lc_rows:
-            lc_df = pd.DataFrame(lc_rows)
-            lc_path = out_dir / "lifecycle_events.csv"
-            if args.merge and lc_path.is_file():
-                old_lc = pd.read_csv(lc_path)
-                lc_df = pd.concat(
-                    [old_lc[~old_lc["agent"].isin(set(lc_df["agent"]))], lc_df],
-                    ignore_index=True,
-                )
-            lc_df.to_csv(lc_path, index=False)
+        write_lifecycle_log(out_dir / "lifecycle_events.csv", lc_rows,
+                            rerun=set(agents), merge=args.merge)
         steps_df.to_csv(
             out_dir / "steps.csv.gz", index=False, compression="gzip"
         )
