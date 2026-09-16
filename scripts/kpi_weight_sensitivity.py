@@ -20,12 +20,18 @@ per-KPI percentage gaps to the best value of the benchmark field
 2. Pareto analysis.  Per scenario, a policy is dominated when another
    displayed policy is at least as good on all four KPIs and strictly better
    on one.  Exactly equal KPI vectors are ties, not dominance.
-3. Roster dependence.  The equal-weight ranks of the displayed policies are
-   recomputed with the per-KPI best values taken over the 15 displayed
-   policies only, with each agent of the field left out in turn, and with
-   GreedyReward added to the field.  A different best value b' gives
-   gap' = (b/b') * gap + constant, so for the ranks it acts as a change of
-   that KPI's weight by the factor b/b'.
+3. Roster dependence, equal weights.  Roster changes: each agent of the field
+   removed (from the field and, if displayed, from the displayed policies),
+   GreedyReward added (to both), and the best values taken over the 15
+   displayed policies only.  Each change has two effects, reported apart:
+   (a) direct effect: the ranks and leader of the original displayed
+       policies with the original bests, against the ranks and leader of the
+       changed displayed policies with their own bests (columns direct_*);
+   (b) reference-value effect: the order of the policies present in both
+       rosters, with the original bests against the new bests (columns
+       ref_*).  A different best value b' gives gap' = (b/b') * gap +
+       constant, so for the ranks it acts as a change of that KPI's weight by
+       the factor b/b'.
 
 Outputs (``--out``, default ``kpi_weights/``):
     gaps.csv            per-KPI gaps and the equal-weight score, every field agent
@@ -36,7 +42,7 @@ Outputs (``--out``, default ``kpi_weights/``):
     rank1_weights.csv   mean and minimum weight per KPI over the draws in which a policy ranks first
     pareto.csv          dominators, Pareto membership and ties per scenario
     roster.csv          scores and ranks with field bests vs displayed-only bests
-    roster_changes.csv  rank changes among the displayed policies per roster change
+    roster_changes.csv  direct and reference-value effects of each roster change
     appendix_table.tex  body rows of tab:kpi_weights
 
 Usage: uv run --no-sync python scripts/kpi_weight_sensitivity.py [--n 20000] [--seed 20260916] [--out kpi_weights]
@@ -151,36 +157,69 @@ def ranks_table(metrics, bests_over, shown):
     return t, r
 
 
-def roster_changes(metrics, field, shown, extra_agents=(ss.GREEDY,)):
-    """Equal-weight ranks of the displayed policies under changes of the roster.
+def _leaders(r, c):
+    return ';'.join(r.index[r[c] == 1])
 
-    Changes: bests over the displayed policies only ('displayed_only'), each
-    field agent left out ('drop:<agent>'), and each of ``extra_agents`` added
-    ('add:<agent>').  ``max_rescale`` is max_k |b_k / b'_k - 1| (over the
-    scenarios for the overall row): the implied change of a KPI weight.
+
+def roster_changes(metrics, field, shown, extra_agents=(ss.GREEDY,)):
+    """Direct and reference-value effects of roster changes on the equal-weight ranks.
+
+    Changes: 'bests:displayed' (bests over the displayed policies only, the
+    policies do not change), 'drop:<agent>' for each field agent (removed from
+    the field and from the displayed policies), and 'add:<agent>' for each of
+    ``extra_agents`` (added to both).  Per change and scenario:
+
+    direct effect (original displayed policies with the original bests against
+    the changed displayed policies with the new bests)
+        direct_leader_original, direct_leader_changed, direct_leader_change
+        agent_rank                 rank of the removed agent in the original roster,
+                                   or of the added agent in the changed roster
+        direct_n_rank_changes      common policies whose rank number changes
+        direct_max_rank_shift
+    reference-value effect (common policies only, original against new bests)
+        ref_leader_before, ref_leader_after, ref_n_order_changes,
+        ref_max_order_shift, ref_max_score_change,
+        ref_max_rescale            max_k |b_k / b'_k - 1| (over the scenarios for Overall)
     """
     t_f, r_f = ranks_table(metrics, field, shown)
     t_s, r_s = ranks_table(metrics, shown, shown)
     roster = pd.DataFrame([{'scenario': c, 'agent': a, 'score_field': t_f.loc[a, c], 'rank_field': int(r_f.loc[a, c]),
                             'score_shown': t_s.loc[a, c], 'rank_shown': int(r_s.loc[a, c])}
                            for c in t_f.columns for a in shown])
-    changes = [('displayed_only', shown, shown)]
-    changes += [(f'drop:{a}', [x for x in field if x != a], [x for x in shown if x != a]) for a in field]
-    changes += [(f'add:{a}', field + [a], shown) for a in extra_agents
-                if all(a in metrics[s].index for s, _ in ss.SCEN)]
+    # (name, changed field, changed displayed policies, removed or added agent)
+    changes = [('bests:displayed', list(shown), list(shown), None)]
+    changes += [(f'drop:{a}', [x for x in field if x != a], [x for x in shown if x != a], a) for a in field]
+    changes += [(f'add:{a}', field + [a], shown + [a], a) for a in extra_agents
+                if a not in field and all(a in metrics[s].index for s, _ in ss.SCEN)]
+    r_orig = r_f
     rows = []
-    for name, over, keep in changes:
-        t0, r0 = ranks_table(metrics, field, keep)
-        t1, r1 = ranks_table(metrics, over, keep)
-        resc = {SCEN_ID[s]: float((bests(metrics[s], field) / bests(metrics[s], over) - 1).abs().max()) for s, _ in ss.SCEN}
+    for name, field2, shown2, agent in changes:
+        common = [a for a in shown if a in shown2]
+        _, r_new = ranks_table(metrics, field2, shown2)
+        t_ref0, r_ref0 = ranks_table(metrics, field, common)
+        t_ref1, r_ref1 = ranks_table(metrics, field2, common)
+        resc = {SCEN_ID[s]: float((bests(metrics[s], field) / bests(metrics[s], field2) - 1).abs().max()) for s, _ in ss.SCEN}
         resc[OVERALL] = max(resc.values())
-        for c in r0.columns:
-            diff = (r1[c] - r0[c]).abs()
-            rows.append({'change': name, 'scenario': c, 'n_rank_changes': int((diff > 0).sum()),
-                         'max_shift': int(diff.max()), 'max_score_change': float((t1[c] - t0[c]).abs().max()),
-                         'max_rescale': resc[c],
-                         'leader_before': ';'.join(r0.index[r0[c] == 1]), 'leader_after': ';'.join(r1.index[r1[c] == 1])})
-    return roster, pd.DataFrame(rows)
+        for c in r_orig.columns:
+            direct = (r_new.loc[common, c] - r_orig.loc[common, c]).abs()
+            order = (r_ref1[c] - r_ref0[c]).abs()
+            if agent in r_orig.index:
+                agent_rank = int(r_orig.loc[agent, c])
+            elif agent in r_new.index:
+                agent_rank = int(r_new.loc[agent, c])
+            else:
+                agent_rank = pd.NA
+            rows.append({'change': name, 'scenario': c,
+                         'direct_leader_original': _leaders(r_orig, c), 'direct_leader_changed': _leaders(r_new, c),
+                         'direct_leader_change': _leaders(r_orig, c) != _leaders(r_new, c), 'agent_rank': agent_rank,
+                         'direct_n_rank_changes': int((direct > 0).sum()), 'direct_max_rank_shift': int(direct.max()),
+                         'ref_leader_before': _leaders(r_ref0, c), 'ref_leader_after': _leaders(r_ref1, c),
+                         'ref_n_order_changes': int((order > 0).sum()), 'ref_max_order_shift': int(order.max()),
+                         'ref_max_score_change': float((t_ref1[c] - t_ref0[c]).abs().max()),
+                         'ref_max_rescale': resc[c]})
+    out = pd.DataFrame(rows)
+    out['agent_rank'] = out['agent_rank'].astype('Int64')
+    return roster, out
 
 
 def sensitivity(metrics, field, shown, W):
@@ -337,17 +376,24 @@ def main():
               f'max |score change| {float((g.score_field - g.score_shown).abs().max()):.2f}; leader {lead_f} -> {lead_s}'
               + ('' if ch.empty else '; ' + ', '.join(f'{lab[a]} {f}->{s_}' for a, f, s_ in zip(ch.agent, ch.rank_field, ch.rank_shown))))
     drops = changes[changes.change.str.startswith('drop:')]
-    moved = changes[changes.leader_before != changes.leader_after]
-    print(f'\n## roster changes: displayed-only bests, {drops.change.nunique()} single removals, additions')
-    print(f'  single removals: max rank changes {int(drops.n_rank_changes.max())}, max shift {int(drops.max_shift.max())}, '
-          f'max score change {drops.max_score_change.max():.2f}, max rescale {drops.max_rescale.max():.4f}, '
-          f'removals with any rank change {drops[drops.n_rank_changes > 0].change.nunique()}')
+    lead_moves = changes[changes.direct_leader_change]
+    print(f'\n## roster changes ({changes.change.nunique()}): direct effect (original vs changed roster, own bests)')
+    print(f'  changes that move a leader: {len(lead_moves)}')
+    if len(lead_moves):
+        print(lead_moves[['change', 'scenario', 'direct_leader_original', 'direct_leader_changed', 'agent_rank']].to_string(index=False))
+    print(f'  max rank shift of a common policy over all changes: {int(changes.direct_max_rank_shift.max())}')
+    print('\n## reference-value effect (order of the common policies, original vs new bests)')
+    print(f'  single removals: max order changes {int(drops.ref_n_order_changes.max())}, max shift {int(drops.ref_max_order_shift.max())}, '
+          f'max score change {drops.ref_max_score_change.max():.2f}, max rescale {drops.ref_max_rescale.max():.4f}, '
+          f'removals with any order change {drops[drops.ref_n_order_changes > 0].change.nunique()}, '
+          f'with a common-policy leader change {drops[drops.ref_leader_before != drops.ref_leader_after].change.nunique()}')
     other = changes[~changes.change.str.startswith('drop:')]
-    print(other.round(4).to_string(index=False))
-    print(drops[drops.n_rank_changes > 0].round(4).to_string(index=False))
-    print(f'  changes that move a leader: {len(moved)}')
+    cols = ['change', 'scenario', 'direct_leader_original', 'direct_leader_changed', 'agent_rank', 'direct_n_rank_changes',
+            'ref_n_order_changes', 'ref_max_order_shift', 'ref_max_score_change', 'ref_max_rescale']
+    print(other[cols].round(4).to_string(index=False))
+    moved = drops[drops.ref_n_order_changes > 0]
     if len(moved):
-        print(moved.round(4).to_string(index=False))
+        print(moved[cols].round(4).to_string(index=False))
     print(f'\nwritten: {args.out}/{{gaps,rank_stats,corners,pairwise,overall_diff,rank1_weights,pareto,roster,roster_changes}}.csv, appendix_table.tex')
 
 
