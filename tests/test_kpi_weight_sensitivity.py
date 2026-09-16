@@ -6,7 +6,10 @@ Pins the properties the appendix relies on:
 * a policy that another policy dominates is not in the Pareto set, and
   exactly equal KPI vectors are ties, not dominance;
 * a different best value only rescales that KPI's gaps and adds a constant,
-  so the ranks equal the ranks under reweighted KPIs.
+  so the ranks equal the ranks under reweighted KPIs;
+* a roster change reports its direct effect (removing the leader changes the
+  leader, an added dominant policy leads) apart from its reference-value
+  effect (the order of the policies present in both rosters).
 """
 
 from __future__ import annotations
@@ -97,6 +100,49 @@ def test_new_best_value_acts_as_a_reweighting(kw, metrics):
     W_implied = W * ratio
     np.testing.assert_array_equal(kw.min_ranks(kw.weighted_scores(G_sub.to_numpy(), W)),
                                   kw.min_ranks(kw.weighted_scores(G.to_numpy(), W_implied)))
+
+
+def _scenarios(kw, m):
+    return {s: m for s, _ in kw.ss.SCEN}
+
+
+def _row(changes, change, scenario="S1"):
+    rows = changes[(changes.change == change) & (changes.scenario == scenario)]
+    assert len(rows) == 1
+    return rows.iloc[0]
+
+
+def test_roster_change_separates_direct_and_reference_effects(kw, metrics):
+    # g is better than every other policy on every KPI; it is added by the change.
+    m = pd.concat([metrics, pd.DataFrame({"prod": [1100.0], "mttr_mean": [70.0], "disr": [450.0], "know": [65.0]},
+                                         index=["g"])])
+    field = shown = ["a", "b", "c", "d", "e"]
+    _, changes = kw.roster_changes(_scenarios(kw, m), field, shown, extra_agents=("g",))
+    assert set(changes.change) == {"bests:displayed", "add:g"} | {f"drop:{a}" for a in field}
+
+    # Removing the leader a: direct effect changes the leader to the tie c = e,
+    # and every other policy moves up by one position.
+    r = _row(changes, "drop:a")
+    assert r.direct_leader_original == "a" and r.direct_leader_changed == "c;e"
+    assert bool(r.direct_leader_change) and r.agent_rank == 1
+    assert r.direct_n_rank_changes == 4 and r.direct_max_rank_shift == 1
+    # Reference-value effect: new bests, but the order of b, c, d, e does not change.
+    assert r.ref_leader_before == r.ref_leader_after == "c;e"
+    assert r.ref_n_order_changes == 0 and r.ref_max_rescale > 0 and r.ref_max_score_change > 0
+
+    # Removing the last policy d, which holds no best value: no effect of either kind.
+    r = _row(changes, "drop:d")
+    assert not bool(r.direct_leader_change) and r.agent_rank == 5 and r.direct_n_rank_changes == 0
+    assert r.ref_n_order_changes == 0 and r.ref_max_rescale == 0 and r.ref_max_score_change == 0
+
+    # Adding g: g leads the changed roster, the others move down by one position.
+    r = _row(changes, "add:g", "Overall")
+    assert r.direct_leader_original == "a" and r.direct_leader_changed == "g" and r.agent_rank == 1
+    assert r.direct_n_rank_changes == 5 and r.ref_leader_before == "a"
+
+    # Bests over the displayed policies only: the roster is the same, so no direct change.
+    r = _row(changes, "bests:displayed")
+    assert pd.isna(r.agent_rank) and not bool(r.direct_leader_change) and r.ref_max_rescale == 0
 
 
 REPO = SCRIPTS.parent
