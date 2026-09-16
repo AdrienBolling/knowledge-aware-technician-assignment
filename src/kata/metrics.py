@@ -501,6 +501,19 @@ class MeanTimeToRepair(EpisodeMetric):
         return total / repairs
 
 
+def _fleet_machine_time(env: Any, now: float) -> float:
+    """Machine-time the fleet was in service up to *now*.
+
+    Delegates to ``KataEnv._fleet_machine_time`` (exact active lives under
+    the fixed tracking, ``now * n_machines`` under the legacy tracking);
+    other env objects use the historical ``now * n_machines``.
+    """
+    helper = getattr(env, "_fleet_machine_time", None)
+    if callable(helper):
+        return float(helper(now))
+    return now * len(env._factory_machines())
+
+
 class MeanTimeBetweenFailures(EpisodeMetric):
     """Mean fleet uptime per breakdown (MTBF).
 
@@ -521,9 +534,8 @@ class MeanTimeBetweenFailures(EpisodeMetric):
         total_breakdowns = float(sum(counts.values()))
         if total_breakdowns <= 0.0:
             return 0.0
-        machines = env._factory_machines()
         now = float(getattr(env.sim_env, "now", 0.0))
-        total_machine_time = now * len(machines)
+        total_machine_time = _fleet_machine_time(env, now)
         total_down = float(getattr(env, "_total_downtime", 0.0))
         down_since = getattr(env, "_machine_down_since", {})
         active_down = sum(now - t0 for t0 in down_since.values())
@@ -541,9 +553,8 @@ class FleetAvailabilityRate(EpisodeMetric):
     name = "fleet_availability_rate"
 
     def compute(self, env: Any) -> float:
-        machines = env._factory_machines()
         now = float(getattr(env.sim_env, "now", 0.0))
-        total_available = max(now * len(machines), 1.0)
+        total_available = max(_fleet_machine_time(env, now), 1.0)
 
         # Accumulate finished + still-broken downtime
         total_down = getattr(env, "_total_downtime", 0.0)

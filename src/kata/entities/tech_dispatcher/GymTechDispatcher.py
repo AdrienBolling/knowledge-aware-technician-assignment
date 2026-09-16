@@ -57,6 +57,14 @@ class GymTechDispatcher:
         # Gym wrapper to track completed repairs and actual repair
         # durations.  Signature: ``(request, repair_duration)``.
         self.on_repair_completed: callable | None = None
+        # Optional callback invoked at every machine breakdown (each
+        # breakdown files exactly one ticket here).  KataEnv uses it for
+        # event-exact downtime / breakdown tracking.  Signature:
+        # ``(machine)``.
+        self.on_machine_breakdown: callable | None = None
+        # Exact number of breakdowns filed in this world (re-queued
+        # preempted tickets are not counted again).
+        self.breakdowns_filed: int = 0
 
         # Inject the env reference so each technician's time-aware
         # ``fatigue`` property can resolve the current simulation clock
@@ -87,6 +95,9 @@ class GymTechDispatcher:
 
     def request_repair(self, machine: Machine) -> None:
         """Create a repair request and add it to the queue."""
+        self.breakdowns_filed += 1
+        if self.on_machine_breakdown is not None:
+            self.on_machine_breakdown(machine)
         req = RepairRequest(machine=machine, created_at=int(self.env.now))
         _ = self.repair_queue.put(req)
 

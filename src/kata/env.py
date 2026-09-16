@@ -13,6 +13,7 @@ import simpy.exceptions
 
 from kata import get_config
 from kata.core.config import GymEnvConfig
+from kata.core.legacy import legacy_machine_tracking
 from kata.core.reward_normalizer import RewardNormalizer
 from kata.core.tokenizer import StateTokenizer
 from kata.metrics import EPISODE_METRICS, STEP_METRICS
@@ -490,6 +491,14 @@ class KataEnv(gym.Env):
         self._machine_processing_since: dict[int, float] = {}
         self._machine_breakdown_counts: dict[int, int] = {}
         self._machine_labels: dict[int, str] = {}
+        # machine_id -> machine object, for every machine the tracking saw
+        # this episode (retired machines stay; their exact productive time
+        # is still read from the object).
+        self._machine_objects: dict[int, Any] = {}
+        # Pre-fix tracking (KATA_LEGACY_MACHINE_TRACKING=1): breakdowns and
+        # downtime intervals sampled from ``machine.broken`` at decision
+        # boundaries.  Default: recorded at the breakdown / repair events.
+        self._legacy_machine_tracking: bool = legacy_machine_tracking()
 
         # Per-technician assignment counts within the current episode.
         # Drives the ``selection_diversity`` reward and is reset on
@@ -529,6 +538,14 @@ class KataEnv(gym.Env):
         # disabled.
         if hasattr(self.dispatcher, "on_repair_completed"):
             self.dispatcher.on_repair_completed = self._on_repair_completed
+        # Event-exact machine tracking: every breakdown files one ticket
+        # through ``request_repair``, which fires this hook.
+        if hasattr(self.dispatcher, "on_machine_breakdown"):
+            self.dispatcher.on_machine_breakdown = (
+                None
+                if self._legacy_machine_tracking
+                else self._on_machine_breakdown
+            )
 
         n_techs = len(self.dispatcher.techs)
         # Re-shape the per-tech counters to match the new fleet (they
@@ -2248,6 +2265,15 @@ class KataEnv(gym.Env):
         histograms…) remain accurate whether or not the matching
         reward components are enabled.
         """
+        if not self._legacy_machine_tracking:
+            # Breakdowns and downtime intervals are recorded at their
+            # events (``_on_machine_breakdown`` / ``_on_repair_completed``);
+            # only register machines and refresh the exact productive time.
+            for m in self._factory_machines():
+                self._track_machine(m)
+            self._sync_productive_time()
+            return
+
         machines = self._factory_machines()
         now = self._sim_time()
 
@@ -2293,12 +2319,84 @@ class KataEnv(gym.Env):
                     self._machine_total_processing_time.get(mid, 0.0) + elapsed
                 )
 
+    def _track_machine(self, machine: Any) -> int:
+        """Register *machine* for event-exact tracking; return its id."""
+        mid = getattr(machine, "machine_id", id(machine))
+        if mid not in self._machine_labels:
+            label = (
+                getattr(machine, "name", None)
+                or f"{getattr(machine, 'mtype', 'machine')}_{mid}"
+            )
+            self._machine_labels[mid] = str(label)
+        self._machine_objects.setdefault(mid, machine)
+        return mid
+
+    def _sync_productive_time(self) -> None:
+        """Copy each tracked machine's exact productive time (fixed tracking)."""
+        for mid, m in self._machine_objects.items():
+            if hasattr(m, "productive_time"):
+                self._machine_total_processing_time[mid] = float(m.productive_time)
+
+    def _on_machine_breakdown(self, machine: Any) -> None:
+        """Dispatcher callback: *machine* broke down now (fixed tracking)."""
+        mid = self._track_machine(machine)
+        now = float(self._sim_time())
+        if mid not in self._machine_down_since:
+            self._machine_down_since[mid] = now
+        self._machine_breakdown_counts[mid] = (
+            self._machine_breakdown_counts.get(mid, 0) + 1
+        )
+
+    def _close_downtime_interval(self, mid: int) -> None:
+        """Move an open downtime interval of *mid* into the totals."""
+        since = self._machine_down_since.pop(mid, None)
+        if since is None:
+            return
+        elapsed = max(0.0, float(self._sim_time()) - float(since))
+        self._total_downtime += elapsed
+        self._machine_total_downtime[mid] = (
+            self._machine_total_downtime.get(mid, 0.0) + elapsed
+        )
+
+    def _fleet_machine_time(self, now: float) -> float:
+        """Machine-time the fleet was in service up to *now*.
+
+        Legacy tracking: ``now * n_registered_machines`` (the historical
+        denominator).  Fixed tracking: the sum of each machine's active
+        life (``created_at`` to ``retired_at`` or *now*) over every machine
+        ever built, so lifecycle additions and retirements count only for
+        the time they were in the park; without builder handles it falls
+        back to the historical denominator.
+        """
+        if not self._legacy_machine_tracking:
+            handles = getattr(self.dispatcher, "factory_handles", None)
+            machines = getattr(handles, "all_machines", None)
+            if machines:
+                total = 0.0
+                for m in machines:
+                    start = float(getattr(m, "created_at", 0.0))
+                    end = getattr(m, "retired_at", None)
+                    end = float(now) if end is None else min(float(end), float(now))
+                    total += max(0.0, end - start)
+                return total
+        return now * len(self._factory_machines())
+
+    def product_conservation(self) -> dict[str, int]:
+        """Product-conservation counts of the live factory (see
+        :mod:`kata.conservation`); ``products_lost`` is 0 unless the
+        simulation destroys products."""
+        from kata.conservation import product_conservation
+
+        return product_conservation(self.sim_env, self.dispatcher)
+
     def _per_machine_episode_stats(self) -> dict[str, dict[str, float]]:
         """Return ``{label: {maintenance, production, breakdowns}}``.
 
         Pending-broken / pending-processing intervals are flushed using
         the current sim time so the snapshot is accurate even mid-episode.
         """
+        if not self._legacy_machine_tracking:
+            self._sync_productive_time()
         now = self._sim_time()
         stats: dict[str, dict[str, float]] = {}
         all_mids = (
@@ -2427,6 +2525,11 @@ class KataEnv(gym.Env):
         """Finalise downtime/processing intervals for a departing machine."""
         mid = getattr(machine, "machine_id", None)
         if mid is None:
+            return
+        if not self._legacy_machine_tracking:
+            self._track_machine(machine)
+            self._close_downtime_interval(mid)
+            self._sync_productive_time()
             return
         now = float(self._sim_time())
         if mid in self._machine_down_since:
@@ -2581,6 +2684,10 @@ class KataEnv(gym.Env):
         repair-time estimates from observed outcomes only.
         """
         self._completed_repair_counter += 1
+        if not self._legacy_machine_tracking:
+            machine = getattr(request, "machine", None)
+            if machine is not None:
+                self._close_downtime_interval(self._track_machine(machine))
         duration = float(repair_duration)
         self._total_repair_time += duration
         # Feed the sliding window backing the ``mttr_rolling`` step metric.
@@ -2637,7 +2744,6 @@ class KataEnv(gym.Env):
         """
         self._update_machine_state_tracking()
 
-        machines = self._factory_machines()
         now = self._sim_time()
 
         # Include still-broken machines in the total
@@ -2645,7 +2751,7 @@ class KataEnv(gym.Env):
         total_down = self._total_downtime + active_downtime
 
         # Normalise by total available machine-time
-        total_available = max(now * len(machines), 1.0)
+        total_available = max(self._fleet_machine_time(now), 1.0)
         return -min(total_down / total_available, 1.0)
 
     def _run_warmup(self) -> None:
@@ -2766,6 +2872,16 @@ class KataEnv(gym.Env):
         self._machine_processing_since = {}
         self._machine_breakdown_counts = {}
         self._machine_labels = {}
+        self._machine_objects = {}
+        if not self._legacy_machine_tracking:
+            # Register the park and open an interval for any machine that
+            # is already broken (a reused world without a scenario
+            # factory); its breakdown belongs to the previous episode.
+            now0 = float(self._sim_time())
+            for m in self._factory_machines():
+                mid = self._track_machine(m)
+                if bool(getattr(m, "broken", False)):
+                    self._machine_down_since[mid] = now0
         self._tech_assignment_counts = [0] * len(self.dispatcher.techs)
         self._tech_last_assignment_time = [-1.0] * len(self.dispatcher.techs)
         self._initial_mean_knowledge_volume = self._fleet_mean_knowledge_volume()
