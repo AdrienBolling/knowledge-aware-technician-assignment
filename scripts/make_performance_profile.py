@@ -14,9 +14,12 @@ exactly the percentage distance the summary score averages.  The profile is
 Emits standalone panels at a fixed physical size, assembled by the manuscript
 as LaTeX subfigures (same pattern as make_scenario_figures.py):
 
-    paper/figures/panels/profile_deployable.pdf   25-agent deployable field
-    paper/figures/panels/profile_full.pdf         30-agent field, informed included
+    paper/figures/panels/profile_deployable.pdf   the policies of tab:results_dist
+    paper/figures/panels/profile_full.pdf         every agent of the field (tab:results_dist_full)
     paper/figures/panels/profile_legend.pdf       shared legend strip (full width)
+
+Both panels take the ratios to the best value of the same field
+(summary_scores.main_field), as both score tables do.
 """
 import importlib.util, os, sys
 import numpy as np, pandas as pd
@@ -36,14 +39,18 @@ KPIS = [('prod', +1), ('mttr_mean', -1), ('disr', -1), ('know', +1)]
 TAU_MAX = 2.5
 # key: (label, colour, linestyle, linewidth)
 ACCENT = {'hc_v6':            ('HTT-RL',            PC['hc_v6'], '-',   1.8),
-          'ft_quality':       (r'HTT-RL$^{quality}$', PC['ft_quality'], '-',   1.8),
-          'topsis':             ('Topsis*',       PC['topsis'], '-',   1.3),
-          'shortest_processing':('Spt*',          PC['shortest_processing'], '-.',  1.3),
-          'optimal_assignment': ('Hungarian*',    PC['optimal_assignment'], '--',  1.3),
+          'ft_quality':       (r'HTT-RL$_{qua.}$',    PC['ft_quality'], '-',   1.8),
+          'topsis':             ('Topsis',        PC['topsis'], '-',   1.3),
+          'shortest_processing':('Spt',           PC['shortest_processing'], '-.',  1.3),
+          'optimal_assignment': ('Hungarian',     PC['optimal_assignment'], '--',  1.3),
           'random':           ('Random',            PC['random'], ':',   1.1)}
-INFORMED = {'greedy_reward':      ('GreedyReward*',  PC['greedy_reward'], (0, (4, 1.5)), 1.4),
-            'reserve_specialist': ('ReserveSpec*',   PC['reserve_specialist'], (0, (4, 1.5)), 1.4)}
-MLPS = ['a2c_mlp', 'grpo_mlp', 'dql_mlp']
+MLPS = ['a2c_mlp', 'grpo_mlp', 'dql_mlp', 'a2c_mlp_last', 'grpo_mlp_last', 'dql_mlp_last']
+# Final-checkpoint twins and the other reward variants (panel (b) only).
+HTT_VARIANTS = ['hc_v6_last', 'ft_quality_last', 'ft_fatigue', 'ft_fatigue_last',
+                'ft_protect', 'ft_protect_last', 'ft_gini', 'ft_gini_last']
+HTT_VARIANT_COLOR = '#9ECAE1'
+# Panel (a): the policies shown in tab:results_dist.
+MAIN = [k for k, _ in ss.REP_COLS]
 
 plt.rcParams.update({'font.size': 7.5, 'axes.titlesize': 8, 'axes.labelsize': 7.5,
                      'xtick.labelsize': 7, 'ytick.labelsize': 7, 'pdf.fonttype': 42})
@@ -83,6 +90,9 @@ def draw(ax, R, accents, title):
     taus = np.concatenate([np.linspace(1.0, 1.5, 400), np.linspace(1.5, TAU_MAX, 200)])
     for a in R.index:
         if a in accents: continue
+        if a in HTT_VARIANTS:
+            ax.plot(taus, profile(R.loc[a].to_numpy(), taus), '-', color=HTT_VARIANT_COLOR, lw=0.7, zorder=2)
+            continue
         style = '--' if a in MLPS else '-'
         ax.plot(taus, profile(R.loc[a].to_numpy(), taus), style, color='0.72', lw=0.7, zorder=1)
     for a, (lab, c, ls, lw) in accents.items():
@@ -103,20 +113,20 @@ def draw(ax, R, accents, title):
 def main():
     os.makedirs(OUT, exist_ok=True)
     metrics = load()
-    full = sorted(set.intersection(*[set(metrics[s].index) for s, _ in ss.SCEN]))
-    deploy = ([a for a in full
-               if a not in ss.ORACLES and a not in ss.INFORMED_SWAP]
-              + [v for v in ss.INFORMED_SWAP.values() if v in full])
-    for name, field, accents, title in (
-            ('profile_deployable', deploy, ACCENT, f'Main field ({len(deploy)} agents)'),
-            ('profile_full', full, {**ACCENT, **INFORMED}, f'Full field ({len(full)} agents)')):
-        R = ratios(metrics, field)
+    field = ss.main_field(metrics)
+    main = [a for a in MAIN if a in field]
+    for name, shown, title in (
+            ('profile_deployable', main, f'Main comparison ({len(main)} policies)'),
+            ('profile_full', field, f'All agents ({len(field)})')):
+        R = ratios(metrics, field).loc[shown]
+        accents = ACCENT
         fig, ax = plt.subplots(figsize=PANEL)
         draw(ax, R, accents, title)
         fig.subplots_adjust(left=0.145, right=0.965, top=0.885, bottom=0.20)
         fig.savefig(f'{OUT}/{name}.pdf'); plt.close(fig)
         best = (R <= 1 + 1e-9).mean(axis=1).sort_values(ascending=False)
         print(f'\n## {name}: rho(1) top rows'); print((best[best > 0]).round(3).to_string())
+        print(f'   agents winning >= 1 cell: {int((best > 0).sum())} of {len(best)}')
         print(f'   worst-cell ratio: ' + ', '.join(
             f'{a}={R.loc[a].max():.2f}' for a in accents if a in R.index))
         for t in (1.05, 1.10, 1.25):
@@ -124,8 +134,9 @@ def main():
             print(f'   rho({t:.2f}): ' + ', '.join(f'{a}={v:.2f}' for a, v in row.items()))
 
     handles = [Line2D([], [], color=c, linestyle=ls, lw=lw, label=lab)
-               for lab, c, ls, lw in list(ACCENT.values()) + list(INFORMED.values())]
-    handles += [Line2D([], [], color='0.72', ls='-', lw=0.7, label='other rules'),
+               for lab, c, ls, lw in ACCENT.values()]
+    handles += [Line2D([], [], color=HTT_VARIANT_COLOR, ls='-', lw=0.7, label='other HTT-RL checkpoints'),
+                Line2D([], [], color='0.72', ls='-', lw=0.7, label='other rules'),
                 Line2D([], [], color='0.72', ls='--', lw=0.7, label='MLP anchors')]
     # Full-width strip, as make_scenario_figures.py; wrap to extra rows instead of clipping.
     ncol = min(len(handles), 6)

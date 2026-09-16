@@ -9,10 +9,15 @@ KPI sets (all add final fleet knowledge, at every scenario):
 
 final-window MTTR = mean of the harness's 50-repair rolling MTTR over the last
 TAIL of the horizon (the right-hand end of the scenario figures' panel (a)).
-Fields: deployable (oracles excluded, best taken over deployables) and full
-(oracles included).  The PO twin is an ablation, not a field member.
+Field: every agent evaluated at all five scenarios, minus the ablations
+(EXCLUDE) and the removed baselines (REMOVED).  All baselines of the field
+read the same simulator quantities as HTT-RL's observation.  The per-KPI best
+values of tab:results_dist and tab:results_dist_full come from this field.
 
-Usage: uv run --no-sync python scripts/summary_scores.py [--validate] [--md]
+--greedy-check scores GreedyReward (the reward-design check of the appendix)
+against the field plus GreedyReward itself.
+
+Usage: uv run --no-sync python scripts/summary_scores.py [--validate] [--md] [--tex] [--greedy-check]
 """
 import argparse, glob, re
 import numpy as np, pandas as pd
@@ -28,36 +33,32 @@ SCEN = [('small_scale', 'Small'), ('baseline', 'Base'), ('massive_scale', 'Indus
 # comparable at S2 (22%) and S5 (24%), and knowledge is already settled by 90% of
 # the horizon everywhere, so there is no scenario-length ground for restricting it.
 KNOW_SCEN = {s for s, _ in SCEN}
-ORACLES = {'greedy_reward', 'topsis', 'shortest_processing', 'optimal_assignment', 'reserve_specialist', 'evo_topsis_inf'}
-# One-for-one informed swap.  HTT-RL's observation carries the simulator's own
-# expected repair time and knowledge match, so a field of empirically-estimating
-# rules was not like-for-like.  Each estimating baseline is replaced by its
-# informed twin.  Informed baselines with no empirical twin (ReserveSpec*,
-# GreedyReward*) stay out of the main field and remain in the full field.
-INFORMED_SWAP = {'empirical_topsis': 'topsis',
-                 'empirical_spt': 'shortest_processing',
-                 'batch_milp': 'optimal_assignment'}
-SWAP_ON = True
+# Baselines removed from the benchmark field: the online estimators of repair
+# time (Emp-Topsis, Emp-Spt, BatchMilp, Evo-Topsis) and GreedyReward, which
+# queries the per-assignment reward and is kept only as a reward-design
+# check (--greedy-check).
+REMOVED = {'empirical_topsis', 'empirical_spt', 'batch_milp', 'evo_topsis', 'greedy_reward'}
+GREEDY = 'greedy_reward'
 EXCLUDE = {'po_v6', 'po_v6_last', 'hc_v6_ext', 'hc_v6_ext_last', 'hc_v6_wr', 'hc_v6_wr_last'}
 TEX = {  # key -> label in tab:results_dist_full
-    'greedy_reward': r'\textsc{GreedyReward}$^{*}$', 'empirical_topsis': r'\textsc{Emp-Topsis}',
-    'ft_protect_last': 'ft-protect-last (ours)', 'topsis': r'\textsc{Topsis}$^{*}$',
-    'hc_v6': 'HTT-RL (ours)', 'shortest_processing': r'\textsc{Spt}$^{*}$',
+    'greedy_reward': r'\textsc{GreedyReward}',
+    'ft_protect_last': 'ft-protect-last (ours)', 'topsis': r'\textsc{Topsis}',
+    'hc_v6': 'HTT-RL (ours)', 'shortest_processing': r'\textsc{Spt}',
     'ft_protect': 'ft-protect (ours)', 'ft_fatigue_last': 'ft-fatigue-last (ours)',
     'hc_v6_last': 'HTT-RL-last (ours)', 'ft_fatigue': 'ft-fatigue (ours)',
     'ft_quality': 'ft-quality (ours)', 'ft_gini': 'ft-gini (ours)',
-    'ft_quality_last': 'ft-quality-last (ours)', 'batch_milp': r'\textsc{BatchMilp}',
-    'optimal_assignment': r'\textsc{Hungarian}$^{*}$', 'empirical_spt': r'\textsc{Emp-Spt}',
-    'ft_gini_last': 'ft-gini-last (ours)', 'reserve_specialist': r'\textsc{ReserveSpec}$^{*}$',
+    'ft_quality_last': 'ft-quality-last (ours)',
+    'optimal_assignment': r'\textsc{Hungarian}',
+    'ft_gini_last': 'ft-gini-last (ours)', 'reserve_specialist': r'\textsc{ReserveSpec}',
     'shortest_queue': r'\textsc{ShortestQueue}', 'least_fatigued': r'\textsc{LeastFatigued}',
     'round_robin': r'\textsc{RoundRobin}', 'random': r'\textsc{Random}',
     'dql_mlp': 'DDQN-MLP (anchor)', 'a2c_mlp': 'A2C-MLP (anchor)',
     'dql_mlp_last': 'DDQN-MLP-last (anchor)', 'grpo_mlp': 'GRPO-MLP (anchor)',
     'grpo_mlp_last': 'GRPO-MLP-last (anchor)', 'least_busy': r'\textsc{LeastBusy}',
     'a2c_mlp_last': 'A2C-MLP-last (anchor)', 'train_weakest': r'\textsc{TrainWeakest}',
-    'evo_topsis': r'\textsc{Evo-Topsis}', 'evo_topsis_inf': r'\textsc{Evo-Topsis}$^{*}$'}
+    'evo_topsis_inf': r'\textsc{Evo-Topsis}'}
 PLAIN = {k: (re.sub(r'\\textsc\{([^}]*)\}', r'\1', v)
-             .replace(r'$^{*}$', '*').replace(' (ours)', '').replace(' (anchor)', ''))
+             .replace(' (ours)', '').replace(' (anchor)', ''))
          for k, v in TEX.items()}
 # KPI: (direction, pretty)
 KPIS = {'prod': (+1, 'Products'), 'mttr_mean': (-1, 'MTTR (episode mean)'),
@@ -71,11 +72,12 @@ STEP_COLS = ['agent', 'episode', 'step', 'sim_time', 'mttr_rolling', 'fleet_know
 # tab:results_dist columns, in manuscript order (key, column header)
 REP_COLS = [
     ('hc_v6', r'HTT-RL\textsubscript{ref.}'), ('ft_quality', r'HTT-RL\textsubscript{qua.}'),
-    ('topsis', r'\textsc{Topsis}$^{*}$'), ('shortest_processing', r'\textsc{Spt}$^{*}$'),
+    ('topsis', r'\textsc{Topsis}'), ('shortest_processing', r'\textsc{Spt}'),
+    ('reserve_specialist', r'\textsc{ReserveSpec}'),
     ('shortest_queue', r'\textsc{ShortQ}'), ('least_fatigued', r'\textsc{LeastFat}'),
     ('round_robin', r'\textsc{RoundR}'), ('least_busy', r'\textsc{LeastBusy}'),
     ('train_weakest', r'\textsc{TrainW}'), ('random', r'\textsc{Random}'),
-    ('optimal_assignment', r'\textsc{Hungarian}$^{*}$'), ('a2c_mlp', 'A2C'),
+    ('optimal_assignment', r'\textsc{Hungarian}'), ('a2c_mlp', 'A2C'),
     ('grpo_mlp', 'GRPO'), ('dql_mlp', 'DDQN')]
 ROW_LABELS = [('Small', 'S1 -- Small'), ('Base', 'S2 -- Baseline'), ('Indust.', 'S3 -- Industrial'),
               ('V-long', 'S4 -- Very-long'), ('Lifec.', 'S5 -- Lifecycle')]
@@ -95,8 +97,8 @@ def _mark(v, vals, gray=False):
 
 def emit_tex(tables):
     """Body rows of tab:results_dist and tab:results_dist_full for the paper variant."""
-    t = tables[(PAPER_VARIANT, 'deployable')]
-    print(f'% ---- tab:results_dist body ({PAPER_VARIANT}, deployable field) ----')
+    t = tables[PAPER_VARIANT]
+    print(f'% ---- tab:results_dist body ({PAPER_VARIANT}) ----')
     keys = [k for k, _ in REP_COLS]
     for short, label in ROW_LABELS:
         vals = [t.loc[k, short] for k in keys]
@@ -106,8 +108,7 @@ def emit_tex(tables):
     vals = [t.loc[k, 'Overall'] for k in keys]
     cells = ' & '.join(_mark(v, vals, gray=True) for v in vals)
     print(r'\textcolor{gray}{Overall} & ' + cells + r' & \\')
-    print(f'\n% ---- tab:results_dist_full body ({PAPER_VARIANT}, full field) ----')
-    t = tables[(PAPER_VARIANT, 'full')]
+    print(f'\n% ---- tab:results_dist_full body ({PAPER_VARIANT}, every agent of the field) ----')
     cols = ['Small', 'Base', 'Indust.', 'V-long', 'Lifec.', 'Overall']
     rank = {c: sorted(set(round(v, 1) for v in t[c])) for c in cols}
     for a, r in t.iterrows():
@@ -118,6 +119,42 @@ def emit_tex(tables):
             elif len(o) > 1 and v == o[1]: x = r'\underline{' + x + '}'
             cells.append(x)
         print(f'{TEX[a]} & ' + ' & '.join(cells) + r' \\')
+
+
+def main_field(metrics, drop=()):
+    """Agents evaluated at every scenario, minus the ablations and the removed baselines."""
+    common = set.intersection(*[set(metrics[s].index) for s, _ in SCEN])
+    return sorted(common - REMOVED - set(drop))
+
+
+def score_table(metrics, field, base_kpis):
+    cols = {}
+    for s, short in SCEN:
+        kp = base_kpis + (['know'] if s in KNOW_SCEN else [])
+        cols[short] = score(metrics[s], kp, field)
+    t = pd.DataFrame(cols)
+    t['Overall'] = t.mean(axis=1)
+    t = t.sort_values('Overall')
+    t.insert(0, 'rank', range(1, len(t) + 1))
+    return t
+
+
+def greedy_check(metrics, field):
+    """Reward-design check: GreedyReward scored against the field plus itself."""
+    if not all(GREEDY in metrics[s].index for s, _ in SCEN):
+        print(f'# {GREEDY}: not evaluated at every scenario'); return
+    t = score_table(metrics, field + [GREEDY], VARIANTS[PAPER_VARIANT])
+    print(f'\n## reward-design check: {GREEDY} scored against the field + itself ({PAPER_VARIANT})')
+    print(t.rename(index=PLAIN).round(1).head(8).to_string())
+    print(f'# {GREEDY}: rank {int(t.loc[GREEDY, "rank"])} of {len(t)}')
+    for s, short in SCEN:
+        m = metrics[s]
+        best = m.loc[field, 'prod'].idxmax()
+        g = m.loc[GREEDY]
+        print(f'# {short:8s} products {g["prod"]:.0f} vs field best {m.loc[best, "prod"]:.0f} ({best}) '
+              f'= {100 * (g["prod"] / m.loc[best, "prod"] - 1):+.2f}%; '
+              f'disr/1e3 {g["disr"]:.0f} vs field best {m.loc[field, "disr"].min():.0f}; '
+              f'know {g["know"]:.1f} vs field best {m.loc[field, "know"].max():.1f}')
 
 
 def load_steps(scenario, agents):
@@ -182,6 +219,7 @@ def main():
     ap.add_argument('--tail', type=float, default=TAIL, help='final-window fraction of the horizon')
     ap.add_argument('--exclude', default='', help='comma-separated agent keys dropped from the field (rows AND best-value computation)')
     ap.add_argument('--compare', action='store_true', help='overall score + rank per variant, side by side')
+    ap.add_argument('--greedy-check', action='store_true', help='score GreedyReward against the field plus itself (appendix reward-design check)')
     ap.add_argument('--extra', default='reports/hvp_eval_v6w/mlp_last_step_metrics.csv', help='CSV of scenario,agent,episode,mttr_final,know_final for agents without local step records')
     args = ap.parse_args()
     TAIL = args.tail
@@ -198,27 +236,14 @@ def main():
             print(f'# {s}: no step records for {sorted(missing)} (final-window MTTR / final knowledge = NaN)')
         metrics[s] = m
     drop = {a for a in args.exclude.split(',') if a}
-    full = sorted(set.intersection(*[set(metrics[s].index) for s, _ in SCEN]) - drop)
+    field = main_field(metrics, drop)
     if drop:
         print(f'# excluded from the field: {sorted(drop)}')
-    if SWAP_ON:
-        deploy = ([a for a in full if a not in ORACLES and a not in INFORMED_SWAP]
-                  + [v for v in INFORMED_SWAP.values() if v in full])
-    else:
-        deploy = [a for a in full if a not in ORACLES]
-    print(f'# field: {len(full)} agents full, {len(deploy)} deployable')
-    tables = {}
-    for vname, base_kpis in VARIANTS.items():
-        for fname, field in (('deployable', deploy), ('full', full)):
-            cols = {}
-            for s, short in SCEN:
-                kp = base_kpis + (['know'] if s in KNOW_SCEN else [])
-                cols[short] = score(metrics[s], kp, field)
-            t = pd.DataFrame(cols)
-            t['Overall'] = t.mean(axis=1)
-            t = t.sort_values('Overall')
-            t.insert(0, 'rank', range(1, len(t) + 1))
-            tables[(vname, fname)] = t
+    print(f'# field: {len(field)} agents')
+    tables = {vname: score_table(metrics, field, base_kpis) for vname, base_kpis in VARIANTS.items()}
+    if args.greedy_check:
+        greedy_check(metrics, field)
+        return
     if args.validate:
         tex = open('paper/Manuscript.tex', encoding='utf-8').read()
         body = tex[tex.index(r'\label{tab:results_dist_full}'):]
@@ -231,8 +256,8 @@ def main():
             lab = cells[0]
             key = next((k for k, v in TEX.items() if v == lab), None)
             assert key, lab
-            pub[key] = [float(re.sub(r'\\textbf\{([^}]*)\}', r'\1', c)) for c in cells[1:]]
-        t = tables[(PAPER_VARIANT, 'full')]
+            pub[key] = [float(re.sub(r'\\(?:textbf|underline)\{([^}]*)\}', r'\1', c)) for c in cells[1:]]
+        t = tables[PAPER_VARIANT]
         dev = pd.DataFrame({k: np.array(v) - t.loc[k, ['Small', 'Base', 'Indust.', 'V-long', 'Lifec.', 'Overall']].to_numpy()
                             for k, v in pub.items()}).T
         dev.columns = ['Small', 'Base', 'Indust.', 'V-long', 'Lifec.', 'Overall']
@@ -245,18 +270,17 @@ def main():
         emit_tex(tables)
         return
     if args.compare:
-        for fname in ('deployable', 'full'):
-            cmp = pd.DataFrame({v: tables[(v, fname)]['Overall'] for v in VARIANTS})
-            rk = pd.DataFrame({v: tables[(v, fname)]['rank'] for v in VARIANTS})
-            cmp = cmp.sort_values('published').rename(index=PLAIN); rk = rk.loc[[k for k in cmp.index.map({v: k for k, v in PLAIN.items()})]]
-            print(f'\n## overall score (rank) per variant, {fname} field, tail={TAIL:.0%}')
-            print('| Agent | ' + ' | '.join(VARIANTS) + ' |'); print('|---|' + '|'.join(['--:'] * len(VARIANTS)) + '|')
-            for (a, r), (_, k) in zip(cmp.iterrows(), rk.iterrows()):
-                print(f'| {a} | ' + ' | '.join(f'{r[v]:.1f} ({int(k[v])})' for v in VARIANTS) + ' |')
+        cmp = pd.DataFrame({v: tables[v]['Overall'] for v in VARIANTS})
+        rk = pd.DataFrame({v: tables[v]['rank'] for v in VARIANTS})
+        cmp = cmp.sort_values('published'); rk = rk.loc[cmp.index]
+        print(f'\n## overall score (rank) per variant, tail={TAIL:.0%}')
+        print('| Agent | ' + ' | '.join(VARIANTS) + ' |'); print('|---|' + '|'.join(['--:'] * len(VARIANTS)) + '|')
+        for (a, r), (_, k) in zip(cmp.iterrows(), rk.iterrows()):
+            print(f'| {PLAIN[a]} | ' + ' | '.join(f'{r[v]:.1f} ({int(k[v])})' for v in VARIANTS) + ' |')
         return
-    for (vname, fname), t in tables.items():
-        print(f'\n## {vname} / {fname} field  (KPIs: ' +
-              ', '.join(KPIS[k][1] for k in VARIANTS[vname]) + ' + final knowledge at S4/S5)')
+    for vname, t in tables.items():
+        print(f'\n## {vname}  (KPIs: ' +
+              ', '.join(KPIS[k][1] for k in VARIANTS[vname]) + ' + final knowledge)')
         t = t.rename(index=PLAIN)
         if args.md:
             print('| # | Agent | ' + ' | '.join(t.columns[1:]) + ' |')

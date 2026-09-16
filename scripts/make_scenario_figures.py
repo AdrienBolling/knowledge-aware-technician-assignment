@@ -13,7 +13,7 @@ legend strip shared by all scenarios:
 Panels are emitted at a fixed physical size (PANEL, inches) with no
 tight-bbox cropping, so every panel scales identically when included at
 0.49\textwidth (elsarticle 3p: \textwidth = 468 pt = 6.5 in).  Roster =
-the summary-table deployable field (no oracles)."""
+the policies of tab:results_dist."""
 import os, sys
 import numpy as np, pandas as pd
 import matplotlib
@@ -32,19 +32,20 @@ PANEL = (3.2, 1.55)   # inches; 0.49 * 6.5 in = 3.19 in in the manuscript
 SCEN = {'small_scale':'S1 Small','baseline':'S2 Baseline','massive_scale':'S3 Industrial',
         'very_long':'S4 Very-long','lifecycle':'S5 Lifecycle'}
 ACCENT = {'hc_v6':('HTT-RL',PC['hc_v6'],'-',1.8),
-          'ft_quality':(r'HTT-RL$^{quality}$',PC['ft_quality'],'-',1.8),
-          'topsis':('Topsis*',PC['topsis'],'-',1.3),
-          'shortest_processing':('Spt*',PC['shortest_processing'],'-.',1.3),
+          'ft_quality':(r'HTT-RL$_{qua.}$',PC['ft_quality'],'-',1.8),
+          'topsis':('Topsis',PC['topsis'],'-',1.3),
+          'shortest_processing':('Spt',PC['shortest_processing'],'-.',1.3),
           'random':('Random',PC['random'],':',1.1)}
-RULES = ['optimal_assignment','shortest_queue','least_fatigued','round_robin','least_busy','train_weakest']
+RULES = ['optimal_assignment','reserve_specialist','shortest_queue','least_fatigued','round_robin','least_busy','train_weakest']
 MLPS  = ['a2c_mlp','grpo_mlp','dql_mlp']
 ORDER = RULES + MLPS + ['random','shortest_processing','topsis','ft_quality','hc_v6']
 RET = [0.8e6, 2.5e6, 4.2e6]
 # (key suffix, legend label, hatch): injuries solid, exhaustion hatched, vacations dotted
 TYPES = [('injury', 'injury', ''), ('exhaustion', 'exhaustion', '////'), ('vacation', 'vacation', '....')]
 plt.rcParams['hatch.linewidth'] = 0.5
-SHORT = {'hc_v6':'HTT-RL','ft_quality':'HTT-RL$^{quality}$','topsis':'Topsis*',
-         'shortest_processing':'Spt*','optimal_assignment':'Hungarian*','shortest_queue':'ShortQ',
+SHORT = {'hc_v6':'HTT-RL','ft_quality':r'HTT-RL$_{qua.}$','topsis':'Topsis',
+         'shortest_processing':'Spt','optimal_assignment':'Hungarian','reserve_specialist':'ReserveSpec',
+         'shortest_queue':'ShortQ',
          'least_fatigued':'LeastFat','round_robin':'RoundR','least_busy':'LeastBusy',
          'train_weakest':'TrainW','random':'Random','a2c_mlp':'A2C','grpo_mlp':'GRPO','dql_mlp':'DDQN'}
 
@@ -148,7 +149,8 @@ def disruption_panel(scenario):
     published tree (table-consistent); the type proportions come from the
     disruption-instrumented re-run of the same episodes (reports/
     hvp_eval_disr), whose learned-agent totals differ by up to ~3% at the
-    30-technician scenarios (GPU-kernel nondeterminism)."""
+    30-technician scenarios (GPU-kernel nondeterminism).  An agent without
+    a per-type record in that tree is drawn as one unsplit, outlined bar."""
     ep = pd.read_csv(f'{ROOT}/{scenario}/episodes.csv')
     ep = ep[ep.agent.isin(ORDER)].groupby('agent').mean(numeric_only=True)
     ipk = (ep.ill_technician_count / ep.finished_products * 1000).reindex(ORDER).dropna()
@@ -160,12 +162,18 @@ def disruption_panel(scenario):
     fig, ax = new_panel()
     ax.grid(False); ax.grid(alpha=0.22, lw=0.5, axis='x')
     cols = [style(a)[0] for a in ipk.index]
+    split = shares.notna().all(axis=1).to_numpy()
     left = np.zeros(len(ipk))
     for t, label, hatch in TYPES:
-        seg = ipk.values * shares[f'disruptions_{t}'].to_numpy()
+        seg = np.where(split, ipk.values * shares[f'disruptions_{t}'].fillna(0.0).to_numpy(), 0.0)
         ax.barh(range(len(ipk)), seg, left=left, color=cols, height=0.72,
                 hatch=hatch, edgecolor='white', linewidth=0.4)
         left += seg
+    # No per-type record: draw the total unsplit (light fill, dark outline).
+    for i in np.where(~split)[0]:
+        ax.barh(i, ipk.values[i], color=cols[i], alpha=0.45, height=0.72,
+                edgecolor='#555555', linewidth=0.5)
+        print(f'  {scenario}: no per-type disruption record for {ipk.index[i]}; bar drawn unsplit')
     ax.set_yticks(range(len(ipk)), [SHORT[a] for a in ipk.index], fontsize=6.3)
     ax.set_xlabel(r'technician disruptions / $10^3$ products')
     return fig
@@ -173,7 +181,7 @@ def disruption_panel(scenario):
 def legend_strip():
     handles = [Line2D([],[], color=ACCENT[a][1], ls=ACCENT[a][2], lw=ACCENT[a][3], label=ACCENT[a][0])
                for a in ('hc_v6','ft_quality','topsis','shortest_processing','random')]
-    handles += [Line2D([],[], color='#BFBFBF', ls='-', lw=0.9, label='other rules (6)'),
+    handles += [Line2D([],[], color='#BFBFBF', ls='-', lw=0.9, label='other rules (7)'),
                 Line2D([],[], color='#8C8C8C', ls='--', lw=0.9, label='MLP anchors (3)')]
     types = [Patch(facecolor='#9A9A9A', edgecolor='white', hatch=h, label=f'{label} (panel c)')
              for _, label, h in TYPES]
