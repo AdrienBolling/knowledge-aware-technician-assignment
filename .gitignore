@@ -218,3 +218,6 @@ checkpoints/
 # Hydra run outputs
 outputs/
 multirun/
+
+# Claude Code session logs (never track)
+CC-Session-Logs/
