@@ -29,13 +29,11 @@ ROOT = Path("reports/hvp_eval")
 SCENARIOS = ["massive_scale", "small_scale", "baseline", "very_long",
              "lifecycle"]
 
-# Display labels.  Markers flag the information level of each baseline:
-#   \dagger  = informed / oracle (reads the simulator's ground-truth
-#              repair-time / skill / cost-matrix estimates)
-#   * also marks the reward-greedy rule (reads the exact counterfactual per-
-#              assignment reward, i.e. the learned agents' own objective)
-# Unmarked heuristics act on the observation (and, for the empirical
-# variants, on observed repair completions) only.
+# Display labels.  No information markers: the baselines of the paper read
+# the same simulator quantities as HTT-RL's observation.  The -emp variants
+# (online repair-time estimates), BatchMILP and GreedyReward (per-assignment
+# reward probe) keep labels only so that older eval trees stay readable; the
+# paper does not use them (see summary_scores.REMOVED).
 AGENT_LABELS = {
     "human": r"HC-RL (ours)",
     "performance": r"PO-RL (ours)",
@@ -70,7 +68,7 @@ AGENT_LABELS = {
     "ppo_transformer": "PPO-TRF (anchor)",
     "rainbow_dqn": "Rainbow (anchor)",
     # Traditional-architecture learned baselines: plain MLPs on the same
-    # set observation the HTT agent sees (honest information — unmarked).
+    # set observation the HTT agent sees.
     "a2c_mlp": "A2C-MLP (anchor)",
     "a2c_mlp_last": "A2C-MLP-last (anchor)",
     "grpo_mlp": "GRPO-MLP (anchor)",
@@ -84,27 +82,17 @@ AGENT_LABELS = {
     "shortest_queue": "ShortestQueue",
     "empirical_spt": "SPT-emp",
     "empirical_topsis": "TOPSIS-emp",
-    "evo_topsis": "Evo-TOPSIS",
-    "evo_topsis_inf": r"Evo-TOPSIS$^{*}$",
-    "shortest_processing": r"SPT$^{*}$",
-    "optimal_assignment": r"Hungarian$^{*}$",
-    "batch_milp": r"BatchMILP$^{*}$",
-    "topsis": r"TOPSIS$^{*}$",
-    "reserve_specialist": r"ReserveSpec$^{*}$",
-    "train_weakest": r"TrainWeakest$^{*}$",
-    "greedy_reward": r"GreedyReward$^{*}$",
+    "evo_topsis": "Evo-TOPSIS-emp",
+    "evo_topsis_inf": "Evo-TOPSIS",
+    "shortest_processing": "SPT",
+    "optimal_assignment": "Hungarian",
+    "batch_milp": "BatchMILP",
+    "topsis": "TOPSIS",
+    "reserve_specialist": "ReserveSpec",
+    "train_weakest": "TrainWeakest",
+    "greedy_reward": "GreedyReward",
 }
 AGENT_ORDER = list(AGENT_LABELS)
-
-# Drop-in table footnote for the manuscript (also written next to each
-# generated table so the marker semantics travel with the artefact).
-ORACLE_FOOTNOTE = (
-    r"$^{*}$informed baseline: reads the simulator's ground-truth "
-    r"repair-time/skill estimates; $^{*}$ on GreedyReward: reads the "
-    r"exact per-assignment reward (the learned agents' training "
-    r"objective).  Unmarked rules use the observation (and, for the "
-    r"-emp variants, observed repair completions) only."
-)
 
 # Episode-level KPIs: (column, pretty name, direction, format)
 # direction: +1 higher-better, -1 lower-better, 0 report-only (no bold, no rank)
@@ -295,8 +283,6 @@ def main() -> int:
 
         hz_rows = horizon_table(hm)
         (d / "horizon_table.tex").write_text(hz_rows + "\n")
-        # Marker semantics travel with the generated tables.
-        (d / "table_footnote.tex").write_text(ORACLE_FOOTNOTE + "\n")
 
         print(f"=== {scenario} (horizon {horizon:.0f}) ===")
         print(rank_df.to_string(index=False))
