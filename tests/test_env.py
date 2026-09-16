@@ -298,8 +298,11 @@ def test_info_exposes_assignment_counts_per_tech():
     assert info["assignment_counts"]["tech_2"] == 1
 
 
-def test_machine_stats_tracks_downtime_and_breakdowns():
-    """Per-machine stats reflect transitions in broken / processing state."""
+def test_machine_stats_tracks_downtime_and_breakdowns(monkeypatch):
+    """Legacy sampled tracking: per-machine stats reflect the broken /
+    processing transitions seen at decision boundaries.  The default
+    event-exact tracking is tested in tests/test_sim_event_fixes.py."""
+    monkeypatch.setenv("KATA_LEGACY_MACHINE_TRACKING", "1")
     sim_env = FakeSimEnv()
     sim_env.now = 0.0
     dispatcher = FakeDispatcher(tech_count=1)
