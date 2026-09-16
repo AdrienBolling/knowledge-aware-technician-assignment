@@ -32,7 +32,7 @@ PANEL = (3.2, 1.55)   # inches; 0.49 * 6.5 in = 3.19 in in the manuscript
 SCEN = {'small_scale':'S1 Small','baseline':'S2 Baseline','massive_scale':'S3 Industrial',
         'very_long':'S4 Very-long','lifecycle':'S5 Lifecycle'}
 ACCENT = {'hc_v6':('HTT-RL',PC['hc_v6'],'-',1.8),
-          'ft_quality':(r'HTT-RL$^{quality}$',PC['ft_quality'],'-',1.8),
+          'ft_quality':(r'HTT-RL$_{qua.}$',PC['ft_quality'],'-',1.8),
           'topsis':('Topsis',PC['topsis'],'-',1.3),
           'shortest_processing':('Spt',PC['shortest_processing'],'-.',1.3),
           'random':('Random',PC['random'],':',1.1)}
@@ -43,7 +43,7 @@ RET = [0.8e6, 2.5e6, 4.2e6]
 # (key suffix, legend label, hatch): injuries solid, exhaustion hatched, vacations dotted
 TYPES = [('injury', 'injury', ''), ('exhaustion', 'exhaustion', '////'), ('vacation', 'vacation', '....')]
 plt.rcParams['hatch.linewidth'] = 0.5
-SHORT = {'hc_v6':'HTT-RL','ft_quality':'HTT-RL$^{quality}$','topsis':'Topsis',
+SHORT = {'hc_v6':'HTT-RL','ft_quality':r'HTT-RL$_{qua.}$','topsis':'Topsis',
          'shortest_processing':'Spt','optimal_assignment':'Hungarian','reserve_specialist':'ReserveSpec',
          'shortest_queue':'ShortQ',
          'least_fatigued':'LeastFat','round_robin':'RoundR','least_busy':'LeastBusy',
