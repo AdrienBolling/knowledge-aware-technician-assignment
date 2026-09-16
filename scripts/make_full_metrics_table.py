@@ -13,11 +13,11 @@ sys.path.insert(0, 'scripts')
 import summary_scores as ss
 
 GROUPS = [
-    ('HTT-RL (ours)', [('hc_v6', 'HTT-RL'), ('hc_v6_last', 'HTT-RL-last'),
-                       ('ft_quality', r'\textsuperscript{quality}'), ('ft_quality_last', r'\textsuperscript{quality}-last'),
-                       ('ft_fatigue', r'\textsuperscript{fatigue}'), ('ft_fatigue_last', r'\textsuperscript{fatigue}-last'),
-                       ('ft_protect', r'\textsuperscript{protect}'), ('ft_protect_last', r'\textsuperscript{protect}-last'),
-                       ('ft_gini', r'\textsuperscript{gini}'), ('ft_gini_last', r'\textsuperscript{gini}-last'),
+    ('HTT-RL (ours)', [('hc_v6', r'HTT-RL\textsubscript{ref.}'), ('hc_v6_last', r'HTT-RL\textsubscript{ref.}-last'),
+                       ('ft_quality', r'HTT-RL\textsubscript{qua.}'), ('ft_quality_last', r'HTT-RL\textsubscript{qua.}-last'),
+                       ('ft_fatigue', r'HTT-RL\textsubscript{fat.}'), ('ft_fatigue_last', r'HTT-RL\textsubscript{fat.}-last'),
+                       ('ft_protect', r'HTT-RL\textsubscript{pro.}'), ('ft_protect_last', r'HTT-RL\textsubscript{pro.}-last'),
+                       ('ft_gini', r'HTT-RL\textsubscript{know.}'), ('ft_gini_last', r'HTT-RL\textsubscript{know.}-last'),
                        ('po_v6', 'PO-HTT-RL')]),
     ('MCDA', [('topsis', r'\textsc{Topsis}')]),
     ('Rule-based', [('shortest_processing', r'\textsc{Spt}'),

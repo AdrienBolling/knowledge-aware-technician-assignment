@@ -23,8 +23,8 @@ SCEN = [('small_scale', 'S1', 'Small'), ('baseline', 'S2', 'Baseline'),
 # fatigue and protect levers, best-evaluation checkpoint otherwise --
 # the same selection as the pre-pivot table and the S3/S5 prose numbers.
 AGENTS = ['hc_v6', 'ft_quality', 'ft_fatigue_last', 'ft_protect_last', 'ft_gini']
-HEAD = ['base', r'\textsuperscript{quality}', r'\textsuperscript{fatigue}',
-        r'\textsuperscript{protect}', r'\textsuperscript{gini}']
+HEAD = [r'\textsubscript{ref.}', r'\textsubscript{qua.}', r'\textsubscript{fat.}',
+        r'\textsubscript{pro.}', r'\textsubscript{know.}']
 # (key, row label, direction, format)
 KPIS = [('mttr', r'MTTR $\downarrow$', -1, '{:.1f}'),
         ('know', r'Know.\ $\uparrow$', +1, '{:.1f}'),
