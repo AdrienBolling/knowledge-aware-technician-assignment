@@ -3,13 +3,21 @@
 The career-length scenarios evaluate one factory layout, sampled from the
 eval seed (published generation: 20260722).  reports/hvp_s45 holds one episode
 per policy on five more layouts (eval seeds 20260909-20260913, one per run).
-For each factory, this script scores the main field of tab:results_dist with
-the paper's summary score (per-KPI best values taken inside that factory),
-ranks the policies of tab:results_dist, and summarizes the ranks and scores
-across factories.
+For each factory, this script scores the field (FIELD) with the paper's
+summary score (per-KPI best values taken inside that factory), ranks the
+displayed policies (DISPLAYED), and summarizes the ranks and scores across
+factories.  Each factory has one episode, so a rank change between factories
+mixes the change of layout with the change of episode.
 
-HTT-RL is represented by its best checkpoint.  The final checkpoint was not
-evaluated on the new layouts, so the field of every factory excludes it.
+Displayed policies: the 15 policies of tab:results_dist.  There is no
+informed-baseline category: ReserveSpec is an ordinary rule-based baseline,
+and GreedyReward, the empirical baselines (Emp-Topsis, Emp-Spt, BatchMilp)
+and the production-only twin are not in the displayed set or in the field.
+Field: the displayed policies, the other HTT-RL fine-tunes, the final-checkpoint
+twins of the fine-tunes, and the final-checkpoint twins of the MLP anchors.
+HTT-RL itself is represented by its best checkpoint: its final checkpoint
+(hc_v6_last) was not evaluated on the new layouts, so the field of every
+factory excludes it.
 
 Outputs (reports/rank_stability/):
   scores.csv          scenario, factory, agent, score, rank
@@ -30,7 +38,10 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+REPO = Path(__file__).resolve().parent.parent
+for _p in (REPO / 'scripts', REPO / 'src'):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 import multirun_data as md  # noqa: E402
 import summary_scores as ss  # noqa: E402
 
@@ -38,16 +49,24 @@ OUT = Path('reports/rank_stability')
 SCEN = [('very_long', 'S4 -- Very-long'), ('lifecycle', 'S5 -- Lifecycle')]
 PUBLISHED_SEED = 20260722
 RUN_SEED_BASE = 20260908
-DISPLAYED = [k for k, _ in ss.REP_COLS]
-LABEL = dict(ss.REP_COLS)
-
-
-def main_field(agents):
-    """Main field of tab:results_dist (informed swap), restricted to `agents`."""
-    field = {a for a in agents
-             if a not in ss.EXCLUDE and a not in ss.ORACLES and a not in ss.INFORMED_SWAP}
-    field |= {v for v in ss.INFORMED_SWAP.values() if v in agents}
-    return sorted(field)
+# Rows of tab:rank_stability (key, label), in the column order of tab:results_dist.
+ROSTER = [
+    ('hc_v6', r'HTT-RL\textsubscript{ref.}'), ('ft_quality', r'HTT-RL\textsubscript{qua.}'),
+    ('topsis', r'\textsc{Topsis}'), ('shortest_processing', r'\textsc{Spt}'),
+    ('reserve_specialist', r'\textsc{ReserveSpec}'),
+    ('shortest_queue', r'\textsc{ShortQ}'), ('least_fatigued', r'\textsc{LeastFat}'),
+    ('round_robin', r'\textsc{RoundR}'), ('least_busy', r'\textsc{LeastBusy}'),
+    ('train_weakest', r'\textsc{TrainW}'), ('random', r'\textsc{Random}'),
+    ('optimal_assignment', r'\textsc{Hungarian}'), ('a2c_mlp', 'A2C'),
+    ('grpo_mlp', 'GRPO'), ('dql_mlp', 'DDQN')]
+DISPLAYED = [k for k, _ in ROSTER]
+LABEL = dict(ROSTER)
+# Field members that are not displayed: the other HTT-RL fine-tunes and the
+# final-checkpoint twins available on every factory (hc_v6_last is not).
+FIELD_EXTRA = ['ft_fatigue', 'ft_protect', 'ft_gini',
+               'ft_quality_last', 'ft_fatigue_last', 'ft_protect_last', 'ft_gini_last',
+               'a2c_mlp_last', 'grpo_mlp_last', 'dql_mlp_last']
+FIELD = DISPLAYED + FIELD_EXTRA
 
 
 def factory_kpis(scenario):
@@ -128,10 +147,10 @@ def main():
         kpis = ss.VARIANTS[ss.PAPER_VARIANT] + (['know'] if scen in ss.KNOW_SCEN else [])
         tables = factory_kpis(scen)
         common = set.intersection(*[set(t.index) for t in tables.values()])
-        field = main_field(common)
-        missing = [a for a in DISPLAYED if a not in field]
+        missing = [a for a in FIELD if a not in common]
         if missing:
-            raise SystemExit(f'{scen}: displayed policies missing from the field: {missing}')
+            raise SystemExit(f'{scen}: field policies missing from a factory: {missing}')
+        field = list(FIELD)
         scores, ranks_min, ranks_avg = {}, {}, {}
         for f, m in tables.items():
             sc = ss.score(m, kpis, field)
