@@ -44,12 +44,12 @@ LEVERS_KPIS = ['mttr', 'know', 'disr', 'prod']
 TABLES = {
     'po_table': dict(
         agents=['hc_v6', 'ft_quality', 'po_v6'],
-        head=['HTT-RL', r'HTT-RL\textsuperscript{quality}', 'PO-HTT-RL'],
+        head=[r'HTT-RL\textsubscript{ref.}', r'HTT-RL\textsubscript{qua.}', 'PO-HTT-RL'],
         groups=[(2, 'human-centric'), (1, 'performance-only')]),
     'anchors_table': dict(
         agents=['hc_v6', 'ft_quality', 'a2c_mlp', 'grpo_mlp', 'dql_mlp',
                 'random', 'train_weakest'],
-        head=['HTT-RL', r'HTT-RL\textsuperscript{quality}', 'A2C', 'GRPO', 'DDQN',
+        head=['HTT-RL', r'HTT-RL\textsubscript{qua.}', 'A2C', 'GRPO', 'DDQN',
               r'\textsc{Random}', r'\textsc{TrainW}'],
         groups=[(2, 'HTT-RL'), (3, 'MLP anchors'), (2, 'reference')]),
 }
