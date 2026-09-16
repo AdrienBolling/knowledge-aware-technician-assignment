@@ -10,14 +10,22 @@
 # Everything else is identical to lifecycle.json.  One harness part per
 # (agent, variant), S5 protocol: eval seed 20260722, record every 200.
 #
+# Same-code reference: the published S5 rows (reports/hvp_eval_v6w) come
+# from older runs on other hardware, without PYTHONHASHSEED=0.  The queue
+# also reruns the targeted `lifecycle` scenario with this code, so each
+# variant has a like-for-like targeted reference.
+#
 # CPU lane (CUDA_VISIBLE_DEVICES=""), at most MAXJ parts at a time:
-#   10 heuristics, then the optional MLP anchors (a2c_mlp, grpo_mlp, dql_mlp).
+#   10 heuristics on both variants and on targeted lifecycle, then the
+#   optional MLP anchors (a2c_mlp, grpo_mlp, dql_mlp) on both variants.
 # GPU lane (LEARNED_GPU, default 1), one learned part at a time, started
 # after WAIT_MARKER appears in WAIT_LOG (the live-S5 benchmarks on GPU 1).
 # Order (key comparisons first): ft_quality (HTT-RL qua.) and po_v6
 # (production-only twin) on random_retire, then on random_timing, then
-# hc_v6 (HTT-RL ref.) on both.  Only the best checkpoints run (the paper's
-# main comparison); ft_quality and po_v6 best == last.
+# hc_v6 (HTT-RL ref.) on both, then the targeted lifecycle reruns of po_v6
+# and hc_v6 (ft_quality already has one: ~/kata_live live-S5 queue, same
+# src).  Only the best checkpoints run (the paper's main comparison);
+# ft_quality and po_v6 best == last.
 #
 # Booking: no part starts unless it can finish before DEADLINE_UTC (each part
 # has a duration guard in hours).  Parts are cached: a rerun skips finished
@@ -37,10 +45,11 @@ export OMP_NUM_THREADS=2
 Q=reports/turnover_queue.log
 OUT=reports/hvp_turnover_parts
 VARIANTS="lifecycle_random_retire lifecycle_random_timing"
+HEUR_SCENARIOS="${HEUR_SCENARIOS:-$VARIANTS lifecycle}"
 HEURISTICS="${HEURISTICS:-topsis shortest_processing optimal_assignment reserve_specialist shortest_queue least_fatigued round_robin least_busy train_weakest random}"
 MLP_ANCHORS="${MLP_ANCHORS:-a2c_mlp grpo_mlp dql_mlp}"
 # key/variant pairs, run in this order
-LEARNED="${LEARNED:-ft_quality/lifecycle_random_retire po_v6/lifecycle_random_retire ft_quality/lifecycle_random_timing po_v6/lifecycle_random_timing hc_v6/lifecycle_random_retire hc_v6/lifecycle_random_timing}"
+LEARNED="${LEARNED:-ft_quality/lifecycle_random_retire po_v6/lifecycle_random_retire ft_quality/lifecycle_random_timing po_v6/lifecycle_random_timing hc_v6/lifecycle_random_retire hc_v6/lifecycle_random_timing po_v6/lifecycle hc_v6/lifecycle}"
 MAXJ="${MAXJ:-8}"
 LEARNED_GPU="${LEARNED_GPU:-1}"
 WAIT_LOG="${WAIT_LOG:-$HOME/kata_live/reports/live_s5_queue.log}"
@@ -69,7 +78,7 @@ part() {  # $1 harness key  $2 variant  $3 device (cpu|gpu index)  $4 guard hour
 
 (
   for K in $HEURISTICS; do
-    for V in $VARIANTS; do
+    for V in $HEUR_SCENARIOS; do
       while [ "$(jobs -rp | wc -l)" -ge "$MAXJ" ]; do wait -n; done
       part "$K" "$V" cpu "$H_HEUR" &
       sleep 5
