@@ -1,97 +1,66 @@
-# knowledge-aware-technician-assignment
+# Knowledge-Aware Technician Allocation: code release
 
-For the complete experiment settings of the paper, see [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
+This branch (`journal`) is the code release of the article
+*Knowledge-Aware Technician Allocation: The Long-Term Impact of Technician
+Upskilling* (Adrien Bolling, Sylvain Kubler, Marcelo Luis Ruiz-Rodríguez,
+and Yves Le Traon, SnT, University of Luxembourg). It keeps the code that the
+article uses and removes the other experiments of the project.
+
+- For the complete experiment settings of the article, see
+  [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
+- To cite this code, use [CITATION.cff](CITATION.cff).
+- The code is released under the MIT license ([LICENSE](LICENSE)).
+
+## Contents
+
+| Path | Contents |
+|---|---|
+| `src/kata/` | FactoReal, the simulator of the article (code name `kata`): the `KataEnv` Gymnasium environment, technicians, machines, reward components, and metrics |
+| `src/agents/ppo/ppo_set_transformer.py` | HTT-RL (`SetTransformerAgent`); its network is in `src/agents/networks/` |
+| `src/agents/a2c/`, `src/agents/grpo/`, `src/agents/dqn/` | the MLP anchors A2C-MLP, GRPO-MLP, and DDQN-MLP |
+| `src/agents/baselines/heuristics.py` | the rule-based, multicriteria, and optimization baselines |
+| `src/experiment/` | the training loop and the parallel environments |
+| `conf/`, `scripts/train_hydra.py` | the training launcher (Hydra) |
+| `scripts/warmstart_bc.py` | the behavior-cloning initialization of HTT-RL |
+| `run_configs/` | the training and evaluation configurations, the HTT-RL and anchor configurations, the vocabulary, and the ticket embedding |
+| `scripts/eval_human_vs_performance.py`, `scripts/merge_hvp_parts.py` | the evaluation harness and the merge of its parts |
+| `scripts/*.sh` | the queue scripts of the published training and evaluation runs |
+| `scripts/summary_scores.py`, `scripts/make_*.py`, `scripts/financial_analysis.py`, `scripts/kpi_weight_sensitivity.py`, `scripts/compare_wall_time.py` | the generators of the tables and figures of the article |
+| `tests/` | the unit and regression tests |
+
+The evaluation records (`reports/`) and the checkpoints (`checkpoints/`) are
+not in this repository. The table and figure generators read the records
+from `reports/hvp_eval_v6w/`, `reports/hvp_v6w_parts/`, and
+`reports/hvp_eval_disr/`.
+
+## Installation and tests
+
+The project uses [uv](https://docs.astral.sh/uv/) and Python 3.13.
+
+```bash
+uv sync
+uv run pytest -q
+```
 
 ## Time units
 
-Simulation time is unitless; the calibration used throughout the released
-configurations reads **1 time unit ≈ 1 minute**. Under that anchor:
+Simulation time has no unit. The article reads **1 time unit ≈ 1 minute**.
+With this anchor:
 
-| Quantity | Config value | Reads as |
+| Quantity | Value | Reads as |
 |---|---|---|
 | Technician travel delay | 15 t.u. | 15 minutes |
-| Base repair times | 10–150 t.u. | 10 min – 2.5 h |
-| Industrial-scale MTTR | 70–100 t.u. | ≈ 1.2–1.7 h |
-| Benchmark horizons | 1–2 × 10⁵ t.u. | ≈ 10 weeks – 4.5 months |
-| Very-long study | 5 × 10⁶ t.u. | ≈ 9.5 years (career-scale) |
+| Mean MTTR at the industrial scale (S3) | about 80–110 t.u. | ≈ 1.3–1.8 h |
+| Operational horizons (S1–S3) | 1–2 × 10⁵ t.u. | ≈ 10 weeks – 4.5 months |
+| Long scenarios (S4, S5) | 5 × 10⁶ t.u. | ≈ 9.5 years (career scale) |
 
 The simulator models continuous coverage (no shift patterns), so the anchor
-is indicative rather than literal. See the paper's experimental-setup section
-for the same statement in context.
+is indicative and not literal. The top axes of the scenario figures of the
+article use the same anchor.
 
-## Observation (`obs`) format in `KataEnv`
+## Observations
 
-`KataEnv` supports two observation representations, selected with
-`gym.observation_representation` in `GymEnvConfig`:
-
-- `structured` (default): numeric dictionary (legacy behavior)
-- `tokens`: fixed-shape textual tokens
-
-### Token observations (fixed shape)
-
-When `observation_representation="tokens"`, `obs` has the shape:
-
-```python
-{
-  "tokens": tuple[str, ...]  # length == token_observation_length
-}
-```
-
-The tuple length is always exactly `token_observation_length`:
-
-- if generated tokens are fewer, it is padded with `token_pad_value` (default: `"<PAD>"`)
-- if generated tokens are more, it is truncated
-
-Token size is constrained by Gym space `Text(max_length=token_max_length)`.
-
-### Observation modes
-
-Choose with `gym.observation_mode`:
-
-1. `ticket_only`
-   - Includes ticket/simulation context tokens such as:
-     - `OBS_MODE:*`
-     - `SIM_TIME:*`
-     - `HAS_OPEN_TICKET:*`
-     - `TICKET_CREATED_AT:*`
-     - `TICKET_MACHINE_ID:*`
-
-2. `broken_machine`
-   - Includes all `ticket_only` tokens, plus machine-level tokens for the broken machine:
-     - `MACHINE_ID:*`
-     - `MACHINE_BROKEN:*`
-     - `MACHINE_PROCESSING:*`
-     - `MACHINE_TOTAL_PROCESSED:*`
-     - `MACHINE_INPUT_BUFFER:*`
-     - `MACHINE_OUTPUT_BUFFER:*`
-
-3. `factory_level`
-   - Includes all `broken_machine` tokens, plus factory aggregate tokens:
-     - `FACTORY_MACHINE_COUNT:*`
-     - `FACTORY_BROKEN_COUNT:*`
-     - `FACTORY_PROCESSING_COUNT:*`
-     - `FACTORY_TOTAL_PROCESSED:*`
-     - `FACTORY_QUEUE_SIZE:*`
-
-### Optional fleet technician tokens
-
-In token mode, you can add fleet-wide technician data:
-
-- `gym.include_technician_fatigue_tokens=True`
-  - Adds `TECH_{i}_FATIGUE:*` for each technician
-- `gym.include_technician_knowledge_tokens=True`
-  - Adds `TECH_{i}_KNOWLEDGE:*` for each technician
-
-### Minimal config example
-
-```python
-GymEnvConfig(
-    observation_representation="tokens",
-    observation_mode="factory_level",
-    token_observation_length=64,
-    token_max_length=64,
-    token_pad_value="<PAD>",
-    include_technician_fatigue_tokens=True,
-    include_technician_knowledge_tokens=True,
-)
-```
+`KataEnv` supports five observation representations, selected with
+`gym.observation_representation` in `GymEnvConfig`: `structured` (default),
+`tokens`, `token_ids`, `hybrid`, and `set`. In the article, HTT-RL and the MLP
+anchors use `set`, and the baselines use `structured`.
