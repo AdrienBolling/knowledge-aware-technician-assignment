@@ -1,0 +1,475 @@
+{
+  "sigma": {
+    "repair_quality": 0.14999349556891375,
+    "fatigue_cost": 0.18354693146291792,
+    "busy_technician": 0.2767020259656517,
+    "throughput_delta": 0.30767813661648263,
+    "workload_balance": 0.11193165860670612,
+    "fleet_availability": 0.16737683819949084,
+    "knowledge_increment": 309.04622959949063,
+    "terminal_finished_products": 1938.828785270569,
+    "terminal_fleet_knowledge": 343.7725170390162
+  },
+  "calibration": {
+    "policy": "topsis",
+    "env_config": "run_configs/benchmark_suite/train_multiscale_v5.json",
+    "worlds": 16,
+    "world_seed": 90000,
+    "sim_min": 200000.0,
+    "sim_max": 350000.0,
+    "stats": {
+      "repair_quality": {
+        "n": 275928,
+        "mean": 0.37517679337633963,
+        "std": 0.14999349556891375
+      },
+      "fatigue_cost": {
+        "n": 275928,
+        "mean": -0.10951319505740177,
+        "std": 0.18354693146291792
+      },
+      "busy_technician": {
+        "n": 275928,
+        "mean": -0.08354353309559015,
+        "std": 0.2767020259656517
+      },
+      "throughput_delta": {
+        "n": 275928,
+        "mean": 0.10587544576846133,
+        "std": 0.30767813661648263
+      },
+      "workload_balance": {
+        "n": 275928,
+        "mean": -0.2059638119718744,
+        "std": 0.11193165860670612
+      },
+      "fleet_availability": {
+        "n": 275928,
+        "mean": 0.7097201768650229,
+        "std": 0.16737683819949084
+      },
+      "knowledge_increment": {
+        "n": 275928,
+        "mean": -74.07781620894006,
+        "std": 309.04622959949063
+      },
+      "terminal_finished_products": {
+        "n": 16,
+        "mean": 2016.9375,
+        "std": 1938.828785270569
+      },
+      "terminal_fleet_knowledge": {
+        "n": 16,
+        "mean": 687.0572619226479,
+        "std": 343.7725170390162
+      }
+    },
+    "per_world": [
+      {
+        "world": 90000,
+        "n_steps": 23787,
+        "n_techs": 22,
+        "n_machines": 78,
+        "sim": 296397.80962893664,
+        "wall": 91.20580673217773
+      },
+      {
+        "world": 90001,
+        "n_steps": 43448,
+        "n_techs": 27,
+        "n_machines": 91,
+        "sim": 296405.8396089315,
+        "wall": 177.36114501953125
+      },
+      {
+        "world": 90002,
+        "n_steps": 39970,
+        "n_techs": 27,
+        "n_machines": 98,
+        "sim": 325464.867671872,
+        "wall": 164.88784050941467
+      },
+      {
+        "world": 90003,
+        "n_steps": 4879,
+        "n_techs": 5,
+        "n_machines": 23,
+        "sim": 213860.0,
+        "wall": 12.615263223648071
+      },
+      {
+        "world": 90004,
+        "n_steps": 21345,
+        "n_techs": 15,
+        "n_machines": 87,
+        "sim": 263549.70109798486,
+        "wall": 74.36157965660095
+      },
+      {
+        "world": 90005,
+        "n_steps": 5451,
+        "n_techs": 3,
+        "n_machines": 21,
+        "sim": 322840.0,
+        "wall": 11.637138843536377
+      },
+      {
+        "world": 90006,
+        "n_steps": 18893,
+        "n_techs": 12,
+        "n_machines": 47,
+        "sim": 334300.79236299766,
+        "wall": 59.159695863723755
+      },
+      {
+        "world": 90007,
+        "n_steps": 9663,
+        "n_techs": 8,
+        "n_machines": 33,
+        "sim": 278341.979956751,
+        "wall": 22.025168657302856
+      },
+      {
+        "world": 90008,
+        "n_steps": 2194,
+        "n_techs": 3,
+        "n_machines": 11,
+        "sim": 202280.0,
+        "wall": 4.9106223583221436
+      },
+      {
+        "world": 90009,
+        "n_steps": 31052,
+        "n_techs": 23,
+        "n_machines": 97,
+        "sim": 278267.05970408366,
+        "wall": 113.40179514884949
+      },
+      {
+        "world": 90010,
+        "n_steps": 12445,
+        "n_techs": 11,
+        "n_machines": 62,
+        "sim": 259455.14103574323,
+        "wall": 41.68979096412659
+      },
+      {
+        "world": 90011,
+        "n_steps": 6760,
+        "n_techs": 3,
+        "n_machines": 16,
+        "sim": 343860.0,
+        "wall": 14.155506134033203
+      },
+      {
+        "world": 90012,
+        "n_steps": 4749,
+        "n_techs": 3,
+        "n_machines": 16,
+        "sim": 317841.1724280045,
+        "wall": 12.382781267166138
+      },
+      {
+        "world": 90013,
+        "n_steps": 7964,
+        "n_techs": 10,
+        "n_machines": 42,
+        "sim": 222841.60592743635,
+        "wall": 22.02912664413452
+      },
+      {
+        "world": 90014,
+        "n_steps": 24063,
+        "n_techs": 17,
+        "n_machines": 68,
+        "sim": 281746.3819025544,
+        "wall": 74.62817192077637
+      },
+      {
+        "world": 90015,
+        "n_steps": 19265,
+        "n_techs": 11,
+        "n_machines": 69,
+        "sim": 343407.6208697247,
+        "wall": 62.15631985664368
+      }
+    ],
+    "note": "std of raw v5 components pooled over all decisions of all worlds (episode-end terms: std across episodes); zero std -> 1.0",
+    "date": "2026-09-17T09:30:09+00:00"
+  },
+  "horizon_k": 3,
+  "terminal_weight": 0.0,
+  "tuning": {
+    "reference": "topsis",
+    "env_config": "run_configs/benchmark_suite/train_multiscale_v5.json",
+    "fitness": "mean relative improvement over topsis of the KPIs pooled over the worlds: total products, mean MTTR, total disruptions per 1e3 total products, total final fleet knowledge",
+    "grid": {
+      "horizon_k": [
+        1,
+        2,
+        3
+      ],
+      "terminal_weight": [
+        0.0,
+        0.5,
+        1.0,
+        2.0
+      ]
+    },
+    "stage1_worlds": [
+      70000,
+      70001,
+      70002,
+      70003,
+      70004,
+      70005,
+      70006,
+      70007,
+      70008,
+      70009,
+      70010,
+      70011
+    ],
+    "stage2_worlds": [
+      80000,
+      80001,
+      80002,
+      80003,
+      80004,
+      80005,
+      80006,
+      80007,
+      80008,
+      80009,
+      80010,
+      80011,
+      80012,
+      80013,
+      80014,
+      80015
+    ],
+    "sim_min": 200000.0,
+    "sim_max": 350000.0,
+    "stage1": [
+      {
+        "kind": "mpc",
+        "horizon_k": 1,
+        "terminal_weight": 2.0,
+        "fitness": 0.01814809699743776,
+        "fitness_per_world": 0.026717010310120488,
+        "products": 2817.0833333333335,
+        "mttr": 117.22186999916028,
+        "disr": 1847.6610103356568,
+        "know": 47062.25233364016,
+        "planner_ms": 2.0998939871788025
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 3,
+        "terminal_weight": 0.0,
+        "fitness": 0.01476424867796755,
+        "fitness_per_world": 0.028629682442121728,
+        "products": 2844.0833333333335,
+        "mttr": 118.50039075042203,
+        "disr": 1739.5844626993319,
+        "know": 46350.33438764985,
+        "planner_ms": 3.4600598737597466
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 2,
+        "terminal_weight": 1.0,
+        "fitness": 0.01426888861089813,
+        "fitness_per_world": 0.028930467444245354,
+        "products": 2791.25,
+        "mttr": 115.98850670938009,
+        "disr": 1817.4465458770808,
+        "know": 46773.53363601089,
+        "planner_ms": 2.6369919069111347
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 3,
+        "terminal_weight": 1.0,
+        "fitness": 0.013451011938356822,
+        "fitness_per_world": 0.007956750723242442,
+        "products": 2814.5833333333335,
+        "mttr": 117.70279362435802,
+        "disr": 1968.6971058713864,
+        "know": 46414.571824180464,
+        "planner_ms": 3.7834495306015015
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 3,
+        "terminal_weight": 0.5,
+        "fitness": 0.013385778546692467,
+        "fitness_per_world": 0.02507892734068613,
+        "products": 2810.25,
+        "mttr": 117.92228465160589,
+        "disr": 1674.9609013015927,
+        "know": 46524.54117018972,
+        "planner_ms": 3.8206265307962894
+      },
+      {
+        "kind": "greedy",
+        "horizon_k": 0,
+        "terminal_weight": 0.0,
+        "fitness": 0.009821224202285839,
+        "fitness_per_world": 0.0296963294227712,
+        "products": 2758.0833333333335,
+        "mttr": 118.77271807291966,
+        "disr": 1738.230160872941,
+        "know": 48487.23311472163,
+        "planner_ms": 0.9011570364236832
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 1,
+        "terminal_weight": 0.5,
+        "fitness": 0.00843302429070462,
+        "fitness_per_world": 0.026611740713088524,
+        "products": 2805.3333333333335,
+        "mttr": 119.41788851962338,
+        "disr": 1731.9821410765107,
+        "know": 46957.256276483306,
+        "planner_ms": 1.951531507074833
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 2,
+        "terminal_weight": 2.0,
+        "fitness": 0.005785822807580433,
+        "fitness_per_world": 0.02285126496269399,
+        "products": 2776.75,
+        "mttr": 117.11844262607337,
+        "disr": 1825.6211828376154,
+        "know": 46704.46762667904,
+        "planner_ms": 3.0931434594094753
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 1,
+        "terminal_weight": 1.0,
+        "fitness": 0.0035388387537978166,
+        "fitness_per_world": -0.0849317709548268,
+        "products": 2763.4166666666665,
+        "mttr": 118.31073990385532,
+        "disr": 5071.1707222076375,
+        "know": 46822.31841766553,
+        "planner_ms": 2.087182365357876
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 3,
+        "terminal_weight": 2.0,
+        "fitness": 0.003313443646683993,
+        "fitness_per_world": 0.020080481369634612,
+        "products": 2794.25,
+        "mttr": 120.24062417649316,
+        "disr": 1645.2817742019945,
+        "know": 46372.17984497265,
+        "planner_ms": 4.26100380718708
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 2,
+        "terminal_weight": 0.0,
+        "fitness": 0.0019306366599826912,
+        "fitness_per_world": 0.002666096058287324,
+        "products": 2761.0,
+        "mttr": 117.98750013123971,
+        "disr": 2021.7196753304033,
+        "know": 46657.67518202044,
+        "planner_ms": 2.5710398331284523
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 2,
+        "terminal_weight": 0.5,
+        "fitness": 0.001274807530833518,
+        "fitness_per_world": -0.04475998291620276,
+        "products": 2808.4166666666665,
+        "mttr": 122.85375184054813,
+        "disr": 3135.4593015284645,
+        "know": 46433.70373441116,
+        "planner_ms": 3.0700070783495903
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 1,
+        "terminal_weight": 0.0,
+        "fitness": -0.013388263049983983,
+        "fitness_per_world": -0.019984276575358634,
+        "products": 2715.0,
+        "mttr": 120.02300946814908,
+        "disr": 2109.9448977686607,
+        "know": 46203.22340525641,
+        "planner_ms": 1.7908308655023575
+      }
+    ],
+    "stage2": [
+      {
+        "kind": "mpc",
+        "horizon_k": 3,
+        "terminal_weight": 0.0,
+        "fitness": 0.05908816861740761,
+        "fitness_per_world": -0.02786274691136084,
+        "products": 1758.5625,
+        "mttr": 128.6290211527427,
+        "disr": 23978.209893376294,
+        "know": 39614.023639252584,
+        "planner_ms": 3.528699278831482
+      },
+      {
+        "kind": "greedy",
+        "horizon_k": 0,
+        "terminal_weight": 0.0,
+        "fitness": 0.04955481830950134,
+        "fitness_per_world": 0.02117617536419985,
+        "products": 1732.0625,
+        "mttr": 130.20411374027472,
+        "disr": 19478.256012298218,
+        "know": 40529.19504090681,
+        "planner_ms": 0.7697329856455326
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 1,
+        "terminal_weight": 2.0,
+        "fitness": 0.04655241487549033,
+        "fitness_per_world": 0.004955956820213658,
+        "products": 1729.75,
+        "mttr": 128.86286946046448,
+        "disr": 19211.368951718512,
+        "know": 39701.01389026346,
+        "planner_ms": 2.0533930510282516
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 3,
+        "terminal_weight": 1.0,
+        "fitness": 0.04510946252836061,
+        "fitness_per_world": -0.17345028438300916,
+        "products": 1715.75,
+        "mttr": 128.37555093310937,
+        "disr": 26012.478309123024,
+        "know": 39501.43229463671,
+        "planner_ms": 3.818136639893055
+      },
+      {
+        "kind": "mpc",
+        "horizon_k": 2,
+        "terminal_weight": 1.0,
+        "fitness": 0.036217650674958454,
+        "fitness_per_world": -0.01907465514486481,
+        "products": 1687.75,
+        "mttr": 128.58681650596907,
+        "disr": 18094.843767468377,
+        "know": 39535.84731289307,
+        "planner_ms": 3.3075944520533085
+      }
+    ],
+    "date": "2026-09-17T10:18:46+00:00"
+  }
+}
