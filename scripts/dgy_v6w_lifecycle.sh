@@ -7,9 +7,7 @@
 # reports/hvp_eval_v6w/lifecycle.  The scenario profile (n_eps=1,
 # sim=5M, steps=1.5M) lives in eval_human_vs_performance.py; the
 # 10-event fleet/park mutation schedule in
-# run_configs/benchmark_suite/lifecycle.json.  Parts are idempotent —
-# the serval-only checkpoints (v3/v4/gaefix/anchors) join the same tree
-# when serval-paris returns.
+# run_configs/benchmark_suite/lifecycle.json.  Parts are idempotent.
 #
 # uv --no-sync everywhere (dgy torch downgrade); GPU 0; ≤6 concurrent
 # parts.
@@ -24,7 +22,7 @@ Q=reports/v6w_lifecycle_queue.log
 SEED=20260722
 OUTROOT=reports/hvp_eval_v6w
 PARTS=reports/hvp_v6w_parts
-AGENTS="hc_v6 hc_v6_last topsis empirical_topsis empirical_spt shortest_processing optimal_assignment batch_milp greedy_reward shortest_queue least_busy least_fatigued round_robin random train_weakest reserve_specialist"
+AGENTS="hc_v6 hc_v6_last topsis shortest_processing optimal_assignment greedy_reward shortest_queue least_busy least_fatigued round_robin random train_weakest reserve_specialist"
 say() { echo "$(date -u +%FT%TZ) [v6w-lc] $*" | tee -a "$Q"; }
 mkdir -p reports
 

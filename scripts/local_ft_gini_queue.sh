@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # ft_gini fine-tune queue on the LOCAL machine (gourmetdesk, RTX 4080)
-# — same variant/protocol as scripts/dgy_ft_gini_queue.sh (see there for
-# motivation and success criteria), run locally because the 4080 was
-# free while dgy's GPUs were occupied.  Parts land in the local
+# — knowledge_gini lever (coefficient 5.0), run locally because the 4080
+# was free while dgy's GPUs were occupied.  Parts land in the local
 # reports/hvp_v6w_parts tree and ship to dgy for the canonical merge
 # like the ft lifecycle parts did.
 set -u

@@ -2,7 +2,7 @@
 # Disruption-instrumented benchmark generation on dgy — run inside zellij.
 #
 # Purpose (user request 2026-09-02): re-run the summary-table roster
-# (14 deployable agents x 5 scenarios) with the per-type disruption
+# (11 deployable agents x 5 scenarios) with the per-type disruption
 # metrics (disruptions_{injury,exhaustion,vacation} counts + cumulative
 # held time, episode totals AND step trajectories).
 #
@@ -24,12 +24,12 @@ Q=reports/disr_bench_queue.log
 EVAL_SEED=20260722
 PARTS=reports/hvp_disr_parts
 OUTROOT=reports/hvp_eval_disr
-KEYS="hc_v6 ft_quality empirical_topsis empirical_spt batch_milp shortest_queue least_fatigued round_robin least_busy train_weakest random a2c_mlp grpo_mlp dql_mlp"
+KEYS="hc_v6 ft_quality shortest_queue least_fatigued round_robin least_busy train_weakest random a2c_mlp grpo_mlp dql_mlp"
 SCENARIOS="very_long lifecycle massive_scale baseline small_scale"
 say() { echo "$(date -u +%FT%TZ) [disr] $*" | tee -a "$Q"; }
 mkdir -p reports "$PARTS"
 
-say "DISR BENCH QUEUE ARMED (pid $$, 14 agents x 5 scenarios, GPUs 0-2)"
+say "DISR BENCH QUEUE ARMED (pid $$, 11 agents x 5 scenarios, GPUs 0-2)"
 
 # ---------- smoke gate: instrumentation present end-to-end ----------
 SMOKE="reports/disr_smoke_part"

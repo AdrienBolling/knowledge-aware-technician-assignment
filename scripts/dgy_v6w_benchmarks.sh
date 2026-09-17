@@ -5,9 +5,7 @@
 # First generation under KATA-1 (travel_time 15 + failure-wise
 # knowledge live).  NEW out-root — do NOT merge into hvp_eval_v4
 # (different world).  Roster = hc_v6 best/last + every checkpoint-free
-# baseline.  The v3/v4/gaefix/anchor checkpoints live only on
-# serval-paris (down) — re-evaluate them into the same parts tree when
-# it returns; parts are idempotent.
+# baseline.  Parts are idempotent.
 #
 # uv --no-sync everywhere (dgy torch downgrade); GPU 0; ≤6 concurrent
 # parts.
@@ -22,7 +20,7 @@ Q=reports/v6w_bench_queue.log
 SEED=20260722
 OUTROOT=reports/hvp_eval_v6w
 PARTS=reports/hvp_v6w_parts
-AGENTS="hc_v6 hc_v6_last topsis empirical_topsis empirical_spt shortest_processing optimal_assignment batch_milp greedy_reward shortest_queue least_busy least_fatigued round_robin random train_weakest reserve_specialist"
+AGENTS="hc_v6 hc_v6_last topsis shortest_processing optimal_assignment greedy_reward shortest_queue least_busy least_fatigued round_robin random train_weakest reserve_specialist"
 SCENARIOS="baseline small_scale massive_scale very_long"
 say() { echo "$(date -u +%FT%TZ) [v6w] $*" | tee -a "$Q"; }
 mkdir -p reports
