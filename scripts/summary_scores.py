@@ -85,14 +85,14 @@ ROW_LABELS = [('Small', 'S1 -- Small'), ('Base', 'S2 -- Baseline'), ('Indust.', 
 
 
 def _mark(v, vals, gray=False):
-    """Bold the row minimum, underline the second-smallest distinct value."""
+    """Bold the row minimum, set the second-smallest distinct value in italics."""
     uniq = sorted(set(round(x, 1) for x in vals))
     r = round(v, 1)
     cell = f'{r:.1f}'
     if uniq and r == uniq[0]:
         cell = r'\textbf{' + cell + '}'
     elif len(uniq) > 1 and r == uniq[1]:
-        cell = r'\underline{' + cell + '}'
+        cell = r'\textit{' + cell + '}'
     return r'\textcolor{gray}{' + cell + '}' if gray else cell
 
 
@@ -117,7 +117,7 @@ def emit_tex(tables):
         for c in cols:
             x = f'{r[c]:.1f}'; v = round(r[c], 1); o = rank[c]
             if v == o[0]: x = r'\textbf{' + x + '}'
-            elif len(o) > 1 and v == o[1]: x = r'\underline{' + x + '}'
+            elif len(o) > 1 and v == o[1]: x = r'\textit{' + x + '}'
             cells.append(x)
         print(f'{TEX[a]} & ' + ' & '.join(cells) + r' \\')
 
@@ -268,7 +268,7 @@ def main():
             lab = cells[0]
             key = next((k for k, v in TEX.items() if v == lab), None)
             assert key, lab
-            pub[key] = [float(re.sub(r'\\(?:textbf|underline)\{([^}]*)\}', r'\1', c)) for c in cells[1:]]
+            pub[key] = [float(re.sub(r'\\(?:textbf|underline|textit)\{([^}]*)\}', r'\1', c)) for c in cells[1:]]
         t = tables[PAPER_VARIANT]
         dev = pd.DataFrame({k: np.array(v) - t.loc[k, ['Small', 'Base', 'Indust.', 'V-long', 'Lifec.', 'Overall']].to_numpy()
                             for k, v in pub.items()}).T
