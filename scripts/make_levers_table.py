@@ -80,7 +80,7 @@ for i, (scenario, tag, name) in enumerate(SCEN):
             if txt == best_s:
                 txt = r'\textbf{' + txt + '}'
             elif second_s is not None and txt == second_s:
-                txt = r'\underline{' + txt + '}'
+                txt = r'\textit{' + txt + '}'
             cells.append(txt)
         first = (r'\multirow{4}{*}{\makecell[l]{' + tag + r'\\' + name + '}}'
                  if j == 0 else '')

@@ -18,7 +18,7 @@ KPIs per scenario, episode-averaged where the scenario has more than one episode
          means -- the summary-score metric)
   Prod.  final cumulative finished products
 
-Best value per row in bold, second best underlined, as everywhere else in the
+Best value per row in bold, second best in italics, as everywhere else in the
 paper.  Ties at display precision produce several marks, as they do in the
 other tables.
 """
@@ -133,7 +133,7 @@ def render(name, spec):
                 if t == best:
                     t = r'\textbf{' + t + '}'
                 elif second is not None and t == second:
-                    t = r'\underline{' + t + '}'
+                    t = r'\textit{' + t + '}'
                 cells.append(t)
             first = (r'\multirow{%d}{*}{\makecell[l]{%s\\%s}}' % (len(kpis), tag, label)
                      if j == 0 else '')

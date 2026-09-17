@@ -231,7 +231,7 @@ def profit_area_table(counts, roster, out: Path, suffix: str) -> pd.DataFrame:
             if round(v, 1) == uniq[0]:
                 x = r"\textbf{" + x + "}"
             elif len(uniq) > 1 and round(v, 1) == uniq[1]:
-                x = r"\underline{" + x + "}"
+                x = r"\textit{" + x + "}"
             cells.append(x)
         lines.append(f"{sc} & " + " & ".join(cells) + r" \\")
     lines += [r"\bottomrule", r"\end{tabular}"]

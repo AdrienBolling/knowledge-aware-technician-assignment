@@ -75,7 +75,7 @@ for scen, sname in SCEN:
             if not np.isfinite(v): cells.append('---'); continue
             txt = fmt.format(v / scale)
             if d and txt == best_s: txt = r'\textbf{' + txt + '}'
-            elif d and second_s is not None and txt == second_s: txt = r'\underline{' + txt + '}'
+            elif d and second_s is not None and txt == second_s: txt = r'\textit{' + txt + '}'
             cells.append(txt)
         first = r'\multirow{%d}{*}{\makecell[l]{%s}}' % (len(ROWS), sname.replace(' ', r'\\', 1)) if i == 0 else ''
         lines.append(f'{first} & {label} & ' + ' & '.join(cells) + r' \\')
