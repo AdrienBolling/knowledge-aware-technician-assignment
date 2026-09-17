@@ -1,0 +1,51 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite it with the metadata from this file."
+type: software
+title: "Knowledge-Aware Technician Allocation: The Long-Term Impact of Technician Upskilling (code)"
+version: 1.0.0
+license: MIT
+repository-code: "https://github.com/AdrienBolling/knowledge-aware-technician-assignment"
+authors:
+  - given-names: Adrien
+    family-names: Bolling
+    affiliation: "Interdisciplinary Centre for Security, Reliability and Trust (SnT), University of Luxembourg"
+  - given-names: Sylvain
+    family-names: Kubler
+    affiliation: "Interdisciplinary Centre for Security, Reliability and Trust (SnT), University of Luxembourg"
+  - given-names: Marcelo Luis
+    family-names: Ruiz-Rodríguez
+    affiliation: "Interdisciplinary Centre for Security, Reliability and Trust (SnT), University of Luxembourg"
+  - given-names: Yves
+    family-names: Le Traon
+    affiliation: "Interdisciplinary Centre for Security, Reliability and Trust (SnT), University of Luxembourg"
+abstract: >-
+  Technician allocation in industrial maintenance is a domain-specific Human
+  Resource Allocation Problem (HRAP). Yet most existing approaches treat
+  worker skills as static, overlooking how skill development and fatigue
+  shape long-term operational performance. We extend HRAP to a sequential
+  Reinforcement Learning (RL) setting in which technician knowledge and
+  fatigue evolve endogenously through allocation decisions. We introduce
+  FactoReal, a simulator that captures these workforce dynamics, and Hybrid
+  Token Transformer RL (HTT-RL), a set-based Transformer policy combining
+  categorical embeddings with type-specific numerical encodings and
+  supporting varying numbers of technicians and machines. We benchmark
+  HTT-RL against thirteen baselines (rule-based, multicriteria,
+  optimization-based, and RL-based) across five scenarios, from 2
+  technicians and 5 machines to 30 technicians and 97 machines. In the
+  lifecycle scenario, a career-length stress test that retires the most
+  knowledgeable technicians, HTT-RL and its repair-quality fine-tune obtain
+  the two best summary scores of the compared policies on a single episode.
+  The fine-tune finishes 5.3% more products than the most productive
+  baselines, with the fewest disruptions per product; HTT-RL finishes 1.5%
+  more with the most knowledgeable fleet, but with more disruptions per
+  product than Topsis. Their production-only counterpart produces 16–20%
+  less and falls below random assignment. These results show that
+  human-centric objectives can jointly improve workforce sustainability and
+  long-term operational performance.
+keywords:
+  - reinforcement learning
+  - industrial maintenance
+  - technician dispatching
+  - state representation learning
+  - continuous-feature encoding
+  - manufacturing simulation
