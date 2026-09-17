@@ -57,7 +57,10 @@ TEX = {  # key -> label in tab:results_dist_full
     'dql_mlp_last': 'DDQN-MLP-last (anchor)', 'grpo_mlp': 'GRPO-MLP (anchor)',
     'grpo_mlp_last': 'GRPO-MLP-last (anchor)', 'least_busy': r'\textsc{LeastBusy}',
     'a2c_mlp_last': 'A2C-MLP-last (anchor)', 'train_weakest': r'\textsc{TrainWeakest}',
-    'evo_topsis_inf': r'\textsc{Evo-Topsis}'}
+    'evo_topsis_inf': r'\textsc{Evo-Topsis}',
+    # Non-RL sequential baselines (agents.baselines.sequential); evaluated
+    # in their own tree (reports/seqbase), see scripts/seqbase_compare.py.
+    'rolling_mpc': r'\textsc{RollingMpc}', 'greedy_train_reward': r'\textsc{GreedyTrain}'}
 PLAIN = {k: (re.sub(r'\\textsubscript\{([^}]*)\}', r'_\1', re.sub(r'\\textsc\{([^}]*)\}', r'\1', v))
              .replace(' (ours)', '').replace(' (anchor)', ''))
          for k, v in TEX.items()}

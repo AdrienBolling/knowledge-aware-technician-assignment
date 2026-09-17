@@ -91,6 +91,9 @@ AGENT_LABELS = {
     "reserve_specialist": "ReserveSpec",
     "train_weakest": "TrainWeakest",
     "greedy_reward": "GreedyReward",
+    # Non-RL sequential baselines on the human-state model (v5 reward).
+    "rolling_mpc": "RollingMPC",
+    "greedy_train_reward": "GreedyTrainReward",
 }
 AGENT_ORDER = list(AGENT_LABELS)
 
