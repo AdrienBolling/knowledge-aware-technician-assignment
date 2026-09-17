@@ -18,11 +18,11 @@ Usage (from the repo root)::
 
     uv run python scripts/warmstart_bc.py \
         --episodes 30 --out checkpoints/bc_topsis/set_transformer_bc.pt
-    uv run python scripts/train_hc_improved.py \
-        --init-checkpoint checkpoints/bc_topsis/set_transformer_bc.pt ...
+    uv run python scripts/train_hydra.py \
+        init_checkpoint=checkpoints/bc_topsis/set_transformer_bc.pt ...
 
 The checkpoint is written with the agent's own ``save`` so the trainer's
-``--init-checkpoint`` path loads it like any other checkpoint (vocab
+``init_checkpoint`` option loads it like any other checkpoint (vocab
 embedded, architecture recorded in ``improvements``).
 """
 
@@ -246,8 +246,8 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     student.save(out)
     print(f"=== done: val agreement {final:.1%} -> {out} ===")
-    print(f"next: uv run python scripts/train_hc_improved.py "
-          f"--init-checkpoint {out} ...")
+    print(f"next: uv run python scripts/train_hydra.py "
+          f"init_checkpoint={out} ...")
     return 0
 
 

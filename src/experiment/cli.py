@@ -4,24 +4,24 @@ Usage
 -----
 ::
 
-    # Train a GRPO agent
+    # Train an agent
     kata-experiment \\
-        --env run_configs/complex_factory.json \\
-        --agent run_configs/agents/grpo.json \\
-        --experiment run_configs/experiments/default.json
+        --env <env.json> \\
+        --agent <agent.json> \\
+        --experiment <experiment.json>
 
     # Evaluate a checkpoint
     kata-experiment \\
-        --env run_configs/complex_factory.json \\
-        --agent run_configs/agents/grpo.json \\
-        --experiment run_configs/experiments/default.json \\
-        --mode eval --checkpoint checkpoints/grpo_best.pt
+        --env <env.json> \\
+        --agent <agent.json> \\
+        --experiment <experiment.json> \\
+        --mode eval --checkpoint <checkpoint.pt>
 
     # Train + full evaluation (separate W&B runs)
     kata-experiment \\
-        --env run_configs/complex_factory.json \\
-        --agent run_configs/agents/grpo.json \\
-        --experiment run_configs/experiments/default.json \\
+        --env <env.json> \\
+        --agent <agent.json> \\
+        --experiment <experiment.json> \\
         --mode evaluated_training
 """
 

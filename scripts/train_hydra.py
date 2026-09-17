@@ -1,7 +1,7 @@
 """Hydra-composed training launcher.
 
-A thin composition front-end over the exact same training stack as
-``scripts/train_hc_improved.py``: Hydra assembles the configuration
+A thin composition front-end over the training stack of
+``src/experiment``: Hydra assembles the configuration
 (groups ``env``/``agent`` are symlinks to the canonical JSON configs, so
 there is a single source of truth), the pydantic models still validate
 everything, and ``Experiment`` runs unchanged.  Nothing under ``src/``

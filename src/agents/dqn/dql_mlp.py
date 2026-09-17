@@ -18,7 +18,8 @@ no n-step returns, no noisy layers.  Two of those omissions are lessons
 rather than taste:
 
 ``NoisyLinear`` is the D2 trap
-    :class:`agents.dqn.rainbow.NoisyLinear` (rainbow.py:74-81) samples
+    The ``NoisyLinear`` layer of the legacy Rainbow agent (not part of
+    this release) samples
     its perturbation whenever ``module.training`` is set, so a
     benchmark forward on a net left in train mode is stochastic even
     under ``deterministic=True``.  Plain ``nn.Linear`` heads plus an
@@ -26,7 +27,7 @@ rather than taste:
     acting actually deterministic.
 
 Gradient cadence is per env step, not per episode
-    :class:`agents.dqn.rainbow.RainbowDQNAgent` only learns inside
+    The legacy Rainbow agent only learns inside
     :meth:`update`, and the serial training loop calls ``update()``
     once per episode (runner.py:1489) — a 600-episode run therefore
     gave Rainbow ~600 SGD steps in total.  Here the optimisation lives

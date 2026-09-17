@@ -9,10 +9,9 @@ generating a saved knowledge grid that ``GymTechnician`` will load at every
 ``env.reset()`` via the ``initial_knowledge_grid_path`` field.
 
 The build pipeline is deterministic: given a profile spec and a seed, the
-output bytes are reproducible across machines.  The companion notebook
-``notebooks/build_technician_profiles.ipynb`` simply imports this module
-and calls :func:`build_default_profiles` --- the same function the CI uses
-to regenerate the bundled artefacts when the spec changes.
+output bytes are reproducible across machines.  Call
+:func:`build_default_profiles` to regenerate the bundled artefacts when
+the spec changes.
 """
 
 from __future__ import annotations
@@ -293,9 +292,8 @@ def build_default_profiles(
 ) -> list[Path]:
     """Build all bundled profiles and write ``.npz`` + sidecar ``profiles.txt``.
 
-    Returns the list of paths written.  Designed to be called both from
-    the companion notebook and from a CI smoke job that regenerates
-    the bundled artefacts after a spec change.
+    Returns the list of paths written.  Call it to regenerate the
+    bundled artefacts after a spec change.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

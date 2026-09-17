@@ -271,8 +271,7 @@ class TopsisAgent(Agent):
 
     def _repair_criterion(self) -> np.ndarray | None:
         """Per-technician repair-time criterion (simulator ground-truth
-        estimate; the empirical variant overrides this with learned
-        estimates)."""
+        estimate)."""
         try:
             return np.asarray(self._env.expected_repair_times(), dtype=np.float64)
         except Exception:

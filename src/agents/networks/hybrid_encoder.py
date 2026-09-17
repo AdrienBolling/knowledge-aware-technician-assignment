@@ -70,7 +70,7 @@ class HybridTokenEncoder(nn.Module):
         Inputs to :class:`FourierFeatures` are divided by this scale
         before the cos/sin pass.  Setting it to your env's
         ``max_sim_time`` keeps the random-frequency NTK in a useful
-        range.  Defaults to 200000 to match ``factory_long.json``.
+        range.  Defaults to 200000.
     ratio_bin_edges / count_bin_edges_log1p:
         Override the default PLE binning if your scalar ranges differ.
     n_time2vec_freqs / n_fourier_freqs:

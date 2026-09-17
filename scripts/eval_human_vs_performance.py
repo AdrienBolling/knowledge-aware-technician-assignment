@@ -1,12 +1,12 @@
-"""Benchmark the human vs performance SetTransformer checkpoints.
+"""Benchmark the trained checkpoints and the heuristic baselines.
 
-Runs both trained checkpoints plus every heuristic baseline on one
+Runs the trained checkpoints plus every heuristic baseline on one
 benchmark-suite scenario, recording *time-stamped* per-step series so the
 results can be sliced into within-episode horizon windows (short /
-medium / long) afterwards.  Modeled on the per-scenario notebooks in
-``benchmarks/`` (same fixed-eval-scenario construction, same seeds), but
-extended with sim-time stamps, cumulative throughput, availability, and
-fleet knowledge / fatigue series at every decision step.
+medium / long) afterwards.  Each scenario uses one fixed evaluation
+layout and fixed seeds; the per-step series carry sim-time stamps,
+cumulative throughput, availability, and fleet knowledge / fatigue at
+every decision step.
 
 Usage (from the repo root)::
 
@@ -134,7 +134,7 @@ MLP_CHECKPOINTS = {
 
 AGENT_CONFIG = Path("run_configs/agents/set_transformer.json")
 
-# Horizon profiles mirror benchmarks/_generate.py (Part 1 numbers).
+# Horizon profiles (episodes, horizon, decision cap) per scenario.
 SCENARIOS = {
     "baseline": dict(
         cfg="run_configs/benchmark_suite/baseline.json",
@@ -675,8 +675,8 @@ def main() -> int:
     ap.add_argument("--out-root", default="reports/hvp_eval")
     ap.add_argument("--extra-machine-templates", default=None,
                     help="JSON file of additional machine templates to "
-                         "register at runtime (e.g. the realistic-lifespan "
-                         "park); does not touch the packaged template file.")
+                         "register at runtime; does not touch the packaged "
+                         "template file.")
     args = ap.parse_args()
     if args.extra_machine_templates:
         from kata.EntityFactories.machine_factory import register_template

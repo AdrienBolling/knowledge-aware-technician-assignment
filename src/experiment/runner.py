@@ -11,9 +11,9 @@ Usage
 -----
 >>> from experiment import Experiment
 >>> exp = Experiment.from_configs(
-...     env_config="run_configs/complex_factory.json",
-...     agent_config="run_configs/agents/grpo.json",
-...     experiment_config="run_configs/experiments/default.json",
+...     env_config="<env.json>",
+...     agent_config="<agent.json>",
+...     experiment_config="<experiment.json>",
 ... )
 >>> exp.run()
 """

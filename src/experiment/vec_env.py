@@ -4,10 +4,7 @@ Provides picklable worker factories so ``gymnasium.vector.AsyncVectorEnv``
 can rebuild a fully-independent simulator stack (config, scenario
 sampler, tokenizer, SimPy environment) inside each subprocess.  Nothing
 is shared between workers except the immutable JSON config and the
-frozen vocabulary, so SimPy state cannot collide across environments;
-``scripts/sanity_vec_env.py`` verifies this empirically (solo-vs-vector
-bit-identical episodes over the first *and* the autoreset episode,
-seed independence, wall-clock scaling).
+frozen vocabulary, so SimPy state cannot collide across environments.
 
 Reproducibility holds per worker process: every episode of a worker —
 including the ones started by autoreset — is a pure function of that

@@ -314,8 +314,8 @@ class TestRatio:
         Epoch 0 evaluates the collecting policy on the single minibatch,
         so its ratio is exactly 1; every later epoch sees weights that
         the previous epoch moved.  The legacy agent recomputed
-        ``old_log_probs`` from the live network inside the same forward
-        (grpo.py:310-321), which pins every epoch's deviation at 0.
+        ``old_log_probs`` from the live network inside the same forward,
+        which pins every epoch's deviation at 0.
         """
         agent = _make_agent(
             group_size=4, n_epochs=3, minibatch_size=4096, lr=0.05
@@ -565,7 +565,7 @@ class TestShippedConfig:
         return data["params"]
 
     def test_config_pins_no_env_derived_sizes(self):
-        """No ``vocab_size`` pin (the rainbow_dqn.json:2 lesson) and no
+        """No ``vocab_size`` pin (the legacy-config lesson) and no
         slot caps: the runner injects those from the env config."""
         params = self._params()
         for key in (

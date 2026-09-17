@@ -1086,8 +1086,9 @@ class SetTransformerAgent(PPOAgentInfraMixin, Agent):
         """Return the vocabulary stored alongside a checkpoint, if any.
 
         Eval-time callers can use this to build a tokenizer that
-        matches the training-time id mapping exactly — see the
-        ``benchmark_agent.ipynb`` setup for a usage example.
+        matches the training-time id mapping exactly — see
+        ``load_set_tokenizer`` in ``scripts/eval_human_vs_performance.py``
+        for a usage example.
         """
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
         v = ckpt.get("vocab") if isinstance(ckpt, dict) else None

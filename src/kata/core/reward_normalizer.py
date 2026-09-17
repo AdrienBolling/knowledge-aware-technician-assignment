@@ -23,8 +23,7 @@ Lifecycle
   instance (see ``env.reset()`` — the normaliser is *not* reset).
 * Eval-time freezing is the consumer's responsibility.  Call
   :meth:`freeze` after a short warmup if you want every component to
-  be normalised against the *warmup-time* statistics.  This is what
-  the benchmark notebooks do.
+  be normalised against the *warmup-time* statistics.
 """
 
 from __future__ import annotations

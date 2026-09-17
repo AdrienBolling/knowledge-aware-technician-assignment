@@ -19,14 +19,13 @@ adaptation used here is:
 * the policy is then improved with the PPO clipped surrogate over
   ``n_epochs`` passes of minibatches.
 
-Why this is a rewrite rather than a patch of ``agents/grpo/grpo.py``
--------------------------------------------------------------------
+Why this is a rewrite rather than a patch of the legacy GRPO agent
+-----------------------------------------------------------------
 
-The legacy :class:`~agents.grpo.grpo.GRPOAgent` is kept untouched for
-provenance but is not usable as a baseline; it has four defects that are
-designed out here:
+The legacy token-based GRPO agent (not part of this release) is not
+usable as a baseline; it has four defects that are designed out here:
 
-1. **The ratio is identically 1** (``grpo.py:310-321``): ``old_log_probs``
+1. **The ratio is identically 1**: ``old_log_probs``
    are computed from the *same* network, in the same call, immediately
    before ``log_probs`` — no weight update separates them, so
    ``exp(new - old) == 1`` for every sample and the clipped surrogate
@@ -35,7 +34,7 @@ designed out here:
    forward, *before* the K-epoch loop, so from the second minibatch
    onwards the ratio genuinely measures policy movement (pinned by
    ``tests/test_grpo_mlp.py::test_ratio_moves_across_epochs``).
-2. **Advantages were per-step reward z-scores** (``grpo.py:303-307``):
+2. **Advantages were per-step reward z-scores**:
    normalising the raw per-step reward stream is neither group-relative
    nor a return — it discards everything that happens after the step.
    Here the z-score is taken over *episode outcomes*, which is what
@@ -134,7 +133,7 @@ class GRPOMLPAgent(PPOAgentInfraMixin, Agent):
         (``runner.py:363``) — the flattener keys one-hots off the vocab
         *mapping*, so this is only cross-checked, never used to size a
         table.  Deliberately absent from the shipped JSON config: a
-        pinned ``vocab_size`` is what left ``rainbow_dqn.json`` at 128
+        pinned ``vocab_size`` is what left a legacy agent config at 128
         against a 152-token vocab.
     hidden_sizes:
         Widths of the MLP trunk (Linear-LayerNorm-ReLU per entry).
