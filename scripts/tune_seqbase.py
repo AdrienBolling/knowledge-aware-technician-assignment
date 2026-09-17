@@ -13,9 +13,12 @@ Protocol (the same as ``scripts/tune_evo_topsis.py``):
   benchmark seeds (eval seed 20260722);
 * common random numbers: every candidate runs on the same worlds, through
   the benchmark harness's own ``run_episode`` (KPI parity);
-* fitness = mean over worlds of the mean signed relative improvement over
-  the Topsis rule on products (up), MTTR (down), disruptions per 10^3
-  products (down) and final fleet knowledge (up);
+* fitness = mean signed relative improvement over the Topsis rule on four
+  KPIs POOLED over the worlds: total products (up), mean MTTR (down),
+  total disruptions per 10^3 total products (down) and total final fleet
+  knowledge (up).  Pooling keeps a world with a collapsed line (a few
+  products, so a huge disruption ratio) from dominating the score; the
+  per-world mean of ``scripts/tune_evo_topsis.py`` is also recorded;
 * stage 1 scores the full grid on ``--worlds`` worlds; stage 2 re-runs the
   ``--top`` best grid points, the greedy (K=0, no terminal value) and the
   reference on ``--val-worlds`` fresh worlds; the best stage-2 grid point
@@ -98,8 +101,29 @@ def evaluate(task: tuple) -> dict:
 
 
 def fitness(cand: list[dict], ref: list[dict]) -> float:
-    """Mean over worlds of the mean signed relative improvement over the
-    reference on the four headline KPIs (higher is better)."""
+    """Mean signed relative improvement over the reference on the four
+    headline KPIs pooled over the worlds (higher is better)."""
+    for c, r in zip(cand, ref):
+        assert c["world"] == r["world"]
+
+    def pooled(rows):
+        prod = sum(x["products"] for x in rows)
+        disr = sum(x["disr"] * x["products"] / 1000.0 for x in rows)
+        return {"products": prod, "mttr": float(np.mean([x["mttr"] for x in rows])),
+                "disr": disr / max(prod, 1.0) * 1000.0, "know": sum(x["know"] for x in rows)}
+
+    c, r = pooled(cand), pooled(ref)
+    return float(np.mean([
+        (c["products"] - r["products"]) / max(r["products"], 1.0),
+        (r["mttr"] - c["mttr"]) / max(r["mttr"], 1e-9),
+        (r["disr"] - c["disr"]) / max(r["disr"], 1e-9),
+        (c["know"] - r["know"]) / max(r["know"], 1e-9),
+    ]))
+
+
+def fitness_per_world(cand: list[dict], ref: list[dict]) -> float:
+    """Per-world mean of the relative improvements (the Evo-Topsis tuner's
+    fitness), recorded for comparison."""
     vals = []
     for c, r in zip(cand, ref):
         assert c["world"] == r["world"]
@@ -120,9 +144,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--k", default="1,2,3", help="grid of horizon_k")
     ap.add_argument("--w", default="0,0.5,1,2", help="grid of terminal_weight")
-    ap.add_argument("--worlds", type=int, default=8)
-    ap.add_argument("--val-worlds", type=int, default=8)
-    ap.add_argument("--top", type=int, default=3)
+    ap.add_argument("--worlds", type=int, default=12)
+    ap.add_argument("--val-worlds", type=int, default=16)
+    ap.add_argument("--top", type=int, default=4)
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--world-seed", type=int, default=70_000, help="stage-1 worlds; stage 2 uses +10000")
     ap.add_argument("--sim-min", type=float, default=200_000.0)
@@ -166,13 +190,15 @@ def main() -> int:
                 continue
             rows.append({"kind": key[0], "horizon_k": key[1], "terminal_weight": key[2],
                          "fitness": fitness(rs, ref),
+                         "fitness_per_world": fitness_per_world(rs, ref),
                          **{m: float(np.mean([r[m] for r in rs])) for m in KPI_KEYS},
                          "planner_ms": float(np.nanmedian([r["planner_ms"] for r in rs]))})
         rows.sort(key=lambda x: -x["fitness"])
         say(f"{stage}: reference topsis " + " ".join(f"{m}={np.mean([r[m] for r in ref]):.1f}" for m in KPI_KEYS)
             + f" | fleets {sorted({r['n_techs'] for r in ref})}")
         for x in rows:
-            say(f"  {x['kind']:6s} K={x['horizon_k']} w={x['terminal_weight']} fitness {x['fitness']:+.4f} | "
+            say(f"  {x['kind']:6s} K={x['horizon_k']} w={x['terminal_weight']} fitness {x['fitness']:+.4f} "
+                f"(per-world mean {x['fitness_per_world']:+.4f}) | "
                 + " ".join(f"{m}={x[m]:.1f}" for m in KPI_KEYS) + f" | planner {x['planner_ms']:.2f} ms")
         return rows
 
@@ -198,8 +224,9 @@ def main() -> int:
     data["terminal_weight"] = float(best["terminal_weight"])
     data["tuning"] = {
         "reference": "topsis", "env_config": str(TRAIN_CFG.relative_to(ROOT)),
-        "fitness": "mean over worlds of the mean relative improvement over topsis on "
-                   "products, MTTR, disruptions per 1e3 products, final fleet knowledge",
+        "fitness": "mean relative improvement over topsis of the KPIs pooled over the worlds: "
+                   "total products, mean MTTR, total disruptions per 1e3 total products, "
+                   "total final fleet knowledge",
         "grid": {"horizon_k": sorted({k for k, _ in grid}), "terminal_weight": sorted({w for _, w in grid})},
         "stage1_worlds": worlds1, "stage2_worlds": worlds2,
         "sim_min": args.sim_min, "sim_max": args.sim_max,
