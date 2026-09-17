@@ -115,6 +115,7 @@ if [ -f scripts/seqbase_compare.py ]; then
   PUB="${PUB:-reports/hvp_eval_v6w}"
   [ -d "$PUB" ] || PUB="$HOME/repositories/knowledge-aware-technician-assignment/reports/hvp_eval_v6w"
   nice -n 10 "$PY" scripts/seqbase_compare.py --root "$OUT" --published "$PUB" \
+    --parts "$(dirname "$PUB")/hvp_v6w_parts" --extra "$PUB/mlp_last_step_metrics.csv" \
     --out "$OUT/SEQBASE_COMPARE.md" >> "$LOGDIR/compare.log" 2>&1
   say "compare rc=$?"
 fi

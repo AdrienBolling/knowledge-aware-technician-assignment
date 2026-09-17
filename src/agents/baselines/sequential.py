@@ -344,7 +344,8 @@ def score_assignment(ctx: dict[str, Any], slot: dict[str, Any],
         busy_r = (~idle).astype(np.float64)
 
     e_r = math.exp(-beta * min(r, tau_end)) if np.isscalar(r) else np.exp(-beta * np.minimum(r, tau_end))
-    e_c = np.exp(-beta * np.minimum(c, tau_end))
+    e_cu = np.exp(-beta * c)
+    e_c = np.maximum(e_cu, math.exp(-beta * tau_end))  # = exp(-beta min(c, tau_end))
     value = e_r * (C["repair_quality"] * (1.0 - mk)
                    - C["fatigue_cost"] * F_r
                    - C["busy_technician"] * busy_r)
@@ -355,7 +356,6 @@ def score_assignment(ctx: dict[str, Any], slot: dict[str, Any],
         np.minimum(c, tau_end) - min(float(r), tau_end))
     # Knowledge credit when the repair completes inside the episode.
     inside = c < tau_end
-    e_cu = np.exp(-beta * c)
     value = value + inside * (C["knowledge_increment"] * e_cu
                               + ctx["C_term_knowledge"]) * slot["dV"] / ctx["n_active"]
     # Fatigue balance: exact fatigue difference to the no-assignment path.
@@ -411,6 +411,23 @@ def _within_window_mk(ctx, sl, prior_t, prior_c, n_rows):
     return mk
 
 
+_TECH_KEYS_CTX = ("mu", "lam", "std_grad", "fatigue_future")
+_TECH_KEYS_SLOT = ("mk", "dV", "Gc", "VK", "F_r", "busy_r")
+
+
+def _columns(ctx: dict[str, Any], slot: dict[str, Any], cols: np.ndarray):
+    """Views of ``ctx`` and ``slot`` restricted to the technicians ``cols``
+    (last axis of the per-technician arrays)."""
+    N = ctx["n"]
+    ctx2, slot2 = dict(ctx), dict(slot)
+    for src, dst, keys in ((ctx, ctx2, _TECH_KEYS_CTX), (slot, slot2, _TECH_KEYS_SLOT)):
+        for key in keys:
+            v = src.get(key)
+            if isinstance(v, np.ndarray) and v.ndim and v.shape[-1] == N:
+                dst[key] = v[..., cols]
+    return ctx2, slot2
+
+
 def plan_first_action(ctx: dict[str, Any], slots: list[dict[str, Any]],
                       candidates: np.ndarray, params: dict[str, Any]) -> tuple[int, np.ndarray, np.ndarray]:
     """Rolling-horizon search.  Returns ``(action, roots, value per root)``.
@@ -461,31 +478,41 @@ def plan_first_action(ctx: dict[str, Any], slots: list[dict[str, Any]],
     for k, slot in enumerate(slots[1:], start=1):
         last = k == K
         n_rows = len(group)
-        scen_rows = group % S
-        sl = _rows(slot, scen_rows)
-        mk = _within_window_mk(ctx, sl, prior_t, prior_c, n_rows)
-        vals, cc, Fp = score_assignment(ctx, sl, free, Ff, wT, mk=mk)
         ok = (free <= slot["r"]) & active[None, :]
         none = ~ok.any(axis=1)
         if none.any():
             ok[none] = active[None, :]
+        # Score only the technicians that can take this ticket in some row
+        # (the others would be -inf everywhere).
+        cols = np.flatnonzero(ok.any(axis=0))
+        Cn = len(cols)
+        scen_rows = group % S
+        sl = _rows(slot, scen_rows)
+        mk = _within_window_mk(ctx, sl, prior_t, prior_c, n_rows)
+        if Cn < N:
+            ctx_c, sl_c = _columns(ctx, sl, cols)
+            vals, cc, Fp = score_assignment(ctx_c, sl_c, free[:, cols], Ff[:, cols], wT, mk=mk[:, cols])
+            ok = ok[:, cols]
+        else:
+            vals, cc, Fp = score_assignment(ctx, sl, free, Ff, wT, mk=mk)
         total = np.where(ok, beam_val[:, None] + vals, -np.inf)
         if last:
             beam_val = total.max(axis=1)
             break
         width = n_rows // n_groups
-        flat = total.reshape(n_groups, width * N)
+        flat = total.reshape(n_groups, width * Cn)
         keep = min(W, flat.shape[1])
         if keep < flat.shape[1]:
             top = np.argpartition(-flat, keep - 1, axis=1)[:, :keep]
         else:
             top = np.broadcast_to(np.arange(flat.shape[1]), (n_groups, keep))
         top_val = np.take_along_axis(flat, top, axis=1)
-        parent = (np.arange(n_groups)[:, None] * width + top // N).ravel()
-        tech = (top % N).ravel()
+        parent = (np.arange(n_groups)[:, None] * width + top // Cn).ravel()
+        t_col = (top % Cn).ravel()
+        tech = cols[t_col]
         r_idx = np.arange(len(parent))
-        new_cc = cc[parent, tech]
-        new_Fp = Fp[parent, tech]
+        new_cc = cc[parent, t_col]
+        new_Fp = Fp[parent, t_col]
         free = free[parent]
         Ff = Ff[parent]
         free[r_idx, tech] = new_cc
