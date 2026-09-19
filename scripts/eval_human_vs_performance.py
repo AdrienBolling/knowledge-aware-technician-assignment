@@ -54,6 +54,7 @@ from agents import (
     EvoTopsisAgent,
     EvoTopsisInformedAgent,
     GreedyRewardAgent,
+    GreedyTrainingRewardAgent,
     A2CMLPAgent,
     DQLMLPAgent,
     GRPOMLPAgent,
@@ -64,6 +65,7 @@ from agents import (
     RainbowDQNAgent,
     RandomAgent,
     ReserveSpecialistAgent,
+    RollingHorizonMPCAgent,
     RoundRobinAgent,
     SetTransformerAgent,
     ShortestProcessingTimeAgent,
@@ -104,6 +106,12 @@ HEURISTICS = {
     # evo_topsis_weights.json); _inf = informed twin (oracle repair times).
     "evo_topsis": EvoTopsisAgent,
     "evo_topsis_inf": EvoTopsisInformedAgent,
+    # NON-RL SEQUENTIAL baselines on an explicit human-state model
+    # (agents.baselines.sequential), optimising the v5 TRAINING reward of
+    # HTT-RL: rolling-horizon look-ahead planner and its one-step greedy.
+    # Parameters and scales: run_configs/agents/seqbase_mpc.json.
+    "rolling_mpc": RollingHorizonMPCAgent,
+    "greedy_train_reward": GreedyTrainingRewardAgent,
 }
 
 CHECKPOINTS = {
@@ -788,6 +796,13 @@ def run_episode(agent, env, *, seed: int, deterministic: bool = True,
     )
     kpis["episode_reward"] = ep_reward
     kpis["n_steps"] = n_steps
+    planner_ms = getattr(agent, "planner_ms", None)
+    if callable(planner_ms):  # planning baselines time their own decisions
+        ms = np.asarray(planner_ms(), dtype=np.float64)
+        if ms.size:
+            kpis["planner_ms_median"] = float(np.median(ms))
+            kpis["planner_ms_mean"] = float(ms.mean())
+            kpis["planner_ms_p90"] = float(np.percentile(ms, 90))
     kpis["final_sim_time"] = float(final_info.get("sim_time", 0.0))
     kpis.update(_financial_kpis(env, machine_registry, kpis["final_sim_time"]))
     return kpis, records

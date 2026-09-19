@@ -19,6 +19,10 @@ from agents.baselines.heuristics import (
     TopsisAgent,
     TrainWeakestAgent,
 )
+from agents.baselines.sequential import (
+    GreedyTrainingRewardAgent,
+    RollingHorizonMPCAgent,
+)
 from agents.a2c.a2c_mlp import A2CMLPAgent
 from agents.dqn.dql_mlp import DQLMLPAgent
 from agents.dqn.rainbow import RainbowDQNAgent
@@ -40,6 +44,7 @@ __all__ = [
     "GRPOAgent",
     "GRPOMLPAgent",
     "GreedyRewardAgent",
+    "GreedyTrainingRewardAgent",
     "LeastBusyAgent",
     "LeastFatiguedAgent",
     "OptimalAssignmentAgent",
@@ -48,6 +53,7 @@ __all__ = [
     "RainbowDQNAgent",
     "RandomAgent",
     "ReserveSpecialistAgent",
+    "RollingHorizonMPCAgent",
     "RoundRobinAgent",
     "SetTransformerAgent",
     "ShortestProcessingTimeAgent",
